@@ -9,20 +9,18 @@
 - 發現並記錄 076/077 Live2D 素材著作權風險，取得使用者處理決策（僅內部佔位）。
 - 建立 `CLAUDE.md`、`README.md`、`Docs/` 全套文件骨架與 git repo。
 
-## Phase 1：3D 灰盒原型（未開始，待確認後執行）
+## Phase 1：3D 灰盒原型 — ✅ 完成（2026-08-10）
 
 目標：一個可以走、可以打一拳、假人會死的最小 3D 場景，不涉及 Live2D、不涉及美術資產。
 
-- 建立 Unity 專案（6000.0.81f1 + URP template）。
-- 灰盒測試場景（地板 + 幾個方塊當掩體參考）。
-- Capsule 玩家 + 第三人稱 Cinemachine 攝影機。
-- WASD 移動（相對攝影機方向）+ 平滑轉向。
-- 一個訓練假人（Capsule，靜止）。
-- 單次攻擊（按鍵觸發，範圍判定命中假人）。
-- 傷害與死亡（假人血量歸零後禁用）。
-- EditMode 測試覆蓋傷害計算；PlayMode 測試覆蓋命中流程。
+- Unity 專案已建立（`Live2DAction/`，6000.0.81f1 + URP），套件：Input System 1.19.0、URP 17.0.4、Cinemachine 3.1.2、AI Navigation 2.0.5、Test Framework 1.6.0。
+- `Assets/_Project/Game/` 下 Core／Input／Characters／Combat 四個資料夾與對應腳本：`IDamageable`／`DamageInfo`／`Health`（Core）、`IInputCommand`／`PlayerInputProvider`（Input，直接讀新版 Input System 的 Keyboard/Mouse，未用 .inputactions 資產）、`CharacterMovement`（CharacterController + 相機相對移動 + 平滑轉向）、`AttackData`／`AttackResolver`／`PlayerCombat`（Combat，`AttackResolver` 是純函式，`PlayerCombat` 只負責讀輸入與呼叫 `Physics.OverlapSphere`）。
+- `GreyboxTest.unity`（已加入 Build Settings）：地板、3 個掩體方塊、Player（Capsule + CharacterController + 上述元件）、TrainingDummy（Capsule + `Health`）、第三人稱 Cinemachine 攝影機（`CinemachineOrbitalFollow` + `CinemachineRotationComposer` + `CinemachineInputAxisController`）。場景由 `Assets/Editor/Bootstrap/GreyboxSceneBuilder.cs`（Tools/Live2DAction/Build Greybox Test Scene）產生，可重新執行以重建場景。
+- 8 個 EditMode 測試（`HealthTests`、`AttackResolverTests`）+ 2 個 PlayMode 測試（`CombatPlayModeTests`，真實 Update 迴圈跑攻擊→命中→扣血/死亡），全數通過。
 
-驗收條件：Unity 專案乾淨編譯、Console 無錯誤、可在灰盒場景手動 Play 驗證移動與單次攻擊、至少 1 個 EditMode 測試通過。
+**尚未驗證**：所有驗證都是透過 `-batchmode -runTests` 跑的，**沒有在互動式 Unity Editor 裡按過 Play**——移動手感、攝影機軌道/滑鼠視角是否順暢、視覺呈現是否正確，都還沒有人眼確認過，需要使用者在 Editor 打開專案親自 Play 一次才能算數（見 `KNOWN_ISSUES.md`）。
+
+驗收條件：✅ Unity 專案乾淨編譯、✅ Console 無錯誤、✅ 至少 1 個 EditMode 測試通過（實際 8 個 EditMode + 2 個 PlayMode 全過）；⚠️ 「可在灰盒場景手動 Play 驗證移動與單次攻擊」這項需要使用者在 Editor 內實際操作確認，AI 無法自行操作互動視窗。
 
 ## Phase 2：戰鬥垂直切片（未開始）
 
