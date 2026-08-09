@@ -1,12 +1,12 @@
-# Unity generated (applies once the Unity project is created in Phase 1)
-/[Ll]ibrary/
-/[Tt]emp/
-/[Oo]bj/
-/[Bb]uild/
-/[Bb]uilds/
-/[Ll]ogs/
-/[Uu]serSettings/
-/[Mm]emoryCaptures/
+# Unity generated (Unity project lives one level down, in Live2DAction/)
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]serSettings/
+[Mm]emoryCaptures/
 *.csproj
 *.sln
 *.suo
@@ -27,3 +27,6 @@
 *.unitypackage
 *.app
 crashlytics-build.properties
+
+# Batchmode scratch output from local test/build runs
+*.log
