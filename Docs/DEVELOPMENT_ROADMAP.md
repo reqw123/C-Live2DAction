@@ -74,6 +74,15 @@
 - 13 個 EditMode（原 8 + 新 5）與 9 個 PlayMode（原 3 + 新 6）測試全數通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**手感與動畫轉換是否順暢——自動化測試證明「方向正確、動畫參數正確換算」，但走路/跑步動畫切換時機是否自然、Blend Tree 過渡是否平順，需要人眼確認。
 
+### Step 1 追加：修正兩個實際 Play 回報的 bug — ✅ 完成（2026-08-10）
+
+使用者實際 Play 後回報兩個自動化測試沒抓到的問題，完整排查過程見 `KNOWN_ISSUES.md`／`CHANGELOG.md`：
+
+- **腳步滑行**：`moveSpeed` 跟 Maya 動畫的 Blend Tree 門檻對不上，降到 2 對齊。
+- **攝影機視角與角色朝向脫鉤**（左右顛倒、視角沒對齊角色）：五次 Cinemachine 配置修法皆實測無效，最終**移除 Cinemachine 的軌道/瞄準系統**，改寫自己掌控的 `ThirdPersonCameraController.cs`（直接讀滑鼠 delta、自算位置與旋轉，實作 `ICameraYawSource` 供移動邏輯讀取同一個 yaw 值）。`GreyboxTest.unity` 場景與 `GreyboxSceneBuilder.cs` 都已改用新攝影機；`Unity.Cinemachine` 套件參照已從 `Live2DAction.Runtime.asmdef` 移除（Cinemachine 套件本身仍安裝，僅未再被本專案程式碼使用）。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：腳步是否貼地、滑鼠視角操作是否順手。
+
 ## Phase 3：Live2D 與完整流程（未開始）
 
 主選單 → Live2D 開場對話（佔位素材）→ 3D 戰鬥 → 結算 → Live2D 結束對話 → 返回選單 → Windows Build。此階段起，任何要交給他人測試的版本都必須先確認 076/077 佔位素材已被排除或不會被外流。

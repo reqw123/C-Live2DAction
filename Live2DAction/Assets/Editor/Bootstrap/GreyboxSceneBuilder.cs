@@ -2,7 +2,6 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using Unity.Cinemachine;
 using Live2DAction.CameraSystem;
 using Live2DAction.Characters;
 using Live2DAction.Combat;
@@ -27,7 +26,7 @@ namespace Live2DAction.EditorTools
 
             GameObject player = CreatePlayer();
             CreateDummy();
-            OrbitalCameraYawSource yawSource = CreateCamera(player.transform);
+            ThirdPersonCameraController yawSource = CreateCamera(player.transform);
 
             CharacterMovement movement = player.GetComponent<CharacterMovement>();
             var movementSo2 = new SerializedObject(movement);
@@ -135,35 +134,26 @@ namespace Live2DAction.EditorTools
             dummy.AddComponent<Health>();
         }
 
-        private static OrbitalCameraYawSource CreateCamera(Transform followTarget)
+        private static ThirdPersonCameraController CreateCamera(Transform followTarget)
         {
             var cameraGo = new GameObject("Main Camera");
             cameraGo.tag = "MainCamera";
             Camera camera = cameraGo.AddComponent<Camera>();
-            cameraGo.AddComponent<CinemachineBrain>();
+            camera.fieldOfView = 50f;
 
-            var vcamGo = new GameObject("CM Third Person Camera");
-            CinemachineCamera vcam = vcamGo.AddComponent<CinemachineCamera>();
-            vcam.Follow = followTarget;
-            vcam.Lens.FieldOfView = 50f;
+            // Custom, Cinemachine-free orbit camera: see ThirdPersonCameraController for why
+            // Cinemachine's orbital/aim system was removed (Docs/KNOWN_ISSUES.md has the full
+            // investigation). CharacterMovement reads YawDegrees from this same component for
+            // its camera-relative movement math, so screen orientation and movement direction
+            // can never disagree.
+            ThirdPersonCameraController controller = cameraGo.AddComponent<ThirdPersonCameraController>();
+            var controllerSo = new SerializedObject(controller);
+            controllerSo.FindProperty("target").objectReferenceValue = followTarget;
+            controllerSo.FindProperty("distance").floatValue = 4f;
+            controllerSo.FindProperty("targetOffset").vector3Value = new Vector3(0f, 1.4f, 0f);
+            controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
-            CinemachineOrbitalFollow orbitalFollow = vcamGo.AddComponent<CinemachineOrbitalFollow>();
-            orbitalFollow.Radius = 4f;
-            orbitalFollow.TargetOffset = new Vector3(0f, 1.4f, 0f);
-
-            CinemachineRotationComposer rotationComposer = vcamGo.AddComponent<CinemachineRotationComposer>();
-            vcam.LookAt = followTarget;
-
-            vcamGo.AddComponent<CinemachineInputAxisController>();
-
-            // CharacterMovement must read this raw orbital angle (driven only by mouse via
-            // the CinemachineInputAxisController above) for its camera-relative movement
-            // math - NOT the camera's fully-composed Transform.forward. RotationComposer's
-            // aim reactively sweeps as its LookAt target translates sideways past it, which
-            // would otherwise feed back into movement direction -> further translation ->
-            // further aim sweep, spinning the character in a full circle under pure strafe
-            // input. See ICameraYawSource for the full explanation.
-            return vcamGo.AddComponent<OrbitalCameraYawSource>();
+            return controller;
         }
 
         private static void AddSceneToBuildSettings(string scenePath)

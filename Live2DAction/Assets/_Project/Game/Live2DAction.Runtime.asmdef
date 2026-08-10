@@ -2,8 +2,7 @@
     "name": "Live2DAction.Runtime",
     "rootNamespace": "",
     "references": [
-        "Unity.InputSystem",
-        "Unity.Cinemachine"
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

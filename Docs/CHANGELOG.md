@@ -73,3 +73,14 @@
 - 新增永久回歸測試 `CameraRelativeMovementRegressionTests.cs`（載入真實場景+真攝影機，防止此 bug 未來回歸）。
 - 順帶修好一個測試隔離 bug：`CharacterMovementTests` 的 `[SetUp]` 改成清空場景所有根物件，避免跟其他會載入真實場景的測試互相污染。
 - 13 個 EditMode + 10 個 PlayMode 測試全數通過，連續驗證 3 次無間歇性失敗。
+
+## 2026-08-10 — 修正腳步滑行 + 移除 Cinemachine 改用自寫攝影機
+
+使用者實際 Play 後再回報兩個問題，完整排查過程見 `KNOWN_ISSUES.md`，摘要：
+
+- **腳步滑行**：`moveSpeed`（5）遠超過 Maya Locomotion Blend Tree 的最高門檻（2），確認動畫片段沒有可用的 Root Motion 可以反推正確值後，把 `moveSpeed` 降到 2 對齊 Blend Tree 門檻（`FixMoveSpeedForAnimation.cs`），並把 `CharacterAnimatorLink` 的速度換算簡化成直接 `Clamp`，不再做無根據的任意倍率縮放。
+- **攝影機視角與角色朝向脫鉤**（使用者形容為「按左鍵人物往右跑、朝向正西方，像是視角沒對齊角色」）：五次針對 Cinemachine 的修法（`BindingMode` 調整、position-only anchor、移除 `CinemachineRotationComposer`、歸零阻尼、anchor 二次嘗試並直接驗證其旋轉鎖定）全部實測無效，且第五次的診斷數據直接跟 Cinemachine 套件原始碼的文件化行為矛盾。決定放棄 Cinemachine 的軌道/瞄準系統，改寫完全自己掌控的 `ThirdPersonCameraController.cs`（`Assets/_Project/Game/Camera/`）：直接讀滑鼠 delta 累加 yaw/pitch、每幀直接算位置與旋轉並套用，同時實作 `ICameraYawSource` 供 `CharacterMovement` 讀取同一個 yaw 值，兩者不可能再對不上。
+- 移除場景與程式碼裡所有 Cinemachine 相關元件與參照：`CinemachineBrain`／`CinemachineCamera`／`CinemachineOrbitalFollow`／`CinemachineRotationComposer`／`CinemachineInputAxisController`、舊有的 `OrbitalCameraYawSource`／`CameraFollowAnchor` 腳本、`Live2DAction.Runtime.asmdef` 的 `Unity.Cinemachine` 參照。新增 `FixCameraCustomController.cs`（一次性場景修正工具）並更新 `GreyboxSceneBuilder.cs`（場景重建工具）改用新攝影機。
+- 新攝影機刻意未實作牆壁/障礙物碰撞閃避（deferred，非本次需求範圍）。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過（含載入真實場景的 `CameraRelativeMovementRegressionTests`）。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：腳步是否貼地、滑鼠視角操作是否順手。

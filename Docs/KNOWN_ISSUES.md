@@ -59,6 +59,36 @@
 - **順帶修好一個測試隔離問題**：新增這個回歸測試後，發現它跟既有的 `CharacterMovementTests` 互相污染——如果回歸測試先跑，它載入的真實場景（含 Ground／TrainingDummy／掩體方塊／真攝影機）沒有被清掉，導致 `CharacterMovementTests` 新建的假角色會跟殘留的場景物件碰撞、`Camera.main` 也可能解析到錯的攝影機。修法：`CharacterMovementTests` 的 `[SetUp]` 改成先清空目前場景裡**所有**根物件，不只是清攝影機標籤，確保每個測試都是從真正乾淨的空場景開始，不假設自己是唯一會建立場景物件的測試。
 - 13 個 EditMode + 10 個 PlayMode 測試全數通過，且連續跑 3 次確認沒有間歇性失敗。
 
+## 已修正：走路/跑步腳步滑行（2026-08-10，使用者實際 Play 回報）
+
+使用者在上面「畫圈」bug 修好後再次實際 Play，回報「左右移動時會順移，而非自然行走」——即角色有正確轉向、正確直線移動，但腳步動畫看起來像滑冰/飄移，不是踏實的走路。
+
+- **原因**：`CharacterMovement.moveSpeed` 原本是 5，遠超過 Maya 的 Locomotion Blend Tree 最高速度門檻（2，對應 Run 動畫）。動畫本身用的移動速度（帶動畫演出的視覺位移）跟角色實際位移速度對不上，導致腳步跟地面位移不同步。
+- 檢查過 Maya 動畫片段的 RootT 曲線，確認**沒有可用的 Root Motion** 可以拿來反推「正確」速度（例如 `NewRun.anim` 的 `RootT.z` 一個 0.7 秒循環裡只在 0.084～0.140 之間小幅擺動，屬於原地搖晃，不是真正的步幅位移），所以無法用資料驅動的方式算出精確值，只能用「跟 Blend Tree 最高門檻對齊」這個合理推測去調。
+- **修法**：`moveSpeed` 從 5 降到 2（`FixMoveSpeedForAnimation.cs`），並簡化 `CharacterAnimatorLink`：原本的「先正規化、再乘上任意倍率」公式改成直接 `Clamp(currentSpeed, 0, maxAnimatorSpeed)` 餵給 Animator 的 Speed 參數，理由同上——沒有 Root Motion 可以拿來做更精確的映射，用更簡單、更少猜測空間的公式更誠實。
+- **仍待確認**：這是推理出的合理起點，不是已證明正確的數值，需要使用者實際 Play 後用眼睛確認腳步是否貼地。
+
+## 已修正：攝影機視角與角色朝向脫鉤，改用自寫攝影機（2026-08-10，使用者實際 Play 回報）
+
+使用者回報：「我認為是攝影機視角問題，而且左右按鍵控制的方向是顛倒的。按下左鍵人物會往右跑並朝向正西方，有點奇怪，像是使用者視角沒有對其角色的第三人稱」。這是在上面「畫圈」bug 修好之後才浮現的第二層問題，需要完整記錄排查過程，因為五次合理的 Cinemachine 修法全部無效，最終決定放棄 Cinemachine 的軌道/瞄準系統。
+
+- **驗證世界座標邏輯本身沒問題**：用診斷測試直接印出「按住純左移動輸入」時的世界座標位移與角色朝向，確認 `CharacterMovement` 產生的移動方向與朝向彼此一致（按左穩定產生 -X 方向的位移與朝向），問題不在移動計算本身，而在攝影機「畫面上呈現的」方向跟這個世界座標系對不上。
+- **五次 Cinemachine 修法，全部實測無效**（依序嘗試，每次都基於看似合理的原始碼推理，但都被實測推翻）：
+  1. 調整 `TrackerSettings.BindingMode` 為 `WorldSpace`（原始碼寫明這個模式下 `GetReferenceOrientation()` 應恆為 `Quaternion.identity`）。
+  2. 加入一個只跟隨位置、不跟隨旋轉的 `CameraFollowAnchor` 中介物件，把 Follow/LookAt 都指到這個 anchor。
+  3. 移除 `CinemachineRotationComposer`（Aim 元件），改用 `CinemachineOrbitalFollow`（Body）直接驅動旋轉。
+  4. 把 `PositionDamping`／`RotationDamping`／`QuaternionDamping` 全部歸零，排除阻尼延遲造成的視覺誤差。
+  5. 重做一次 anchor（`FixCameraAnchorRetry.cs`），這次在每個 `LateUpdate` 強制把 anchor 的旋轉鎖回 `(0,0,0)` 並直接印出驗證，確認 anchor 本身的旋轉全程真的是 identity——但攝影機的 `Transform.right`／`Transform.forward` 依然精確跟著角色的朝向漂移。
+- 第五次的診斷數據直接跟 Cinemachine 套件自己的原始碼文件矛盾（`BindingMode.WorldSpace` 底下 `GetReferenceOrientation()` 就是回傳 `Quaternion.identity`，不應該被角色朝向影響），但編譯後的實際行為就是不一致，沒有再花時間深挖套件內部黑盒，改為架構層面的解法。
+- **最終解法**：完全移除 Cinemachine 在這個攝影機上的使用（`CinemachineBrain`／`CinemachineCamera`／`CinemachineOrbitalFollow`／`CinemachineRotationComposer`／`CinemachineInputAxisController` 全部拿掉，`Unity.Cinemachine` 也從 `Live2DAction.Runtime.asmdef` 移除），改寫一個完全自己掌控的 `ThirdPersonCameraController`（`Assets/_Project/Game/Camera/ThirdPersonCameraController.cs`）：
+  - 直接讀滑鼠 delta（`Mouse.current.delta`）累加 yaw/pitch，兩個都是這個腳本自己擁有的一般欄位，沒有任何其他系統會反過來影響它們。
+  - 每個 `LateUpdate` 用 yaw/pitch 算出旋轉，用「目標點 − 旋轉 × 前方 × 距離」算出攝影機位置，直接 `SetPositionAndRotation`，沒有阻尼、沒有中間狀態。
+  - 實作 `ICameraYawSource`（沿用原本 `OrbitalCameraYawSource` 的介面設計），`CharacterMovement` 讀的就是這個腳本自己的 `_yaw` 欄位，跟攝影機畫面呈現的旋轉是同一個數字來源，兩者不可能再對不上。
+  - `GreyboxSceneBuilder.cs`（場景重建工具）與 `FixCameraCustomController.cs`（既有場景的一次性修正腳本）都已改用新的攝影機設定方式。
+- **已知限制**：新攝影機刻意沒有做牆壁/障礙物碰撞閃避（deferred，非本次需求範圍）。
+- 13 個 EditMode + 10 個 PlayMode 測試全數重新跑過，全數通過（含載入真實場景的 `CameraRelativeMovementRegressionTests`）。
+- **仍待確認**：滑鼠視角操作是否順手（靈敏度、pitch 範圍）需要使用者在互動 Editor 裡實際試玩確認，AI 端只能確認場景結構正確、測試通過。
+
 ## 待確認
 
 - 本機沒有配置 Unity MCP 或其他可互動的 Editor 自動化工具，本次 Phase 1 全程透過 Unity 命令列 `-batchmode`／`-executeMethod`／`-runTests` 完成，AI 端無法產生「已手動 Play 驗證」的證據，這類驗證一律需要使用者自行操作。
