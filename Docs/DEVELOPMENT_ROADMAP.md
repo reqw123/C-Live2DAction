@@ -106,6 +106,19 @@
 - **已知限制**：連段判定完全靠邏輯與 debug 觸發驗證，Maya 沒有對應的三段攻擊動畫，Play 起來攻擊時角色視覺上不會有揮擊動作（只有 `Physics.OverlapSphere` 判定跟傷害會真的生效）；攻擊時是否要鎖定/減速移動也尚未處理，兩者都留給之後的步驟。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：連段輸入手感（尤其連段視窗的時機）是否合理，之後可依此調整 `LightAttack1/2/3.asset` 的影格數值。
 
+### Step 2 追加：第一/第三人稱視角切換 — ✅ 完成（2026-08-10）
+
+使用者要求「把畫面做成第一視角」，確認範圍為：先做成可切換的第一/第三人稱（保留第三人稱），第一人稱下先隱藏整個角色模型（Maya 沒有分離的第一人稱手臂素材）。
+
+- `ThirdPersonCameraController` 新增 `CameraViewMode`（ThirdPerson/FirstPerson）與 V 鍵切換（`Keyboard.current.vKey.wasPressedThisFrame`）。第三人稱沿用原本的軌道公式；第一人稱直接把攝影機放在 `target.position + firstPersonEyeOffset`，不做距離拉遠、也不受旋轉影響位置。兩種模式都只讀同一份 `_yaw`／`_pitch`，`ICameraYawSource.YawDegrees` 不受視角模式影響，`CharacterMovement` 的相對移動方向計算完全不用改。
+- 切換時透過 `visualToHide`（Player 的 "Visual" 子物件）`SetActive` 隱藏/顯示整個角色模型，避免第一人稱時攝影機卡在自己頭部模型裡面。
+- 純位置計算抽成靜態方法 `ComputeCameraPosition(mode, targetPosition, rotation, distance, thirdPersonOffset, firstPersonEyeOffset)`，比照專案既有慣例，可在 EditMode 直接測試兩種模式的公式正確性，不需要 Play。
+- 新增 `ThirdPersonCameraControllerTests.cs`（EditMode，4 個測試）驗證第一人稱模式忽略距離/旋轉、只用 eye offset；第三人稱模式維持原本「距離拉遠＋跟隨目標位置」的行為。新增 `CameraViewToggleTests.cs`（PlayMode，2 個測試）驗證 `ToggleViewMode()` 確實切換 `visualToHide` 的顯示狀態、且切換視角不會意外改動 yaw。
+- `GreyboxSceneBuilder.cs` 與新的一次性修正腳本 `FixFirstPersonToggleSetup.cs` 都已同步寫入 `firstPersonEyeOffset`（預設 (0, 1.6, 0)，粗略的眼睛高度猜測值，未經人眼確認）與 `visualToHide`（Player 的 "Visual" 子物件）。
+- 24 個 EditMode（原 20 + 新 4）＋ 12 個 PlayMode（原 10 + 新 2）測試全數通過。
+- **已知限制**：第一人稱下攻擊的判定方向（`PlayerCombat.attackOrigin` 預設是 Player 根物件的 `forward`）目前仍然跟著「移動朝向」走，不是跟著攝影機視角走——因為 `CharacterMovement` 只有在有移動輸入時才轉向，第一人稱站著不動時攻擊方向不會跟著滑鼠視角轉。這次範圍只處理攝影機視角本身，攻擊瞄準方向的重新綁定留給之後的步驟（可能跟敵人鎖定 Step ④ 一起處理）。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按 V 切換視角是否正常、第一人稱的眼睛高度是否合理、隱藏角色模型後畫面觀感如何。
+
 ## Phase 3：Live2D 與完整流程（未開始）
 
 主選單 → Live2D 開場對話（佔位素材）→ 3D 戰鬥 → 結算 → Live2D 結束對話 → 返回選單 → Windows Build。此階段起，任何要交給他人測試的版本都必須先確認 076/077 佔位素材已被排除或不會被外流。

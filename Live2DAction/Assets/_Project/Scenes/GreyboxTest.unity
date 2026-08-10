@@ -288,6 +288,11 @@ Animator:
   m_CorrespondingSourceObject: {fileID: 4500432071553661095, guid: e0d5986711e884043ae417433981b1f6, type: 3}
   m_PrefabInstance: {fileID: 112064933}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &112064936 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4500432071553661100, guid: e0d5986711e884043ae417433981b1f6, type: 3}
+  m_PrefabInstance: {fileID: 112064933}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &410938920
 GameObject:
   m_ObjectHideFlags: 0
@@ -1072,6 +1077,9 @@ MonoBehaviour:
   maxPitch: 60
   initialYaw: 0
   initialPitch: 25
+  startingViewMode: 0
+  firstPersonEyeOffset: {x: 0, y: 1.6, z: 0}
+  visualToHide: {fileID: 112064936}
 --- !u!1 &2119030005
 GameObject:
   m_ObjectHideFlags: 0

@@ -187,6 +187,7 @@ namespace Live2DAction.EditorTools
             // its camera-relative movement math, so screen orientation and movement direction
             // can never disagree.
             ThirdPersonCameraController controller = cameraGo.AddComponent<ThirdPersonCameraController>();
+            Transform visual = followTarget.Find("Visual");
             var controllerSo = new SerializedObject(controller);
             controllerSo.FindProperty("target").objectReferenceValue = followTarget;
             controllerSo.FindProperty("distance").floatValue = 4f;
@@ -196,6 +197,11 @@ namespace Live2DAction.EditorTools
             controllerSo.FindProperty("maxPitch").floatValue = 60f;
             controllerSo.FindProperty("initialYaw").floatValue = 0f;
             controllerSo.FindProperty("initialPitch").floatValue = 25f;
+            controllerSo.FindProperty("firstPersonEyeOffset").vector3Value = new Vector3(0f, 1.6f, 0f);
+            if (visual != null)
+            {
+                controllerSo.FindProperty("visualToHide").objectReferenceValue = visual.gameObject;
+            }
             controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
             return controller;

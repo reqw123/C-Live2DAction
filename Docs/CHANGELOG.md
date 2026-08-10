@@ -124,3 +124,14 @@
 - 20 個 EditMode + 10 個 PlayMode 測試全數通過。
 - 已知限制：Maya 目前沒有攻擊動畫（先做邏輯，動畫之後補，使用者已確認範圍）；攻擊時是否鎖定/減速移動尚未處理。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：連段輸入手感、連段視窗時機是否合理。
+
+## 2026-08-10 — 新增第一/第三人稱視角切換
+
+使用者要求把畫面做成第一人稱，確認範圍為可切換（保留第三人稱）、第一人稱先隱藏整個角色模型。
+
+- `ThirdPersonCameraController` 新增 `CameraViewMode`，V 鍵切換第一/第三人稱；第一人稱直接把攝影機放在角色眼睛高度、不受距離/旋轉影響位置，第三人稱維持原本軌道公式。兩種模式共用同一份 yaw/pitch，不影響 `CharacterMovement` 的相對移動方向計算。
+- 新增純位置計算靜態方法 `ComputeCameraPosition`（EditMode 可測），切換時透過 `visualToHide` 隱藏/顯示角色模型。
+- 新增 `ThirdPersonCameraControllerTests.cs`（EditMode，4 測試）＋ `CameraViewToggleTests.cs`（PlayMode，2 測試）。`GreyboxSceneBuilder.cs`／`FixFirstPersonToggleSetup.cs` 同步寫入場景。
+- 24 個 EditMode + 12 個 PlayMode 測試全數通過。
+- 已知限制：第一人稱下攻擊方向仍跟著移動朝向走，不是跟著視角走，留待之後處理。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：V 鍵切換是否正常、眼睛高度是否合理。

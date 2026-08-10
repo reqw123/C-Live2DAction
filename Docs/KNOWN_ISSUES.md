@@ -145,6 +145,7 @@
 - 手把輸入是否列入垂直切片範圍，尚未決定（`C:\Live2DFighter` 的經驗是手把部分尚未完成測試）。
 - **三段普攻沒有對應動畫**（2026-08-10 新增，使用者已確認範圍，非阻塞項）：Maya 目前只有 Idle/Walk/Run/Jump/Fall 動畫，`ComboAttackState` 的三段連段判定與傷害邏輯已完成並測試通過，但攻擊時角色視覺上不會播放任何揮擊動作，只有 debug 層面（`Physics.OverlapSphere` 命中、`Health` 扣血）看得出效果。之後需要找/做適合 Maya 骨架的攻擊動畫（CC0 或需授權素材），再串接到 `AttackPhase`（例如 Startup 觸發 Trigger、Recovery 結束或連段成功時處理過渡）。
 - **攻擊時未鎖定/減速移動**：目前 `CharacterMovement` 與 `PlayerCombat` 完全獨立，攻擊全程角色仍可自由移動，這跟大多數動作遊戲「攻擊時至少 Startup/Active 期間會停下來或大幅減速」的手感不同，之後視實際 Play 手感決定是否要加上這個耦合。
+- **第一人稱下攻擊方向跟著移動朝向走，不是跟著視角走**（2026-08-10 新增，使用者已確認範圍）：`ThirdPersonCameraController` 新增了可切換的第一/第三人稱視角（V 鍵），但 `PlayerCombat.attackOrigin` 預設是 Player 根物件的 `transform.forward`，而 `CharacterMovement` 只有在有移動輸入時才會轉向面對移動方向；站著不動時攻擊方向不會跟著滑鼠視角轉，這在第一人稱下尤其不直覺（玩家會預期攻擊朝準心方向）。這次範圍只處理攝影機本身，重新綁定攻擊瞄準方向留給之後的步驟（可能跟 Roadmap Step ④ 敵人鎖定一起處理，屆時會需要決定「移動朝向」與「攻擊朝向」是否該拆成兩個獨立概念）。
 
 ## 已解決
 
