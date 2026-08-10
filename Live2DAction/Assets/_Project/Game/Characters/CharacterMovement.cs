@@ -21,6 +21,9 @@ namespace Live2DAction.Characters
         // after the component has already Awoken (e.g. from a test) still takes effect.
         private IInputCommand InputCommand => inputSource as IInputCommand;
 
+        public float MoveSpeed => moveSpeed;
+        public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
+
         private void Awake()
         {
             _controller = GetComponent<CharacterController>();

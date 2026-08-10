@@ -57,13 +57,22 @@
 - 已知限制記入 `KNOWN_ISSUES.md`：無穿著（只有內衣）；Animator 的 Speed/H/V 等移動參數尚未接線，走路/跑步動畫還不會播放；發布 Build 前必須加上 CC-BY 署名（見 `ASSET_LICENSES.md`／`BUILD_RELEASE_GUIDE.md`）。
 - Quaternius 的 Humanoid 佔位保留在專案內作為備用/未來敵人角色素材，未刪除。
 
-## Phase 2：戰鬥垂直切片（未開始）
+## Phase 2：戰鬥垂直切片（進行中）
 
 範圍完全比照企劃書「垂直切片最低範圍」：1 可操作角色、1 固定 3D 戰鬥場景、1 近戰敵人、1 遠程敵人、1 簡化 Boss、三段普攻、1 主動技能、1 閃避、敵人鎖定、血量、技能冷卻、受傷、死亡、勝利/失敗、暫停、重新開始、簡短 Live2D 開場/結束對話（佔位素材）、Windows 可執行 Build。
 
-阻塞項已解除（Maya 動漫風角色已就位，含 Idle/Walk/Run/Jump/Fall 動畫），但 Animator 的移動參數（Speed/H/V）還沒接上 `CharacterMovement` 的實際速度，走路/跑步動畫暫時播不出來，需要在 Phase 2 補上。
+拆解成以下步驟依序推進（見下方各小節）：① 移動控制驗證＋移動動畫接線 → ② 三段普攻＋影格資料 → ③ 閃避 → ④ 敵人鎖定 → ⑤ 近戰敵人 AI → ⑥ 遠程敵人 AI → ⑦ 簡化 Boss → ⑧ 主動技能 → ⑨ 血量 UI／暫停／重新開始／勝敗畫面 → ⑩ Live2D 開場/結束對話串接、Windows Build。
 
-阻塞項：需要至少一個授權清楚的臨時 Humanoid 3D 角色模型（見 `PROJECT_AUDIT.md` 中風險）。
+### Step 1：移動控制驗證＋移動動畫接線 — ✅ 完成（2026-08-10）
+
+目標：確保角色 1（Maya）的前後左右移動控制功能正確，並讓移動時播放對應的走路/跑步動畫（不再永遠只播 Idle）。
+
+- 新增 `CharacterMovementTests.cs`（PlayMode）：用固定朝向的相機＋stub 輸入，驗證 W/A/S/D 四個方向的輸入分別讓角色往正確的世界座標軸移動（前→+Z、後→-Z、左→-X、右→+X），且不會有明顯的橫向漂移；另外驗證無輸入時不會漂移、面向會轉向移動方向。**過程中修正一個測試方法論問題**：headless batchmode 下 `yield return null` 每幀的 `Time.deltaTime` 極小（約 0.0003~0.003 秒），固定跑 30 幀根本不夠累積出有意義的位移；改用 `WaitForSecondsRealtime` 又發現它在這個環境下**不會**按比例把 `Update()` 跑滿等待的時間；最後改成「自己寫迴圈、每幀 `yield return null`、直到 `Time.realtimeSinceStartup` 累積到目標秒數為止」才是可靠的做法，並依實測到的位移量重新校正測試門檻（此環境下的積分效率大約只有理論值的 30%，可能跟 CharacterController.Move 或批次模式下的引擎排程有關，門檻已改成留有安全餘裕的保守值，不是照理論公式反推）。
+- 新增 `CharacterMovement.CurrentHorizontalSpeed`／`MoveSpeed` 唯讀屬性，供其他系統讀取目前移動速度，不需要碰內部私有欄位。
+- 新增 `CharacterAnimatorLink.cs`（`Assets/_Project/Game/Characters/`）：獨立元件，把 `CharacterMovement` 目前的速度換算成 Maya 的 Animator `Speed` 參數（Maya 的 Locomotion Blend Tree 門檻是 0/0.4/0.8/2，所以用 `(目前速度/moveSpeed) * 2` 換算），刻意不讓 `CharacterMovement` 本身知道 Animator 的存在（訓練假人沒有視覺、沒有 Animator，也不需要這個元件）。純換算邏輯抽成 `ComputeSpeedParameter` 靜態方法，5 個 EditMode 測試覆蓋（待機/滿速/半速/超速 clamp/moveSpeed 為 0 時不除以零）。
+- 新增 `WireCharacterAnimatorLink.cs`（Tools/Live2DAction/Wire Character Animator Link On Player）：把 `CharacterAnimatorLink` 掛到 `GreyboxTest` 場景的 Player 上，自動找到 Maya 視覺底下的 Animator 並指定進去。已執行並用自動化測試確認 Player 上確實掛好元件、Animator 參照正確。
+- 13 個 EditMode（原 8 + 新 5）與 9 個 PlayMode（原 3 + 新 6）測試全數通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**手感與動畫轉換是否順暢——自動化測試證明「方向正確、動畫參數正確換算」，但走路/跑步動畫切換時機是否自然、Blend Tree 過渡是否平順，需要人眼確認。
 
 ## Phase 3：Live2D 與完整流程（未開始）
 

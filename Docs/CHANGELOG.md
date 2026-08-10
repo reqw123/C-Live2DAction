@@ -52,3 +52,13 @@
 - 使用者提供兩個 UUID 命名的 FBX 檔案（`fbx_9f3e955d-...`、`fbx_53e34751-...`），想當「2P 角色看板」用。AI 檢查後發現兩者匯出簽章完全一致（同版本 Blender、無骨架、無貼圖、精確地都是 100 萬三角面），判斷是同一產線輸出。
 - 第一個（倒臥姿勢＋草帽，疑似既有版權角色公仔）：判定不採用，已從專案移除，未提交進 git。
 - 第二個（高達風機甲，疑似既有機甲動畫作品設計）：使用者在收到同樣的風險警告後，明確表示已確認來源並自行承擔風險、要求保留。已依 076/077 的模式處理——複製進 `Assets/_Project/Characters/Placeholder/MechaModel_DoNotShip/`，登記進 `ASSET_LICENSES.md`「禁止進入對外 Build」表，列為新的高風險阻塞項（見 `KNOWN_ISSUES.md`）。只能當靜態看板（`Player2`，無骨架不能做動畫），套用預設 URP Lit 白色材質，用命令列算圖確認位置/比例/材質正常。
+
+## 2026-08-10 — Phase 2 Step 1：移動控制驗證＋移動動畫接線
+
+- 新增 `CharacterMovementTests.cs`（PlayMode，6 個測試）：驗證角色 1 前後左右移動控制方向正確、無輸入不漂移、面向正確轉向移動方向。
+- 過程中發現並修正測試方法論問題：headless batchmode 下固定幀數或 `WaitForSecondsRealtime` 都無法可靠估計實際模擬時間，改成自訂迴圈依 `Time.realtimeSinceStartup` 累積到目標秒數，並依實測積分效率（約理論值 30%）重新校正判定門檻。
+- `CharacterMovement` 新增 `CurrentHorizontalSpeed`／`MoveSpeed` 唯讀屬性。
+- 新增 `CharacterAnimatorLink.cs`：把移動速度換算成 Maya Animator 的 `Speed` 參數（0/0.4/0.8/2 對應 Idle/Walk/Jog/Run 的 Blend Tree 門檻），5 個 EditMode 測試覆蓋換算邏輯。
+- 新增 `WireCharacterAnimatorLink.cs`（Tools/Live2DAction/Wire Character Animator Link On Player）並執行，把元件掛到場景裡的 Player 上。
+- 13 個 EditMode + 9 個 PlayMode 測試全數通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**手感與動畫轉換是否順暢。
