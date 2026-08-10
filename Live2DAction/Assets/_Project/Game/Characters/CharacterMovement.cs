@@ -15,7 +15,11 @@ namespace Live2DAction.Characters
         // (e.g. in tests) but NOT safe with a "look at" Cinemachine camera in the real scene.
         [SerializeField] private MonoBehaviour cameraYawSource;
 
-        [SerializeField] private float moveSpeed = 5f;
+        // Matches the top threshold of Maya's Locomotion blend tree (CharacterAnimatorLink)
+        // so translation speed and the Run clip's authored pace line up - a mismatch here
+        // is what caused the reported foot-sliding, since these clips have no root motion
+        // to derive the "correct" speed from and must be tuned by eye instead.
+        [SerializeField] private float moveSpeed = 2f;
         [SerializeField] private float rotationSpeedDegrees = 720f;
         [SerializeField] private float acceleration = 20f;
         [SerializeField] private float deceleration = 25f;
