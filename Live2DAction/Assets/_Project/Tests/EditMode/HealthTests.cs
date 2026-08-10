@@ -62,4 +62,30 @@ public class HealthTests
 
         Assert.AreEqual(0f, health.CurrentHealth);
     }
+
+    [Test]
+    public void ApplyDamage_WhileInvulnerable_IsIgnored()
+    {
+        var go = new GameObject("Dummy");
+        var health = go.AddComponent<Health>();
+        health.IsInvulnerable = true;
+
+        health.ApplyDamage(new DamageInfo(30f, Vector3.zero, Vector3.forward, null));
+
+        Assert.AreEqual(health.MaxHealth, health.CurrentHealth);
+    }
+
+    [Test]
+    public void ApplyDamage_AfterInvulnerabilityEnds_AppliesNormally()
+    {
+        var go = new GameObject("Dummy");
+        var health = go.AddComponent<Health>();
+        health.IsInvulnerable = true;
+        health.ApplyDamage(new DamageInfo(30f, Vector3.zero, Vector3.forward, null));
+        health.IsInvulnerable = false;
+
+        health.ApplyDamage(new DamageInfo(30f, Vector3.zero, Vector3.forward, null));
+
+        Assert.AreEqual(health.MaxHealth - 30f, health.CurrentHealth);
+    }
 }

@@ -7,6 +7,8 @@ namespace Live2DAction.Input
     {
         public Vector2 MoveInput { get; private set; }
         public bool AttackPressed { get; private set; }
+        public bool DodgePressed { get; private set; }
+        public bool LockOnPressed { get; private set; }
 
         private void Update()
         {
@@ -15,6 +17,8 @@ namespace Live2DAction.Input
             {
                 MoveInput = Vector2.zero;
                 AttackPressed = false;
+                DodgePressed = false;
+                LockOnPressed = false;
                 return;
             }
 
@@ -29,6 +33,9 @@ namespace Live2DAction.Input
             bool attackKey = keyboard.spaceKey.wasPressedThisFrame;
             bool attackMouse = Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame;
             AttackPressed = attackKey || attackMouse;
+
+            DodgePressed = keyboard.leftShiftKey.wasPressedThisFrame;
+            LockOnPressed = keyboard.qKey.wasPressedThisFrame;
         }
     }
 }

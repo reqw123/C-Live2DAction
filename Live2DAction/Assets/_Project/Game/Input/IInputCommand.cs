@@ -8,5 +8,7 @@ namespace Live2DAction.Input
     {
         Vector2 MoveInput { get; }
         bool AttackPressed { get; }
+        bool DodgePressed { get; }
+        bool LockOnPressed { get; }
     }
 }

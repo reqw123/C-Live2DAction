@@ -2,18 +2,20 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using Unity.Cinemachine;
+using Live2DAction.AI;
+using Live2DAction.CameraSystem;
 using Live2DAction.Characters;
 using Live2DAction.Combat;
 using Live2DAction.Core;
 using Live2DAction.Input;
+using Live2DAction.Targeting;
 
 namespace Live2DAction.EditorTools
 {
     internal static class GreyboxSceneBuilder
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";
-        private const string AttackDataPath = "Assets/_Project/Settings/TestPunch.asset";
+        private const string ComboAttacksFolder = "Assets/_Project/Settings/Combat";
 
         [MenuItem("Tools/Live2DAction/Build Greybox Test Scene")]
         public static void Build()
@@ -25,8 +27,23 @@ namespace Live2DAction.EditorTools
             CreateCoverBlocks();
 
             GameObject player = CreatePlayer();
-            CreateDummy();
-            CreateCamera(player.transform);
+            CreateEnemy(player.transform);
+            ThirdPersonCameraController cameraController = CreateCamera(player.transform);
+
+            TargetLockController lockController = player.GetComponent<TargetLockController>();
+            var lockSo = new SerializedObject(lockController);
+            lockSo.FindProperty("viewOrigin").objectReferenceValue = cameraController.transform;
+            lockSo.ApplyModifiedPropertiesWithoutUndo();
+
+            CharacterMovement movement = player.GetComponent<CharacterMovement>();
+            var movementSo2 = new SerializedObject(movement);
+            movementSo2.FindProperty("cameraYawSource").objectReferenceValue = cameraController;
+            movementSo2.FindProperty("lockOnSource").objectReferenceValue = lockController;
+            movementSo2.ApplyModifiedPropertiesWithoutUndo();
+
+            var cameraSo2 = new SerializedObject(cameraController);
+            cameraSo2.FindProperty("lockOnSource").objectReferenceValue = lockController;
+            cameraSo2.ApplyModifiedPropertiesWithoutUndo();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             AddSceneToBuildSettings(ScenePath);
@@ -74,7 +91,6 @@ namespace Live2DAction.EditorTools
         private static GameObject CreatePlayer()
         {
             var player = new GameObject("Player");
-            player.transform.position = new Vector3(0f, 1f, -2f);
 
             CapsuleCollider capsuleReference = player.AddComponent<CapsuleCollider>();
             float height = capsuleReference.height;
@@ -86,6 +102,13 @@ namespace Live2DAction.EditorTools
             controller.radius = radius;
             controller.center = Vector3.zero;
 
+            // Derived from Ground's actual collider bounds rather than a hardcoded Y so this
+            // can't quietly drift into a floating-capsule bug if height/radius are tuned
+            // later (see FixPlayerGroundedSpawn.cs for the bug this caused once already).
+            GameObject ground = GameObject.Find("Ground");
+            float groundTopY = ground != null ? ground.GetComponent<Collider>().bounds.max.y : 0f;
+            player.transform.position = new Vector3(0f, groundTopY + controller.center.y + controller.height / 2f, -2f);
+
             GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             visual.name = "Visual";
             visual.transform.SetParent(player.transform, false);
@@ -94,61 +117,192 @@ namespace Live2DAction.EditorTools
             PlayerInputProvider inputProvider = player.AddComponent<PlayerInputProvider>();
             CharacterMovement movement = player.AddComponent<CharacterMovement>();
             PlayerCombat combat = player.AddComponent<PlayerCombat>();
+            TargetLockController lockController = player.AddComponent<TargetLockController>();
+            Health playerHealth = player.AddComponent<Health>();
+
+            var lockControllerSo = new SerializedObject(lockController);
+            lockControllerSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
+            lockControllerSo.FindProperty("maxLockRange").floatValue = 15f;
+            lockControllerSo.FindProperty("maxLockAngleDegrees").floatValue = 60f;
+            lockControllerSo.FindProperty("breakRange").floatValue = 20f;
+            lockControllerSo.ApplyModifiedPropertiesWithoutUndo();
 
             SerializedObject movementSo = new SerializedObject(movement);
             movementSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
+            movementSo.FindProperty("dodgeData").objectReferenceValue = CreateOrLoadDodgeData();
+            movementSo.FindProperty("health").objectReferenceValue = playerHealth;
             movementSo.ApplyModifiedPropertiesWithoutUndo();
 
-            AttackData attackData = CreateOrLoadAttackData();
+            AttackData[] comboAttacks = CreateOrLoadComboAttacks();
             SerializedObject combatSo = new SerializedObject(combat);
             combatSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
-            combatSo.FindProperty("attackData").objectReferenceValue = attackData;
+            SerializedProperty comboProperty = combatSo.FindProperty("comboAttacks");
+            comboProperty.arraySize = comboAttacks.Length;
+            for (int i = 0; i < comboAttacks.Length; i++)
+            {
+                comboProperty.GetArrayElementAtIndex(i).objectReferenceValue = comboAttacks[i];
+            }
             combatSo.ApplyModifiedPropertiesWithoutUndo();
 
             return player;
         }
 
-        private static AttackData CreateOrLoadAttackData()
+        // Default frame data (see AttackData.FramesPerSecond) is a reasoned starting point,
+        // not tuned-by-feel numbers - matches common action-game proportions (each hit a bit
+        // slower/heavier than the last) and is meant to be adjusted from these assets in the
+        // Inspector, never by editing this script.
+        private static AttackData[] CreateOrLoadComboAttacks()
         {
-            var existing = AssetDatabase.LoadAssetAtPath<AttackData>(AttackDataPath);
+            return new[]
+            {
+                CreateOrLoadAttackData("LightAttack1", damage: 8f, startupFrames: 6, activeFrames: 4, recoveryFrames: 14, comboWindowFrames: 10),
+                CreateOrLoadAttackData("LightAttack2", damage: 10f, startupFrames: 7, activeFrames: 4, recoveryFrames: 16, comboWindowFrames: 10),
+                CreateOrLoadAttackData("LightAttack3", damage: 16f, startupFrames: 10, activeFrames: 5, recoveryFrames: 22, comboWindowFrames: 0),
+            };
+        }
+
+        // Reasoned starting point (see DodgeData.FramesPerSecond): a quick 3-unit burst
+        // (12 frames = 0.2s), fully invulnerable for its duration, with a 20-frame (~0.33s)
+        // cooldown to prevent spamming - meant to be tuned from the asset, not this script.
+        private static DodgeData CreateOrLoadDodgeData()
+        {
+            const string assetPath = "Assets/_Project/Settings/DodgeData.asset";
+            var existing = AssetDatabase.LoadAssetAtPath<DodgeData>(assetPath);
             if (existing != null)
             {
                 return existing;
             }
 
-            var data = ScriptableObject.CreateInstance<AttackData>();
-            AssetDatabase.CreateAsset(data, AttackDataPath);
+            var data = ScriptableObject.CreateInstance<DodgeData>();
+            var so = new SerializedObject(data);
+            so.FindProperty("distance").floatValue = 3f;
+            so.FindProperty("durationFrames").intValue = 12;
+            so.FindProperty("invulnerabilityFrames").intValue = 12;
+            so.FindProperty("cooldownFrames").intValue = 20;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            AssetDatabase.CreateAsset(data, assetPath);
             return data;
         }
 
-        private static void CreateDummy()
+        private static AttackData CreateOrLoadAttackData(string assetName, float damage, int startupFrames, int activeFrames, int recoveryFrames, int comboWindowFrames)
         {
-            GameObject dummy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            dummy.name = "TrainingDummy";
-            dummy.transform.position = new Vector3(0f, 1f, 0f);
-            dummy.AddComponent<Health>();
+            string path = $"{ComboAttacksFolder}/{assetName}.asset";
+            var existing = AssetDatabase.LoadAssetAtPath<AttackData>(path);
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            if (!AssetDatabase.IsValidFolder(ComboAttacksFolder))
+            {
+                AssetDatabase.CreateFolder("Assets/_Project/Settings", "Combat");
+            }
+
+            var data = ScriptableObject.CreateInstance<AttackData>();
+            var so = new SerializedObject(data);
+            so.FindProperty("attackId").stringValue = assetName;
+            so.FindProperty("damage").floatValue = damage;
+            so.FindProperty("startupFrames").intValue = startupFrames;
+            so.FindProperty("activeFrames").intValue = activeFrames;
+            so.FindProperty("recoveryFrames").intValue = recoveryFrames;
+            so.FindProperty("comboWindowFrames").intValue = comboWindowFrames;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            AssetDatabase.CreateAsset(data, path);
+            return data;
         }
 
-        private static void CreateCamera(Transform followTarget)
+        // TrainingDummy is now an AI-driven enemy rather than a static target - it reuses
+        // PlayerCombat for its attack (see EnemyAI: it implements IInputCommand purely so the
+        // same frame-data combo pipeline the player uses can be shared, per the project rule
+        // that player and AI input share one interface). It has no distinct visual yet
+        // (function before art, per the established pattern with the player's combo attacks).
+        private static GameObject CreateEnemy(Transform playerTarget)
+        {
+            var enemy = new GameObject("TrainingDummy");
+
+            CapsuleCollider capsuleReference = enemy.AddComponent<CapsuleCollider>();
+            float height = capsuleReference.height;
+            float radius = capsuleReference.radius;
+            Object.DestroyImmediate(capsuleReference);
+
+            CharacterController controller = enemy.AddComponent<CharacterController>();
+            controller.height = height;
+            controller.radius = radius;
+            controller.center = Vector3.zero;
+
+            GameObject ground = GameObject.Find("Ground");
+            float groundTopY = ground != null ? ground.GetComponent<Collider>().bounds.max.y : 0f;
+            enemy.transform.position = new Vector3(0f, groundTopY + controller.center.y + controller.height / 2f, 0f);
+
+            GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            visual.name = "Visual";
+            visual.transform.SetParent(enemy.transform, false);
+            Object.DestroyImmediate(visual.GetComponent<Collider>());
+
+            enemy.AddComponent<Health>();
+            enemy.AddComponent<LockOnTarget>();
+
+            EnemyAI ai = enemy.AddComponent<EnemyAI>();
+            var aiSo = new SerializedObject(ai);
+            aiSo.FindProperty("target").objectReferenceValue = playerTarget;
+            aiSo.FindProperty("detectionRange").floatValue = 8f;
+            aiSo.FindProperty("attackRange").floatValue = 2f;
+            aiSo.FindProperty("moveSpeed").floatValue = 2f;
+            aiSo.ApplyModifiedPropertiesWithoutUndo();
+
+            PlayerCombat combat = enemy.AddComponent<PlayerCombat>();
+            AttackData enemyAttack = CreateOrLoadEnemyAttack();
+            var combatSo = new SerializedObject(combat);
+            combatSo.FindProperty("inputSource").objectReferenceValue = ai;
+            SerializedProperty comboProperty = combatSo.FindProperty("comboAttacks");
+            comboProperty.arraySize = 1;
+            comboProperty.GetArrayElementAtIndex(0).objectReferenceValue = enemyAttack;
+            combatSo.ApplyModifiedPropertiesWithoutUndo();
+
+            return enemy;
+        }
+
+        // Lower damage than the player's combo (see CreateOrLoadComboAttacks) since the
+        // player is expected to generally win a straight fight - a reasoned starting point,
+        // not a balanced/tuned value.
+        private static AttackData CreateOrLoadEnemyAttack()
+        {
+            return CreateOrLoadAttackData("EnemyAttack", damage: 5f, startupFrames: 10, activeFrames: 4, recoveryFrames: 20, comboWindowFrames: 0);
+        }
+
+        private static ThirdPersonCameraController CreateCamera(Transform followTarget)
         {
             var cameraGo = new GameObject("Main Camera");
             cameraGo.tag = "MainCamera";
             Camera camera = cameraGo.AddComponent<Camera>();
-            cameraGo.AddComponent<CinemachineBrain>();
+            camera.fieldOfView = 50f;
 
-            var vcamGo = new GameObject("CM Third Person Camera");
-            CinemachineCamera vcam = vcamGo.AddComponent<CinemachineCamera>();
-            vcam.Follow = followTarget;
-            vcam.Lens.FieldOfView = 50f;
+            // Custom, Cinemachine-free orbit camera: see ThirdPersonCameraController for why
+            // Cinemachine's orbital/aim system was removed (Docs/KNOWN_ISSUES.md has the full
+            // investigation). CharacterMovement reads YawDegrees from this same component for
+            // its camera-relative movement math, so screen orientation and movement direction
+            // can never disagree.
+            ThirdPersonCameraController controller = cameraGo.AddComponent<ThirdPersonCameraController>();
+            Transform visual = followTarget.Find("Visual");
+            var controllerSo = new SerializedObject(controller);
+            controllerSo.FindProperty("target").objectReferenceValue = followTarget;
+            controllerSo.FindProperty("distance").floatValue = 4f;
+            controllerSo.FindProperty("targetOffset").vector3Value = new Vector3(0f, 1.4f, 0f);
+            controllerSo.FindProperty("mouseSensitivity").floatValue = 0.15f;
+            controllerSo.FindProperty("minPitch").floatValue = -20f;
+            controllerSo.FindProperty("maxPitch").floatValue = 60f;
+            controllerSo.FindProperty("initialYaw").floatValue = 0f;
+            controllerSo.FindProperty("initialPitch").floatValue = 25f;
+            controllerSo.FindProperty("firstPersonEyeOffset").vector3Value = new Vector3(0f, 1.6f, 0f);
+            if (visual != null)
+            {
+                controllerSo.FindProperty("visualToHide").objectReferenceValue = visual.gameObject;
+            }
+            controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
-            CinemachineOrbitalFollow orbitalFollow = vcamGo.AddComponent<CinemachineOrbitalFollow>();
-            orbitalFollow.Radius = 4f;
-            orbitalFollow.TargetOffset = new Vector3(0f, 1.4f, 0f);
-
-            CinemachineRotationComposer rotationComposer = vcamGo.AddComponent<CinemachineRotationComposer>();
-            vcam.LookAt = followTarget;
-
-            vcamGo.AddComponent<CinemachineInputAxisController>();
+            return controller;
         }
 
         private static void AddSceneToBuildSettings(string scenePath)
