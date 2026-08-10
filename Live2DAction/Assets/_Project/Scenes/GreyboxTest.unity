@@ -426,7 +426,7 @@ Transform:
   m_GameObject: {fileID: 424377428}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -2}
+  m_LocalPosition: {x: 0, y: 0.5, z: -2}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -1064,8 +1064,11 @@ MonoBehaviour:
   target: {fileID: 424377429}
   distance: 4
   targetOffset: {x: 0, y: 1.4, z: 0}
-  yawDegrees: 0
-  pitchDegrees: 25
+  mouseSensitivity: 0.15
+  minPitch: -20
+  maxPitch: 60
+  initialYaw: 0
+  initialPitch: 25
 --- !u!1 &2119030005
 GameObject:
   m_ObjectHideFlags: 0

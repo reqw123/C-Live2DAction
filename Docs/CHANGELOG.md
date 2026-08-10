@@ -104,3 +104,13 @@
 - `GreyboxSceneBuilder.cs`／`FixCameraCustomController.cs` 同步更新欄位寫入。
 - 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**。
+
+## 2026-08-10 — 改回原神風格滑鼠視角，並修正「大跨步到很遠距離」的懸空落地 bug
+
+使用者要求參考原神的攝影機操作方式（滑鼠帶動視角、WASD 相對攝影機移動），並回報移動時角色會突然大跨步移動到很遠的地方。完整排查過程見 `KNOWN_ISSUES.md`，摘要：
+
+- `ThirdPersonCameraController` 改回讀 `Mouse.current.delta` 驅動 yaw/pitch（不需按住按鍵），`GreyboxSceneBuilder.cs`／`FixCameraCustomController.cs` 同步更新欄位寫入。這次的滑鼠視角架構跟先前 Cinemachine 版本不同（只有一份 yaw/pitch 狀態同時決定攝影機旋轉與移動方向），不會重現當初 Body/Aim 兩個元件互相打架的畫圈 bug。
+- 用暫時的診斷測試量測後發現「大跨步」其實跟攝影機/輸入無關：Player 的 `CharacterController.height` 曾被手動改成 1（原設計是 2），但重生 Y 座標沒有跟著調整，導致角色懸空在地板上方 0.5 單位、永遠碰不到地，重力持續累加到很大的下墜速度，一旦撞到任何東西就會被彈開一大段距離。
+- 新增 `FixPlayerGroundedSpawn.cs`：從 Ground 的實際碰撞體邊界＋Player 目前的 `CharacterController` 尺寸動態反推正確重生高度（不是寫死常數），套用後重生 Y 從 1 改成 0.5，`GreyboxSceneBuilder.CreatePlayer()` 也同步改成動態計算，避免未來再度悄悄裂開懸空縫隙。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：滑鼠視角手感、角色是否穩定貼地不再瞬移。

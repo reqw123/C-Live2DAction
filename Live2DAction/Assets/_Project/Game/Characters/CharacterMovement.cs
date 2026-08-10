@@ -9,10 +9,10 @@ namespace Live2DAction.Characters
     {
         [SerializeField] private MonoBehaviour inputSource;
 
-        // Optional: a fixed camera yaw (see ThirdPersonCameraController - the camera never
-        // rotates, so this value never changes at runtime, which is what keeps "pressing W"
-        // meaning the same on-screen direction on every frame). Falls back to Camera.main's
-        // yaw if unassigned, for tests that don't set up a real camera.
+        // Optional: a yaw driven only by explicit mouse-look input (see ICameraYawSource /
+        // ThirdPersonCameraController - this must not be the camera's fully-composed
+        // Transform.forward). Falls back to Camera.main's yaw if unassigned, for tests that
+        // don't set up a real camera.
         [SerializeField] private MonoBehaviour cameraYawSource;
 
         // Matches the top threshold of Maya's Locomotion blend tree (CharacterAnimatorLink)

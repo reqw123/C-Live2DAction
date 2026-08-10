@@ -63,8 +63,11 @@ namespace Live2DAction.EditorTools
             controllerSo.FindProperty("target").objectReferenceValue = player.transform;
             controllerSo.FindProperty("distance").floatValue = 4f;
             controllerSo.FindProperty("targetOffset").vector3Value = new Vector3(0f, 1.4f, 0f);
-            controllerSo.FindProperty("yawDegrees").floatValue = 0f;
-            controllerSo.FindProperty("pitchDegrees").floatValue = 25f;
+            controllerSo.FindProperty("mouseSensitivity").floatValue = 0.15f;
+            controllerSo.FindProperty("minPitch").floatValue = -20f;
+            controllerSo.FindProperty("maxPitch").floatValue = 60f;
+            controllerSo.FindProperty("initialYaw").floatValue = 0f;
+            controllerSo.FindProperty("initialPitch").floatValue = 25f;
             controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
             CharacterMovement movement = player.GetComponent<CharacterMovement>();

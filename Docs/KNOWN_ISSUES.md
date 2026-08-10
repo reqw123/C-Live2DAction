@@ -117,6 +117,28 @@
 - 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：這是本次排查中第三次要求使用者實際 Play 驗證的修法，AI 端目前只能確認場景結構、欄位數值、測試通過，無法確認畫面實際觀感與手感是否符合預期。
 
+## 已變更：改回滑鼠視角跟隨（原神風格），並修正「大跨步到很遠距離」的真正 bug（2026-08-10）
+
+使用者對上一版固定視角不滿意，改要求「請參考原神那種動作遊戲 攝影機要跟著角色視角移動」，同時回報「移動控制還是有問題 會大跨步到很遠的距離」。這次是兩個獨立問題：
+
+### 1. 攝影機改回滑鼠視角（原神風格）
+
+- `ThirdPersonCameraController` 拿掉上一版的固定 `yawDegrees`/`pitchDegrees`，改回讀 `Mouse.current.delta` 累加 yaw/pitch（`mouseSensitivity`/`minPitch`/`maxPitch` 恢復，另外新增 `initialYaw`/`initialPitch` 作為起始角度），不需要按住任何按鍵，滑鼠移動就會即時轉動攝影機視角——符合原神那種「攝影機隨時跟著滑鼠視角、WASD 相對攝影機方向移動」的操作習慣。
+- 這次跟先前 Cinemachine 版本的滑鼠視角**不是同一個 bug 的重演**：Cinemachine 出問題的根源是它把「跟隨位置」（Body/OrbitalFollow）和「瞄準角度」（Aim/RotationComposer）拆成兩個獨立元件，兩者對移動中角色的反應不同步才產生畫圈/漂移。我們自己寫的 `ThirdPersonCameraController` 只有一份 yaw/pitch 狀態，直接同時決定攝影機的旋轉和 `CharacterMovement` 讀到的相對方向，沒有「兩個系統各自反應」的架構，所以不會重現同一種 bug。
+- `GreyboxSceneBuilder.cs`／`FixCameraCustomController.cs` 同步改回寫入 `mouseSensitivity`/`minPitch`/`maxPitch`/`initialYaw`/`initialPitch`。
+
+### 2. 「大跨步到很遠距離」的真正原因：角色沒有真的站在地上
+
+用一個暫時的診斷 PlayMode 測試（載入真實場景、餵入持續前進輸入、每幀記錄座標）直接量測，發現角色的 Y 座標**持續下降、完全不會穩定**——代表 `CharacterController.isGrounded` 從頭到尾都是 false，角色其實整段時間都在自由落體：
+
+- 查場景檔案發現：Player 的 `CharacterController.height` 目前是 `1`（不是 `GreyboxSceneBuilder.cs` 原本設計的預設值 `2`），但 Player 的重生座標 Y 還是舊的 `1`——兩者搭配起來，膠囊體底部懸空在地板上方 0.5 單位，永遠碰不到地。專案裡沒有任何腳本會把 `height` 改成 1，判斷是使用者先前在互動 Editor 裡手動調整膠囊高度（可能是想解決之前「角色消失」時順手調的），但沒有同步調整重生高度，因而產生懸空。
+- 角色因為抓不到地面，`_verticalVelocity` 每幀持續往下累加（永遠不會被 `isGrounded` 重設成貼地的小負值），下落速度隨時間無限增長，一旦終於碰到任何東西（地板、掩體方塊邊緣等），龐大的下墜速度加上 `CharacterController.Move` 的碰撞/滑動處理，就會讓角色瞬間被彈開一段很遠的距離——這正是使用者觀察到的「大跨步到很遠距離」。跟攝影機、輸入方向換算完全無關，是重生高度沒有跟著角色體型調整的落地判定 bug。
+- **修法**：新增 `FixPlayerGroundedSpawn.cs`，直接從 Ground 的實際碰撞體世界邊界＋Player 目前的 `CharacterController.height`/`center` 反推正確的重生 Y（而非寫死常數），套用後 Player 的重生 Y 從 `1` 改成 `0.5`，膠囊底部剛好貼齊地面頂部。同時把 `GreyboxSceneBuilder.CreatePlayer()` 也改成用同樣的方式動態計算重生高度，之後即使 `height`/`radius` 再被調整，也不會又悄悄裂開一個懸空縫隙。
+- 重新用診斷測試驗證：套用修法後角色 Y 座標穩定在同一個值不再持續下降，確認已經真正貼地。
+- **教訓**：`CharacterController` 這類「高度/半徑」和「重生座標」是耦合的兩個數值，只改其中一個很容易留下肉眼不容易發現的懸空縫隙——同類型元件之後若要再手動微調外觀比例，最好同時檢查重生位置是否需要對應調整，或改用像這次一樣「從地面碰撞體反推」的動態算法，不要用寫死的常數。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：滑鼠視角操作手感是否像原神一樣順手、角色現在是否穩定貼地行走、不再出現大跨步瞬移。
+
 ## 待確認
 
 - 本機沒有配置 Unity MCP 或其他可互動的 Editor 自動化工具，本次 Phase 1 全程透過 Unity 命令列 `-batchmode`／`-executeMethod`／`-runTests` 完成，AI 端無法產生「已手動 Play 驗證」的證據，這類驗證一律需要使用者自行操作。

@@ -79,7 +79,6 @@ namespace Live2DAction.EditorTools
         private static GameObject CreatePlayer()
         {
             var player = new GameObject("Player");
-            player.transform.position = new Vector3(0f, 1f, -2f);
 
             CapsuleCollider capsuleReference = player.AddComponent<CapsuleCollider>();
             float height = capsuleReference.height;
@@ -90,6 +89,13 @@ namespace Live2DAction.EditorTools
             controller.height = height;
             controller.radius = radius;
             controller.center = Vector3.zero;
+
+            // Derived from Ground's actual collider bounds rather than a hardcoded Y so this
+            // can't quietly drift into a floating-capsule bug if height/radius are tuned
+            // later (see FixPlayerGroundedSpawn.cs for the bug this caused once already).
+            GameObject ground = GameObject.Find("Ground");
+            float groundTopY = ground != null ? ground.GetComponent<Collider>().bounds.max.y : 0f;
+            player.transform.position = new Vector3(0f, groundTopY + controller.center.y + controller.height / 2f, -2f);
 
             GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             visual.name = "Visual";
@@ -151,8 +157,11 @@ namespace Live2DAction.EditorTools
             controllerSo.FindProperty("target").objectReferenceValue = followTarget;
             controllerSo.FindProperty("distance").floatValue = 4f;
             controllerSo.FindProperty("targetOffset").vector3Value = new Vector3(0f, 1.4f, 0f);
-            controllerSo.FindProperty("yawDegrees").floatValue = 0f;
-            controllerSo.FindProperty("pitchDegrees").floatValue = 25f;
+            controllerSo.FindProperty("mouseSensitivity").floatValue = 0.15f;
+            controllerSo.FindProperty("minPitch").floatValue = -20f;
+            controllerSo.FindProperty("maxPitch").floatValue = 60f;
+            controllerSo.FindProperty("initialYaw").floatValue = 0f;
+            controllerSo.FindProperty("initialPitch").floatValue = 25f;
             controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
             return controller;
