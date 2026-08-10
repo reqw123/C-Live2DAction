@@ -84,3 +84,13 @@
 - 新攝影機刻意未實作牆壁/障礙物碰撞閃避（deferred，非本次需求範圍）。
 - 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過（含載入真實場景的 `CameraRelativeMovementRegressionTests`）。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：腳步是否貼地、滑鼠視角操作是否順手。
+
+## 2026-08-10 — 修正攝影機修法本身帶出的「角色消失」bug
+
+使用者套用上一版攝影機修法後回報「角色消失了，按方向鍵也沒反應」。完整排查過程見 `KNOWN_ISSUES.md`，摘要：
+
+- 原因是 Maya 素材包裡藏著一個素材作者自己預覽用的內嵌攝影機（GameObject 名字與 tag 都叫 `MainCamera`，掛在角色脖子骨頭上），`FixCameraCustomController.cs` 原本用 `GameObject.FindWithTag("MainCamera")` 找攝影機，結果找到的是這顆假攝影機，導致真正的 Main Camera 完全沒被處理（舊 `CinemachineBrain` 留著、畫面卡住），新攝影機控制腳本則被誤裝到角色骨架上、跟動畫互相打架。
+- 修法：`PlayerMayaVisualSetup.cs` 新增 `RemoveEmbeddedCameraRig()`，換裝 Maya 模型時自動清掉視覺階層裡所有內嵌 `Camera`；`FixCameraCustomController.cs` 改用 `GameObject.Find("Main Camera")`（依名稱）取代依 tag 查找。依序重跑三個編輯器工具重建乾淨場景。
+- 教訓：用 tag 在場景裡找「唯一」物件時，不能假設專案自己建立的物件是該 tag 的唯一持有者，外部美術素材可能夾帶同 tag 的物件；改用明確名稱查找更保險。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：角色是否正常顯示、方向鍵與滑鼠視角是否正常回應。

@@ -50,9 +50,25 @@ namespace Live2DAction.EditorTools
                 animator.applyRootMotion = false;
             }
 
+            RemoveEmbeddedCameraRig(visual);
+
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
             Debug.Log("Replaced Player visual with Maya (anime placeholder).");
+        }
+
+        // The Sketchfab package ships with its own preview camera rig (a "MainCamera"-tagged
+        // Camera parented to the neck bone, for the asset author's own turntable renders).
+        // Left in place, it collides with GameObject.FindWithTag("MainCamera") lookups (it
+        // was mistaken for the scene's real camera by an earlier fix script, attaching our
+        // camera controller to the character's neck bone instead - see Docs/KNOWN_ISSUES.md)
+        // and would otherwise render as a second, unwanted camera every frame regardless.
+        private static void RemoveEmbeddedCameraRig(GameObject visual)
+        {
+            foreach (Camera embeddedCamera in visual.GetComponentsInChildren<Camera>(true))
+            {
+                Object.DestroyImmediate(embeddedCamera.gameObject);
+            }
         }
 
         private static void ConvertMaterialsToUrp()

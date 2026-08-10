@@ -40,10 +40,14 @@ namespace Live2DAction.EditorTools
                 Object.DestroyImmediate(oldAnchor);
             }
 
-            GameObject mainCameraGo = GameObject.FindWithTag("MainCamera");
+            // Deliberately by name, not GameObject.FindWithTag("MainCamera"): the Maya
+            // character asset bundles its own embedded preview camera which also carries
+            // that tag (see RemoveEmbeddedCameraRig in PlayerMayaVisualSetup.cs), so a
+            // tag-based lookup can silently match the wrong object.
+            GameObject mainCameraGo = GameObject.Find("Main Camera");
             if (mainCameraGo == null)
             {
-                Debug.LogError("No MainCamera-tagged GameObject found in " + ScenePath);
+                Debug.LogError("No 'Main Camera' GameObject found in " + ScenePath);
                 return;
             }
 

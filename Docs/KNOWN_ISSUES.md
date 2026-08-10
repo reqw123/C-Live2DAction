@@ -89,6 +89,23 @@
 - 13 個 EditMode + 10 個 PlayMode 測試全數重新跑過，全數通過（含載入真實場景的 `CameraRelativeMovementRegressionTests`）。
 - **仍待確認**：滑鼠視角操作是否順手（靈敏度、pitch 範圍）需要使用者在互動 Editor 裡實際試玩確認，AI 端只能確認場景結構正確、測試通過。
 
+## 已修正：套用上面的攝影機修法後角色「消失」、方向鍵「沒反應」（2026-08-10，使用者實際 Play 回報）
+
+使用者套用上一版 `FixCameraCustomController.cs` 後實際 Play，回報「角色消失了，按方向鍵也沒反應」。排查後發現這是上一個攝影機修法本身帶出的新 bug，不是移動或攝影機邏輯又倒退：
+
+- **原因**：Maya 這個 Sketchfab 素材包裡，藏著一個素材作者自己預覽用的內嵌攝影機——一個名字與 tag 都是 `MainCamera` 的 GameObject，掛在角色脖子的骨頭上（`Assets/_Project/Characters/Placeholder/MayaAnime/Prefabs/Maya.prefab` 內部，帶著自己的 `Camera` 元件）。上一版 `FixCameraCustomController.cs` 用 `GameObject.FindWithTag("MainCamera")` 找攝影機，實際抓到的是**這個藏在角色骨架裡的假攝影機**，不是場景真正的 Main Camera。
+  - 真正的 Main Camera 完全沒被處理到，舊的 `CinemachineBrain` 原封不動留著（且已經沒有可用的 Cinemachine 虛擬攝影機可以 blend 過去），畫面因此卡住不動——這是使用者觀察到「角色消失」的原因。
+  - 新寫的 `ThirdPersonCameraController` 則被誤裝到角色脖子上那顆內嵌攝影機，每幀直接用軌道公式覆寫它的位置/旋轉，跟角色骨架動畫互相打架；`CharacterMovement.cameraYawSource` 也連帶指到這顆錯誤的攝影機。移動輸入其實仍然正常運作（角色的 `CharacterController` 照常移動），但因為畫面呈現完全跑掉、可見範圍也被這顆貼身攝影機弄亂，使用者才會覺得「按方向鍵沒反應」。
+  - 場景裡因此同時存在兩台會渲染的 `Camera`（真正的 Main Camera + 角色骨架裡的內嵌攝影機），二者同時渲染時的疊圖/覆蓋順序不確定，進一步加重畫面異常。
+- **修法**：
+  1. `PlayerMayaVisualSetup.cs` 新增 `RemoveEmbeddedCameraRig()`，在每次把 Maya 模型換裝到 Player 身上時，自動找出並刪除視覺階層底下所有 `Camera` 元件所在的 GameObject，徹底清掉這個內嵌攝影機（角色本身沒有用到它，純粹是素材作者留下的殘留物）。
+  2. `FixCameraCustomController.cs` 改用 `GameObject.Find("Main Camera")`（依名稱，跟 `GreyboxSceneBuilder.cs` 建立攝影機時用的名字一致）取代 `GameObject.FindWithTag("MainCamera")`，避免未來又被場景裡任何巧合帶有相同 tag 的物件騙到。
+  3. 依序重新執行 `Replace Player Visual With Maya (Anime)` → `Wire Character Animator Link On Player` → `[Fix] Replace Camera With Custom Controller` 三個編輯器工具，重建乾淨的角色視覺並正確把 `ThirdPersonCameraController` 掛到真正的 Main Camera 上。
+- 修法後直接檢查 `GreyboxTest.unity`：整個場景只剩一個 `Camera` 元件、`ThirdPersonCameraController` 正確掛在名為 "Main Camera" 的 GameObject 上、`CharacterMovement.cameraYawSource` 正確指向同一顆元件、場景中不再有任何 `Cinemachine` 相關殘留。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **教訓**：用 `GameObject.FindWithTag(...)` 在場景裡找「唯一」物件時，不能假設專案自己建立的物件是 tag 的唯一持有者——外部匯入的美術素材完全可能夾帶同樣 tag 的物件；改用明確的名稱／階層路徑查找，或是在腳本裡先用 `GetComponentsInChildren`/`GetComponent<Camera>()` 之類的型別檢查做二次過濾，會更保險。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：角色是否正常顯示、方向鍵移動與滑鼠視角是否正常回應。
+
 ## 待確認
 
 - 本機沒有配置 Unity MCP 或其他可互動的 Editor 自動化工具，本次 Phase 1 全程透過 Unity 命令列 `-batchmode`／`-executeMethod`／`-runTests` 完成，AI 端無法產生「已手動 Play 驗證」的證據，這類驗證一律需要使用者自行操作。
