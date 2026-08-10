@@ -151,6 +151,8 @@ namespace Live2DAction.EditorTools
             controllerSo.FindProperty("target").objectReferenceValue = followTarget;
             controllerSo.FindProperty("distance").floatValue = 4f;
             controllerSo.FindProperty("targetOffset").vector3Value = new Vector3(0f, 1.4f, 0f);
+            controllerSo.FindProperty("yawDegrees").floatValue = 0f;
+            controllerSo.FindProperty("pitchDegrees").floatValue = 25f;
             controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
             return controller;

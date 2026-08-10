@@ -1064,10 +1064,8 @@ MonoBehaviour:
   target: {fileID: 424377429}
   distance: 4
   targetOffset: {x: 0, y: 1.4, z: 0}
-  mouseSensitivity: 0.15
-  minPitch: -20
-  maxPitch: 60
-  invertY: 0
+  yawDegrees: 0
+  pitchDegrees: 25
 --- !u!1 &2119030005
 GameObject:
   m_ObjectHideFlags: 0

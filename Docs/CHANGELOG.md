@@ -94,3 +94,13 @@
 - 教訓：用 tag 在場景裡找「唯一」物件時，不能假設專案自己建立的物件是該 tag 的唯一持有者，外部美術素材可能夾帶同 tag 的物件；改用明確名稱查找更保險。
 - 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：角色是否正常顯示、方向鍵與滑鼠視角是否正常回應。
+
+## 2026-08-10 — 攝影機改回固定視角，取消滑鼠自由視角
+
+使用者要求「先將攝影機固定視角，並且明確 w/s/a/d 是控制角色前/後/左/右移動」，並要求參考網路上一般 3D 遊戲的做法。完整討論見 `KNOWN_ISSUES.md`，摘要：
+
+- `ThirdPersonCameraController` 移除滑鼠輸入，改成固定的 `yawDegrees`/`pitchDegrees`（預設 0/25）；攝影機只跟隨角色位置平移，旋轉永遠不變。
+- 驗算確認 W/A/S/D 與 `CameraRelativeDirection` 換算後對應：W=前進（遠離攝影機）、S=後退、A=畫面左、D=畫面右，且因攝影機角度固定，此對應永遠一致。
+- `GreyboxSceneBuilder.cs`／`FixCameraCustomController.cs` 同步更新欄位寫入。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**。

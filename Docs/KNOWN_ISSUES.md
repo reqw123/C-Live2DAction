@@ -106,6 +106,17 @@
 - **教訓**：用 `GameObject.FindWithTag(...)` 在場景裡找「唯一」物件時，不能假設專案自己建立的物件是 tag 的唯一持有者——外部匯入的美術素材完全可能夾帶同樣 tag 的物件；改用明確的名稱／階層路徑查找，或是在腳本裡先用 `GetComponentsInChildren`/`GetComponent<Camera>()` 之類的型別檢查做二次過濾，會更保險。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：角色是否正常顯示、方向鍵移動與滑鼠視角是否正常回應。
 
+## 已變更：攝影機改回固定視角，取消滑鼠視角控制（2026-08-10，使用者要求）
+
+使用者回報畫面看起來還是舊的、行走仍有問題，並明確要求：「先將攝影機固定視角，並且明確 w/s/a/d 是控制角色前/後/左/右移動」，同時要求參考網路上一般 3D 遊戲的做法。查了幾篇 Unity 論壇討論與 Cinemachine Third Person Follow 文件，確認「固定角度跟隨攝影機（只跟位置、不跟旋轉）＋輸入方向相對攝影機換算」是常見且穩健的做法，跟先前造成多次 bug 的「滑鼠自由視角」是不同的設計取向，因此決定切換過去：
+
+- `ThirdPersonCameraController` 拿掉滑鼠輸入（不再依賴 `Mouse.current.delta`、`mouseSensitivity`、`minPitch`/`maxPitch`/`invertY` 全部移除），改成 `yawDegrees`／`pitchDegrees` 兩個固定數值欄位（預設 0／25），攝影機每幀只會跟著角色的位置平移，旋轉角度永遠不變。
+- 這讓 `CharacterMovement` 透過 `ICameraYawSource` 讀到的 yaw 值永遠是常數（0 度），移動方向與畫面呈現的方向從此不可能再因為攝影機旋轉而產生落差——這是比之前「滑鼠自由視角」更簡單、更不容易出 bug 的架構取捨，代價是玩家不能自己轉動視角。
+- 實際驗算目前的 W/A/S/D 對應（`PlayerInputProvider.cs`）：W→`MoveInput.y=+1`、S→`-1`、A→`MoveInput.x=-1`、D→`+1`；配合 `CameraRelativeDirection` 在 yaw=0 時 forward=世界 +Z、right=世界 +X，換算後 **W＝遠離攝影機（前進）、S＝靠近攝影機（後退）、A＝畫面左、D＝畫面右**，且因為攝影機角度固定，這個對應在整個遊戲過程中永遠一致，不會像先前的滑鼠視角版本一樣隨時間漂移。
+- `GreyboxSceneBuilder.cs`／`FixCameraCustomController.cs` 都已同步改成寫入 `yawDegrees`/`pitchDegrees` 而非舊的滑鼠相關欄位。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：這是本次排查中第三次要求使用者實際 Play 驗證的修法，AI 端目前只能確認場景結構、欄位數值、測試通過，無法確認畫面實際觀感與手感是否符合預期。
+
 ## 待確認
 
 - 本機沒有配置 Unity MCP 或其他可互動的 Editor 自動化工具，本次 Phase 1 全程透過 Unity 命令列 `-batchmode`／`-executeMethod`／`-runTests` 完成，AI 端無法產生「已手動 Play 驗證」的證據，這類驗證一律需要使用者自行操作。
