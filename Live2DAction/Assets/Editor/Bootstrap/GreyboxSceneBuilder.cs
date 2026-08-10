@@ -108,6 +108,7 @@ namespace Live2DAction.EditorTools
 
             SerializedObject movementSo = new SerializedObject(movement);
             movementSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
+            movementSo.FindProperty("dodgeData").objectReferenceValue = CreateOrLoadDodgeData();
             movementSo.ApplyModifiedPropertiesWithoutUndo();
 
             AttackData[] comboAttacks = CreateOrLoadComboAttacks();
@@ -136,6 +137,30 @@ namespace Live2DAction.EditorTools
                 CreateOrLoadAttackData("LightAttack2", damage: 10f, startupFrames: 7, activeFrames: 4, recoveryFrames: 16, comboWindowFrames: 10),
                 CreateOrLoadAttackData("LightAttack3", damage: 16f, startupFrames: 10, activeFrames: 5, recoveryFrames: 22, comboWindowFrames: 0),
             };
+        }
+
+        // Reasoned starting point (see DodgeData.FramesPerSecond): a quick 3-unit burst
+        // (12 frames = 0.2s), fully invulnerable for its duration, with a 20-frame (~0.33s)
+        // cooldown to prevent spamming - meant to be tuned from the asset, not this script.
+        private static DodgeData CreateOrLoadDodgeData()
+        {
+            const string assetPath = "Assets/_Project/Settings/DodgeData.asset";
+            var existing = AssetDatabase.LoadAssetAtPath<DodgeData>(assetPath);
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            var data = ScriptableObject.CreateInstance<DodgeData>();
+            var so = new SerializedObject(data);
+            so.FindProperty("distance").floatValue = 3f;
+            so.FindProperty("durationFrames").intValue = 12;
+            so.FindProperty("invulnerabilityFrames").intValue = 12;
+            so.FindProperty("cooldownFrames").intValue = 20;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            AssetDatabase.CreateAsset(data, assetPath);
+            return data;
         }
 
         private static AttackData CreateOrLoadAttackData(string assetName, float damage, int startupFrames, int activeFrames, int recoveryFrames, int comboWindowFrames)

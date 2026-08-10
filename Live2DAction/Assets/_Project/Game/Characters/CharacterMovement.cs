@@ -24,10 +24,12 @@ namespace Live2DAction.Characters
         [SerializeField] private float acceleration = 20f;
         [SerializeField] private float deceleration = 25f;
         [SerializeField] private float gravity = -20f;
+        [SerializeField] private DodgeData dodgeData;
 
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private float _verticalVelocity;
+        private DodgeState _dodgeState;
 
         // Resolved on every use rather than cached in Awake(), so assigning inputSource
         // after the component has already Awoken (e.g. from a test) still takes effect.
@@ -36,6 +38,8 @@ namespace Live2DAction.Characters
 
         public float MoveSpeed => moveSpeed;
         public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
+        public DodgePhase CurrentDodgePhase => _dodgeState != null ? _dodgeState.Phase : DodgePhase.Idle;
+        public bool IsDodgeInvulnerable => _dodgeState != null && _dodgeState.IsInvulnerable;
 
         private void Awake()
         {
@@ -44,13 +48,40 @@ namespace Live2DAction.Characters
 
         private void Update()
         {
+            // Built lazily rather than in Awake, same reasoning as PlayerCombat's
+            // ComboAttackState: tests assign dodgeData via reflection right after
+            // AddComponent, which already runs Awake synchronously.
+            if (_dodgeState == null)
+            {
+                _dodgeState = new DodgeState(dodgeData);
+            }
+
             IInputCommand inputCommand = InputCommand;
             Vector2 moveInput = inputCommand != null ? inputCommand.MoveInput : Vector2.zero;
+            bool dodgePressed = inputCommand != null && inputCommand.DodgePressed;
             Vector3 desiredDirection = CameraRelativeDirection(moveInput, CurrentCameraYawDegrees());
-            Vector3 desiredVelocity = desiredDirection * moveSpeed;
 
-            float rate = desiredVelocity.sqrMagnitude > 0.0001f ? acceleration : deceleration;
-            _horizontalVelocity = Vector3.MoveTowards(_horizontalVelocity, desiredVelocity, rate * Time.deltaTime);
+            // Dodge backward (relative to current facing) if there's no move input held,
+            // matching the common "backstep" convention when dodging from a standstill.
+            Vector3 dodgeDirectionIfStarting = desiredDirection.sqrMagnitude > 0.0001f ? desiredDirection : -transform.forward;
+            Vector3 dodgeVelocity = _dodgeState.Tick(Time.deltaTime, dodgePressed, dodgeDirectionIfStarting);
+
+            Vector3 facingDirection;
+            if (_dodgeState.Phase == DodgePhase.Dodging)
+            {
+                // A dodge commits to its locked-in direction and speed for its whole
+                // duration - it overrides normal acceleration-based movement entirely
+                // rather than blending with it.
+                _horizontalVelocity = dodgeVelocity;
+                facingDirection = _dodgeState.Direction;
+            }
+            else
+            {
+                Vector3 desiredVelocity = desiredDirection * moveSpeed;
+                float rate = desiredVelocity.sqrMagnitude > 0.0001f ? acceleration : deceleration;
+                _horizontalVelocity = Vector3.MoveTowards(_horizontalVelocity, desiredVelocity, rate * Time.deltaTime);
+                facingDirection = desiredDirection;
+            }
 
             if (_controller.isGrounded && _verticalVelocity < 0f)
             {
@@ -62,9 +93,9 @@ namespace Live2DAction.Characters
             motion.y = _verticalVelocity;
             _controller.Move(motion * Time.deltaTime);
 
-            if (desiredDirection.sqrMagnitude > 0.0001f)
+            if (facingDirection.sqrMagnitude > 0.0001f)
             {
-                Quaternion targetRotation = Quaternion.LookRotation(desiredDirection, Vector3.up);
+                Quaternion targetRotation = Quaternion.LookRotation(facingDirection, Vector3.up);
                 transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, rotationSpeedDegrees * Time.deltaTime);
             }
         }

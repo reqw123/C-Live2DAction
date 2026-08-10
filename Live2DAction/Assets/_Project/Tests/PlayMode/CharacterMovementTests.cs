@@ -19,6 +19,7 @@ public class CharacterMovementTests
     {
         public Vector2 MoveInput { get; set; }
         public bool AttackPressed { get; set; }
+        public bool DodgePressed { get; set; }
     }
 
     private GameObject _player;

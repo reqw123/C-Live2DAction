@@ -475,6 +475,7 @@ MonoBehaviour:
   acceleration: 20
   deceleration: 25
   gravity: -20
+  dodgeData: {fileID: 11400000, guid: 44c5a0cb87015484bb67c1d36f2747b9, type: 2}
 --- !u!114 &424377432
 MonoBehaviour:
   m_ObjectHideFlags: 0

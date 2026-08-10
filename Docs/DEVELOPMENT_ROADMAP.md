@@ -119,6 +119,20 @@
 - **已知限制**：第一人稱下攻擊的判定方向（`PlayerCombat.attackOrigin` 預設是 Player 根物件的 `forward`）目前仍然跟著「移動朝向」走，不是跟著攝影機視角走——因為 `CharacterMovement` 只有在有移動輸入時才轉向，第一人稱站著不動時攻擊方向不會跟著滑鼠視角轉。這次範圍只處理攝影機視角本身，攻擊瞄準方向的重新綁定留給之後的步驟（可能跟敵人鎖定 Step ④ 一起處理）。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按 V 切換視角是否正常、第一人稱的眼睛高度是否合理、隱藏角色模型後畫面觀感如何。
 
+### Step 3：閃避 — ✅ 完成（2026-08-10）
+
+目標：加入按鍵觸發的短距離閃避（衝刺＋無敵幀＋冷卻），依 Roadmap 順序完成後才推進到下一步。
+
+- `IInputCommand` 新增 `DodgePressed`；`PlayerInputProvider` 綁定左 Shift 鍵（`wasPressedThisFrame`，單幀觸發不是持續按住），玩家與 AI 共用同一個輸入介面的規則不變。
+- 新增 `DodgeData.cs`（ScriptableObject，比照 `AttackData` 影格資料模式）：`distance`／`durationFrames`／`invulnerabilityFrames`／`cooldownFrames`，衝刺全程採固定速度（不做加速/減速曲線，符合「一旦觸發就全程投入」的手感），無敵幀範圍 clamp 在 duration 之內。
+- 新增 `DodgePhase.cs`（Idle/Dodging/Cooldown）與 `DodgeState.cs`：純 C# 狀態機，比照 `ComboAttackState` 的既有慣例，可在 EditMode 直接測試時序，不需要 Play。沒有移動輸入時觸發閃避會朝角色目前面向的反方向（後撤步），有輸入時朝輸入的攝影機相對方向閃避；Cooldown 期間按鍵完全無效，不會插隊搶到下一次閃避。
+- `CharacterMovement.cs` 整合 `DodgeState`：Dodging 期間完全接管水平移動（略過原本的加速/減速輸入邏輯），朝閃避方向轉向；非 Dodging 時行為與之前完全一致。新增 `CurrentDodgePhase`／`IsDodgeInvulnerable` 唯讀屬性供之後的系統查詢。
+- 新增 `DodgeStateTests.cs`（EditMode，7 個測試）涵蓋：無輸入不動作、觸發後正確進入 Dodging 並依方向給出速度、方向會被正規化、無敵幀在 Dodging 期間為真、Duration 結束後轉 Cooldown 且無敵幀消失、Cooldown 期間按鍵不會插隊、沒有 `DodgeData` 時安全地維持 Idle。新增 `DodgeMovementTests.cs`（PlayMode，3 個測試）驗證：無輸入觸發閃避時角色確實後撤位移且立即無敵、經過完整 duration+cooldown 後回到 Idle 且無敵幀解除、Cooldown 期間持續按住不會插隊觸發下一次閃避。
+- 新增 `Assets/_Project/Settings/DodgeData.asset`（預設 3 單位／12 影格＝0.2 秒衝刺、全程無敵、20 影格＝約 0.33 秒冷卻，合理起步值待實際 Play 手感調整），`GreyboxSceneBuilder.cs` 與新的一次性修正腳本 `FixDodgeSetup.cs` 都已同步建立並寫入 `CharacterMovement.dodgeData`。
+- 31 個 EditMode（原 24 + 新 7）＋ 15 個 PlayMode（原 12 + 新 3）測試全數通過。
+- **已知限制**：閃避的無敵幀（`IsDodgeInvulnerable`）目前還沒有接到任何實際的傷害判定——Player 身上根本沒有掛 `Health` 元件（目前場景裡只有 TrainingDummy 會受傷，還沒有任何敵人會反過來打玩家），所以這個屬性目前只是「準備好、還沒人用」的狀態，等 Step ⑤ 近戰敵人 AI 讓玩家真的會被打時才需要接上（屆時要決定 `AttackResolver`／`Health.ApplyDamage` 怎麼查詢攻擊目標的無敵狀態）。閃避跟攻擊系統一樣互相獨立，攻擊中可以直接閃避、閃避中攻擊鍵仍會照常觸發連段狀態機（沒有互相打斷的邏輯）。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按左 Shift 閃避的距離/速度/冷卻手感是否合理，之後可直接調整 `DodgeData.asset` 數值。
+
 ## Phase 3：Live2D 與完整流程（未開始）
 
 主選單 → Live2D 開場對話（佔位素材）→ 3D 戰鬥 → 結算 → Live2D 結束對話 → 返回選單 → Windows Build。此階段起，任何要交給他人測試的版本都必須先確認 076/077 佔位素材已被排除或不會被外流。

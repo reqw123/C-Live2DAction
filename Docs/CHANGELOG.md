@@ -135,3 +135,12 @@
 - 24 個 EditMode + 12 個 PlayMode 測試全數通過。
 - 已知限制：第一人稱下攻擊方向仍跟著移動朝向走，不是跟著視角走，留待之後處理。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：V 鍵切換是否正常、眼睛高度是否合理。
+
+## 2026-08-10 — Phase 2 Step 3：閃避
+
+- `IInputCommand` 新增 `DodgePressed`（`PlayerInputProvider` 綁左 Shift），新增 `DodgeData.cs`（ScriptableObject 影格資料：距離/持續/無敵幀/冷卻）、`DodgePhase.cs`、純 C# 狀態機 `DodgeState.cs`（比照 `ComboAttackState` 慣例，EditMode 可測）。
+- `CharacterMovement.cs` 整合閃避：Dodging 期間完全接管水平移動與朝向，非 Dodging 時行為不變；新增 `CurrentDodgePhase`／`IsDodgeInvulnerable` 唯讀屬性。
+- 新增 `DodgeStateTests.cs`（EditMode，7 測試）＋ `DodgeMovementTests.cs`（PlayMode，3 測試）。`GreyboxSceneBuilder.cs`／`FixDodgeSetup.cs` 建立 `DodgeData.asset`（3 單位/12 影格衝刺、全程無敵、20 影格冷卻）並寫入場景。
+- 31 個 EditMode + 15 個 PlayMode 測試全數通過。
+- 已知限制：`IsDodgeInvulnerable` 尚未接到任何傷害判定（Player 目前沒有 `Health` 元件，還沒有敵人會反擊），留給 Step ⑤ 近戰敵人 AI 一起處理。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：閃避距離/速度/冷卻手感。
