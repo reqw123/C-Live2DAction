@@ -133,6 +133,25 @@
 - **已知限制**：閃避的無敵幀（`IsDodgeInvulnerable`）目前還沒有接到任何實際的傷害判定——Player 身上根本沒有掛 `Health` 元件（目前場景裡只有 TrainingDummy 會受傷，還沒有任何敵人會反過來打玩家），所以這個屬性目前只是「準備好、還沒人用」的狀態，等 Step ⑤ 近戰敵人 AI 讓玩家真的會被打時才需要接上（屆時要決定 `AttackResolver`／`Health.ApplyDamage` 怎麼查詢攻擊目標的無敵狀態）。閃避跟攻擊系統一樣互相獨立，攻擊中可以直接閃避、閃避中攻擊鍵仍會照常觸發連段狀態機（沒有互相打斷的邏輯）。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按左 Shift 閃避的距離/速度/冷卻手感是否合理，之後可直接調整 `DodgeData.asset` 數值。
 
+### Step 4：敵人鎖定 — ✅ 完成（2026-08-10）
+
+目標：加入按鍵鎖定敵人，鎖定後攝影機轉向目標、角色轉向目標、WASD 相對鎖定方向做環繞移動——順便解決先前記錄的已知限制（第一人稱下攻擊方向跟著移動朝向走，不是跟著視角走）。
+
+- `IInputCommand` 新增 `LockOnPressed`；`PlayerInputProvider` 綁 Q 鍵（單幀觸發，按一下鎖定/再按一下解鎖）。
+- 新增 `Assets/_Project/Game/Targeting/` 資料夾：
+  - `LockOnTarget.cs`：可鎖定物件的標記元件（`AimPoint` 讓目標指定實際看向的點，例如胸口高度，預設用自己的 Transform）。
+  - `ILockOnSource.cs`：比照 `ICameraYawSource` 的既有模式，讓 `CharacterMovement`／`ThirdPersonCameraController` 透過可選的 `MonoBehaviour` 欄位查詢目前鎖定目標，不需要直接依賴 `TargetLockController`。
+  - `TargetLockUtility.cs`：純邏輯（候選篩選＋角度數學），比照 `AttackResolver` 既有慣例，可在 EditMode 直接測試不需要 Play。`FindBestTarget` 挑選距離內、視角範圍內、離攝影機視線最近的候選；`ComputeLockOnYawPitch` 把「玩家位置→目標位置」的方向換算成跟滑鼠視角相同的 (yaw, pitch) 表示法，確保鎖定跟自由視角切換時攝影機的旋轉運算方式完全一致，不會有兩套邏輯互相打架。
+  - `TargetLockController.cs`：按鍵觸發鎖定/解鎖，每幀驗證鎖定目標是否還有效（超出 `breakRange`、被摧毀、或 GameObject 被停用——`Health.ApplyDamage` 死亡時本來就會 `SetActive(false)`，所以「死掉自動解鎖」不需要額外程式碼，直接沿用既有機制）。
+- `ThirdPersonCameraController.cs` 整合：鎖定時每幀改用 `ComputeLockOnYawPitch` 計算 yaw/pitch（忽略滑鼠 delta），解鎖後立刻恢復滑鼠視角；因為兩種模式共用同一份 `_yaw`/`_pitch` 欄位與同一套 `ComputeCameraPosition` 定位公式，`CharacterMovement` 讀到的 `YawDegrees` 永遠反映攝影機實際呈現的方向，不會重演先前 Cinemachine 版本「移動邏輯跟畫面呈現各自解讀」的舊 bug。
+- `CharacterMovement.cs` 整合：鎖定時（且非閃避中）角色朝向永遠面向鎖定目標，不受移動輸入影響（站著不動也會轉向面對目標）；配合攝影機的 yaw 已經指向目標，WASD 的相機相對移動天然變成繞著目標環繞——完全重用既有的 `CameraRelativeDirection` 架構，不需要另外寫「環繞移動」邏輯。閃避方向優先於鎖定朝向（閃避中維持閃避自己鎖定的方向）。
+- `GreyboxSceneBuilder.cs`：Player 新增 `TargetLockController`（`viewOrigin` 指向 Main Camera，讓候選篩選以攝影機視線為準，而非角色自身朝向），TrainingDummy 新增 `LockOnTarget`，`CharacterMovement`／`ThirdPersonCameraController` 都交叉接上 `lockOnSource`。新增一次性修正腳本 `FixTargetLockSetup.cs` 套用到既有場景。
+- 新增 `TargetLockUtilityTests.cs`（EditMode，12 個測試）：候選篩選（距離內/範圍外/視角外/停用物件/無候選）、有效性檢查（範圍內/範圍外/已停用/已摧毀）、`ComputeLockOnYawPitch` 用「換算出的角度重新代回同一個旋轉公式，方向要對得上目標」的往返一致性驗證（刻意不去猜測 pitch 正負號的直覺答案，避免重演先前攝影機方向感的 bug），以及 pitch clamp、同位置回傳零角度等邊界案例。新增 `TargetLockControllerTests.cs`（PlayMode，4 測試）驗證按鍵鎖定/解鎖/目標停用自動解鎖/無候選時維持未鎖定。新增 `LockOnFacingAndCameraTests.cs`（PlayMode，2 測試）驗證 `CharacterMovement` 在鎖定時即使無移動輸入也會轉向目標、`ThirdPersonCameraController` 在鎖定時的 yaw 與實際鏡頭朝向確實對準目標方向。
+- 43 個 EditMode（原 31 + 新 12）＋ 21 個 PlayMode（原 15 + 新 6）測試全數通過。
+- **已解決**：先前記錄的已知限制「第一人稱下攻擊方向跟著移動朝向走，不是跟著視角走」——現在鎖定敵人後，角色朝向（進而攻擊方向）會直接對準鎖定目標，不再依賴移動輸入方向；未鎖定時的行為（含第一人稱站立不動時攻擊方向仍跟著移動朝向）維持原樣不變，這是合理的階段性解法，之後如果需要「未鎖定也能瞄準視角方向」再另外處理。
+- **已知限制**：`viewOrigin` 目前固定用 Main Camera 的朝向做候選篩選角度，鎖定/解鎖之間沒有平滑過渡（攝影機會瞬間轉向，不是漸進補間），沒有「多目標循環切換」功能（同一個鎖定鍵只能鎖最近的一個，無法切換到範圍內其他候選）——這些都留給之後視實際 Play 手感決定是否需要。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按 Q 鎖定訓練假人後攝影機/角色朝向是否正確、鎖定中環繞移動手感如何、解鎖後視角是否能正常恢復。
+
 ## Phase 3：Live2D 與完整流程（未開始）
 
 主選單 → Live2D 開場對話（佔位素材）→ 3D 戰鬥 → 結算 → Live2D 結束對話 → 返回選單 → Windows Build。此階段起，任何要交給他人測試的版本都必須先確認 076/077 佔位素材已被排除或不會被外流。

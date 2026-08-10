@@ -415,6 +415,7 @@ GameObject:
   - component: {fileID: 424377431}
   - component: {fileID: 424377430}
   - component: {fileID: 424377434}
+  - component: {fileID: 424377435}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -476,6 +477,7 @@ MonoBehaviour:
   deceleration: 25
   gravity: -20
   dodgeData: {fileID: 11400000, guid: 44c5a0cb87015484bb67c1d36f2747b9, type: 2}
+  lockOnSource: {fileID: 424377435}
 --- !u!114 &424377432
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -528,6 +530,23 @@ MonoBehaviour:
   animator: {fileID: 112064935}
   speedParameterName: Speed
   maxAnimatorSpeed: 2
+--- !u!114 &424377435
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 424377428}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e7e32b3012f42c34b9c2431d350c8ad7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  inputSource: {fileID: 424377432}
+  viewOrigin: {fileID: 1984529359}
+  maxLockRange: 15
+  maxLockAngleDegrees: 60
+  breakRange: 20
 --- !u!1 &571723333
 GameObject:
   m_ObjectHideFlags: 0
@@ -863,6 +882,7 @@ GameObject:
   - component: {fileID: 1722813617}
   - component: {fileID: 1722813616}
   - component: {fileID: 1722813615}
+  - component: {fileID: 1722813620}
   m_Layer: 0
   m_Name: TrainingDummy
   m_TagString: Untagged
@@ -974,6 +994,19 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1722813620
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1722813614}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69d965c8658c8ac4c8494f2bb366a078, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  aimPoint: {fileID: 0}
 --- !u!1 &1984529356
 GameObject:
   m_ObjectHideFlags: 0
@@ -1081,6 +1114,7 @@ MonoBehaviour:
   startingViewMode: 0
   firstPersonEyeOffset: {x: 0, y: 1.6, z: 0}
   visualToHide: {fileID: 112064936}
+  lockOnSource: {fileID: 424377435}
 --- !u!1 &2119030005
 GameObject:
   m_ObjectHideFlags: 0

@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using Live2DAction.Targeting;
 
 namespace Live2DAction.CameraSystem
 {
@@ -30,9 +31,15 @@ namespace Live2DAction.CameraSystem
         // model is hidden rather than just the head (see Docs/KNOWN_ISSUES.md).
         [SerializeField] private GameObject visualToHide;
 
+        // Optional: while this reports a locked target, yaw/pitch are computed to look at it
+        // each frame instead of being driven by mouse delta (see ILockOnSource).
+        [SerializeField] private MonoBehaviour lockOnSource;
+
         private float _yaw;
         private float _pitch;
         private CameraViewMode _viewMode;
+
+        private ILockOnSource LockOnSource => lockOnSource as ILockOnSource;
 
         public float YawDegrees => _yaw;
         public CameraViewMode ViewMode => _viewMode;
@@ -71,10 +78,18 @@ namespace Live2DAction.CameraSystem
                 ToggleViewMode();
             }
 
-            Vector2 mouseDelta = Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
-            _yaw += mouseDelta.x * mouseSensitivity;
-            _pitch -= mouseDelta.y * mouseSensitivity;
-            _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
+            Transform lockedTarget = LockOnSource?.LockedTarget;
+            if (lockedTarget != null)
+            {
+                TargetLockUtility.ComputeLockOnYawPitch(target.position, lockedTarget.position, minPitch, maxPitch, out _yaw, out _pitch);
+            }
+            else
+            {
+                Vector2 mouseDelta = Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
+                _yaw += mouseDelta.x * mouseSensitivity;
+                _pitch -= mouseDelta.y * mouseSensitivity;
+                _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
+            }
 
             Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0f);
             Vector3 position = ComputeCameraPosition(_viewMode, target.position, rotation, distance, targetOffset, firstPersonEyeOffset);

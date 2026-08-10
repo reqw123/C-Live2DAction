@@ -1,6 +1,7 @@
 using UnityEngine;
 using Live2DAction.CameraSystem;
 using Live2DAction.Input;
+using Live2DAction.Targeting;
 
 namespace Live2DAction.Characters
 {
@@ -26,6 +27,11 @@ namespace Live2DAction.Characters
         [SerializeField] private float gravity = -20f;
         [SerializeField] private DodgeData dodgeData;
 
+        // Optional: while this reports a locked target, the character always faces it
+        // (unless dodging) instead of the movement direction, so attacks aim at the target
+        // even while strafing around it or standing still.
+        [SerializeField] private MonoBehaviour lockOnSource;
+
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private float _verticalVelocity;
@@ -35,6 +41,7 @@ namespace Live2DAction.Characters
         // after the component has already Awoken (e.g. from a test) still takes effect.
         private IInputCommand InputCommand => inputSource as IInputCommand;
         private ICameraYawSource CameraYawSource => cameraYawSource as ICameraYawSource;
+        private ILockOnSource LockOnSource => lockOnSource as ILockOnSource;
 
         public float MoveSpeed => moveSpeed;
         public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
@@ -80,7 +87,18 @@ namespace Live2DAction.Characters
                 Vector3 desiredVelocity = desiredDirection * moveSpeed;
                 float rate = desiredVelocity.sqrMagnitude > 0.0001f ? acceleration : deceleration;
                 _horizontalVelocity = Vector3.MoveTowards(_horizontalVelocity, desiredVelocity, rate * Time.deltaTime);
-                facingDirection = desiredDirection;
+
+                Transform lockedTarget = LockOnSource?.LockedTarget;
+                if (lockedTarget != null)
+                {
+                    Vector3 toTarget = lockedTarget.position - transform.position;
+                    toTarget.y = 0f;
+                    facingDirection = toTarget;
+                }
+                else
+                {
+                    facingDirection = desiredDirection;
+                }
             }
 
             if (_controller.isGrounded && _verticalVelocity < 0f)

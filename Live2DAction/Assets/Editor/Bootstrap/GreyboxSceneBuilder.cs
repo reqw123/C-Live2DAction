@@ -7,6 +7,7 @@ using Live2DAction.Characters;
 using Live2DAction.Combat;
 using Live2DAction.Core;
 using Live2DAction.Input;
+using Live2DAction.Targeting;
 
 namespace Live2DAction.EditorTools
 {
@@ -26,12 +27,22 @@ namespace Live2DAction.EditorTools
 
             GameObject player = CreatePlayer();
             CreateDummy();
-            ThirdPersonCameraController yawSource = CreateCamera(player.transform);
+            ThirdPersonCameraController cameraController = CreateCamera(player.transform);
+
+            TargetLockController lockController = player.GetComponent<TargetLockController>();
+            var lockSo = new SerializedObject(lockController);
+            lockSo.FindProperty("viewOrigin").objectReferenceValue = cameraController.transform;
+            lockSo.ApplyModifiedPropertiesWithoutUndo();
 
             CharacterMovement movement = player.GetComponent<CharacterMovement>();
             var movementSo2 = new SerializedObject(movement);
-            movementSo2.FindProperty("cameraYawSource").objectReferenceValue = yawSource;
+            movementSo2.FindProperty("cameraYawSource").objectReferenceValue = cameraController;
+            movementSo2.FindProperty("lockOnSource").objectReferenceValue = lockController;
             movementSo2.ApplyModifiedPropertiesWithoutUndo();
+
+            var cameraSo2 = new SerializedObject(cameraController);
+            cameraSo2.FindProperty("lockOnSource").objectReferenceValue = lockController;
+            cameraSo2.ApplyModifiedPropertiesWithoutUndo();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             AddSceneToBuildSettings(ScenePath);
@@ -105,6 +116,14 @@ namespace Live2DAction.EditorTools
             PlayerInputProvider inputProvider = player.AddComponent<PlayerInputProvider>();
             CharacterMovement movement = player.AddComponent<CharacterMovement>();
             PlayerCombat combat = player.AddComponent<PlayerCombat>();
+            TargetLockController lockController = player.AddComponent<TargetLockController>();
+
+            var lockControllerSo = new SerializedObject(lockController);
+            lockControllerSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
+            lockControllerSo.FindProperty("maxLockRange").floatValue = 15f;
+            lockControllerSo.FindProperty("maxLockAngleDegrees").floatValue = 60f;
+            lockControllerSo.FindProperty("breakRange").floatValue = 20f;
+            lockControllerSo.ApplyModifiedPropertiesWithoutUndo();
 
             SerializedObject movementSo = new SerializedObject(movement);
             movementSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
@@ -197,6 +216,7 @@ namespace Live2DAction.EditorTools
             dummy.name = "TrainingDummy";
             dummy.transform.position = new Vector3(0f, 1f, 0f);
             dummy.AddComponent<Health>();
+            dummy.AddComponent<LockOnTarget>();
         }
 
         private static ThirdPersonCameraController CreateCamera(Transform followTarget)

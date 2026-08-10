@@ -18,6 +18,7 @@ public class CombatPlayModeTests
         public Vector2 MoveInput { get; set; }
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
+        public bool LockOnPressed { get; set; }
     }
 
     private static void SetField(object target, string fieldName, object value)

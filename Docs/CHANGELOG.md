@@ -144,3 +144,14 @@
 - 31 個 EditMode + 15 個 PlayMode 測試全數通過。
 - 已知限制：`IsDodgeInvulnerable` 尚未接到任何傷害判定（Player 目前沒有 `Health` 元件，還沒有敵人會反擊），留給 Step ⑤ 近戰敵人 AI 一起處理。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：閃避距離/速度/冷卻手感。
+
+## 2026-08-10 — Phase 2 Step 4：敵人鎖定
+
+- `IInputCommand` 新增 `LockOnPressed`（`PlayerInputProvider` 綁 Q 鍵）。新增 `Assets/_Project/Game/Targeting/`：`LockOnTarget`（可鎖定標記）、`ILockOnSource`（比照 `ICameraYawSource` 模式）、`TargetLockUtility`（純邏輯：候選篩選＋角度數學，EditMode 可測）、`TargetLockController`（按鍵鎖定/解鎖＋每幀有效性檢查，目標死亡時因為 `Health` 本來就會 `SetActive(false)` 而自動解鎖，不需要額外程式碼）。
+- `ThirdPersonCameraController` 鎖定時改用 `ComputeLockOnYawPitch` 算 yaw/pitch（忽略滑鼠），`CharacterMovement` 鎖定時朝向永遠面對目標（閃避優先）；因為攝影機跟移動共用同一份 yaw，WASD 天然變成環繞鎖定目標移動，不需要另外寫環繞邏輯。
+- `GreyboxSceneBuilder.cs`／`FixTargetLockSetup.cs` 把 `TargetLockController` 掛到 Player、`LockOnTarget` 掛到 TrainingDummy 並交叉接線。
+- 新增 `TargetLockUtilityTests.cs`（EditMode，12 測試）、`TargetLockControllerTests.cs`（PlayMode，4 測試）、`LockOnFacingAndCameraTests.cs`（PlayMode，2 測試）。
+- 43 個 EditMode + 21 個 PlayMode 測試全數通過。
+- 已解決：先前「第一人稱下攻擊方向跟著移動朝向走」的已知限制——鎖定後角色朝向直接對準目標。
+- 已知限制：鎖定/解鎖沒有平滑過渡、沒有多目標循環切換。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按 Q 鎖定後攝影機/角色朝向與環繞移動手感。
