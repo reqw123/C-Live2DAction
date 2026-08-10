@@ -10,9 +10,13 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fceba8b3e429d334a8abd39a84e943a3, type: 3}
-  m_Name: TestPunch
+  m_Name: LightAttack3
   m_EditorClassIdentifier: 
-  attackId: Attack1
-  damage: 10
+  attackId: LightAttack3
+  damage: 16
   range: 1.5
   radius: 0.75
+  startupFrames: 10
+  activeFrames: 5
+  recoveryFrames: 22
+  comboWindowFrames: 0

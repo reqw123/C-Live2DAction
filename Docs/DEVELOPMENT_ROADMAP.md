@@ -83,6 +83,29 @@
 - 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：腳步是否貼地、滑鼠視角操作是否順手。
 
+### Step 1 三次追加：攝影機改回原神風格滑鼠視角＋修正懸空落地 bug — ✅ 完成（2026-08-10）
+
+使用者要求攝影機參考原神（滑鼠即時帶動視角），並回報角色移動時會「大跨步到很遠距離」。完整排查過程見 `KNOWN_ISSUES.md`／`CHANGELOG.md`：
+
+- 攝影機改回滑鼠視角（`ThirdPersonCameraController` 讀 `Mouse.current.delta` 驅動 yaw/pitch），架構上跟先前 Cinemachine 版本不同（單一狀態同時驅動旋轉與移動方向），不會重演畫圈 bug。
+- 「大跨步」真正原因：Player 的 `CharacterController.height` 曾被手動改成 1，重生 Y 座標沒同步調整，導致角色懸空、永遠碰不到地，重力累積到很大速度後撞到東西被彈飛。新增 `FixPlayerGroundedSpawn.cs`，改成從地面碰撞體＋角色體型動態反推重生高度。
+- 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**。
+
+### Step 2：三段普攻＋影格資料 — ✅ 完成（2026-08-10）
+
+目標：把 Phase 1 的單發測試拳擴充成有 startup/active/recovery 影格、可連段的三段普攻，動畫先不處理（Maya 目前沒有攻擊動畫素材，先確保邏輯正確，動畫之後再補——使用者已確認此範圍）。
+
+- `AttackData.cs` 新增影格資料欄位：`startupFrames`／`activeFrames`／`recoveryFrames`／`comboWindowFrames`（皆以 60fps 為基準換算成秒數，`FramesPerSecond` 常數集中管理），數值仍是可調的 ScriptableObject 資產，不寫死在程式碼。
+- 新增 `AttackPhase.cs`（Idle/Startup/Active/Recovery）與 `ComboAttackState.cs`：純 C# 狀態機（非 MonoBehaviour），比照既有 `AttackResolver` 的「純邏輯先於 MonoBehaviour」慣例，可在 EditMode 直接測試時序與連段邏輯，不需要 Play 迴圈。狀態機每次攻擊只在進入 Active 的那一步觸發一次判定，Recovery 期間有連段視窗（`comboWindowFrames`），視窗內按下攻擊鍵會取消剩餘 Recovery 直接銜接下一段；視窗外按下不會連段，攻擊鍵在 Idle 狀態下按下才會開始新的一輪。
+- `PlayerCombat.cs` 改成持有 `AttackData[] comboAttacks`（取代原本單一 `attackData` 欄位），每幀把 `Time.deltaTime` 與攻擊鍵狀態餵給 `ComboAttackState.Tick()`，回傳 true 時才執行 `Physics.OverlapSphere` + `AttackResolver.ResolveHits`。狀態機延遲到第一次 `Update()` 才建立（而不是 `Awake()`），沿用專案既有慣例：測試在 `AddComponent` 之後才用 reflection 設欄位，避免被 `Awake()` 提前快取用到舊值卡住。
+- 新增 `Assets/_Project/Settings/Combat/LightAttack1/2/3.asset` 三個攻擊資料（預設數值：傷害 8/10/16，startup 6/7/10 影格，active 4/4/5 影格，recovery 14/16/22 影格，連段視窗 10/10/0 影格——第三段沒有下一段可接，數值不影響行為），取代舊的單一 `TestPunch.asset`（已刪除）。`GreyboxSceneBuilder.cs` 與新的一次性修正腳本 `FixComboAttacksSetup.cs` 都已改成建立/載入這三個資產並寫入 `comboAttacks` 陣列。
+- 新增 `ComboAttackStateTests.cs`（EditMode，8 個測試）：涵蓋 Idle 無輸入不動作、攻擊鍵從 Idle 進入 Startup、Active 期間恰好判定一次、Recovery 逾時無輸入回到 Idle、連段視窗內按鍵成功銜接下一段、視窗外按鍵不會連段、第三段沒有第四段可接、Idle 時 `CurrentAttack` 為 null。
+- 更新既有 `CombatPlayModeTests.cs`（原本假設攻擊鍵按下當幀就立刻命中）：改用 `comboAttacks` 陣列欄位，並把測試用的 `AttackData` 的 startup/active/recovery 全設為 0 影格，讓狀態機在幾幀內就確定性地走到判定步驟（headless batchmode 下單幀 `Time.deltaTime` 極小，見既有已知問題，0 影格門檻能確保不受這個時序怪異影響），迴圈等待 5 幀後再斷言傷害結果。
+- 20 個 EditMode（原 12 + 新 8）＋ 10 個 PlayMode 測試全數通過。
+- **已知限制**：連段判定完全靠邏輯與 debug 觸發驗證，Maya 沒有對應的三段攻擊動畫，Play 起來攻擊時角色視覺上不會有揮擊動作（只有 `Physics.OverlapSphere` 判定跟傷害會真的生效）；攻擊時是否要鎖定/減速移動也尚未處理，兩者都留給之後的步驟。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：連段輸入手感（尤其連段視窗的時機）是否合理，之後可依此調整 `LightAttack1/2/3.asset` 的影格數值。
+
 ## Phase 3：Live2D 與完整流程（未開始）
 
 主選單 → Live2D 開場對話（佔位素材）→ 3D 戰鬥 → 結算 → Live2D 結束對話 → 返回選單 → Windows Build。此階段起，任何要交給他人測試的版本都必須先確認 076/077 佔位素材已被排除或不會被外流。

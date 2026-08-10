@@ -26,6 +26,23 @@ public class CombatPlayModeTests
         field.SetValue(target, value);
     }
 
+    // Zero startup/active frames so the combo state machine reaches its hit-resolving step
+    // within a handful of Update ticks regardless of how small Time.deltaTime is under
+    // headless batchmode (see Docs/KNOWN_ISSUES.md on that timing quirk) - these tests are
+    // about the attack -> physics -> damage wiring, not frame-data timing itself (that's
+    // covered by ComboAttackStateTests in EditMode).
+    private static AttackData CreateInstantHitAttackData(float damage)
+    {
+        var data = ScriptableObject.CreateInstance<AttackData>();
+        SetField(data, "damage", damage);
+        SetField(data, "range", 1f);
+        SetField(data, "radius", 0.6f);
+        SetField(data, "startupFrames", 0);
+        SetField(data, "activeFrames", 0);
+        SetField(data, "recoveryFrames", 0);
+        return data;
+    }
+
     [UnityTest]
     public IEnumerator RealEngineLoop_AttackConnectsAndDamagesTarget()
     {
@@ -34,13 +51,10 @@ public class CombatPlayModeTests
         StubInputBehaviour stubInput = attackerGo.AddComponent<StubInputBehaviour>();
         PlayerCombat combat = attackerGo.AddComponent<PlayerCombat>();
 
-        AttackData attackData = ScriptableObject.CreateInstance<AttackData>();
-        SetField(attackData, "damage", 20f);
-        SetField(attackData, "range", 1f);
-        SetField(attackData, "radius", 0.6f);
+        AttackData attackData = CreateInstantHitAttackData(20f);
 
         SetField(combat, "inputSource", stubInput);
-        SetField(combat, "attackData", attackData);
+        SetField(combat, "comboAttacks", new[] { attackData, null, null });
 
         var targetGo = new GameObject("Target");
         targetGo.transform.position = attackerGo.transform.position + attackerGo.transform.forward * 1f;
@@ -50,7 +64,10 @@ public class CombatPlayModeTests
         yield return null; // let Awake run
 
         stubInput.AttackPressed = true;
-        yield return null; // let Update() perform the attack
+        for (int i = 0; i < 5; i++)
+        {
+            yield return null; // step the combo state machine through Startup -> Active
+        }
 
         Assert.AreEqual(targetHealth.MaxHealth - 20f, targetHealth.CurrentHealth);
 
@@ -67,13 +84,10 @@ public class CombatPlayModeTests
         StubInputBehaviour stubInput = attackerGo.AddComponent<StubInputBehaviour>();
         PlayerCombat combat = attackerGo.AddComponent<PlayerCombat>();
 
-        AttackData attackData = ScriptableObject.CreateInstance<AttackData>();
-        SetField(attackData, "damage", 999f);
-        SetField(attackData, "range", 1f);
-        SetField(attackData, "radius", 0.6f);
+        AttackData attackData = CreateInstantHitAttackData(999f);
 
         SetField(combat, "inputSource", stubInput);
-        SetField(combat, "attackData", attackData);
+        SetField(combat, "comboAttacks", new[] { attackData, null, null });
 
         var targetGo = new GameObject("Target");
         targetGo.transform.position = attackerGo.transform.position + attackerGo.transform.forward * 1f;
@@ -83,7 +97,10 @@ public class CombatPlayModeTests
         yield return null;
 
         stubInput.AttackPressed = true;
-        yield return null;
+        for (int i = 0; i < 5; i++)
+        {
+            yield return null;
+        }
 
         Assert.IsTrue(targetHealth.IsDead);
         Assert.IsFalse(targetGo.activeSelf);

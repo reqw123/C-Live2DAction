@@ -446,7 +446,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   inputSource: {fileID: 424377432}
-  attackData: {fileID: 11400000, guid: d8be034b8827f884c907f1c72950d150, type: 2}
+  comboAttacks:
+  - {fileID: 11400000, guid: 41e9eba2e5253bb4ba44b3e06e4d5b6c, type: 2}
+  - {fileID: 11400000, guid: 43d5dc6d27bd19f479dfe843bba5597a, type: 2}
+  - {fileID: 11400000, guid: 13820c065f504cd4e8d922f38cb6898b, type: 2}
   attackOrigin: {fileID: 0}
 --- !u!114 &424377431
 MonoBehaviour:

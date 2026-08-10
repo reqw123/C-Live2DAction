@@ -143,6 +143,8 @@
 
 - 本機沒有配置 Unity MCP 或其他可互動的 Editor 自動化工具，本次 Phase 1 全程透過 Unity 命令列 `-batchmode`／`-executeMethod`／`-runTests` 完成，AI 端無法產生「已手動 Play 驗證」的證據，這類驗證一律需要使用者自行操作。
 - 手把輸入是否列入垂直切片範圍，尚未決定（`C:\Live2DFighter` 的經驗是手把部分尚未完成測試）。
+- **三段普攻沒有對應動畫**（2026-08-10 新增，使用者已確認範圍，非阻塞項）：Maya 目前只有 Idle/Walk/Run/Jump/Fall 動畫，`ComboAttackState` 的三段連段判定與傷害邏輯已完成並測試通過，但攻擊時角色視覺上不會播放任何揮擊動作，只有 debug 層面（`Physics.OverlapSphere` 命中、`Health` 扣血）看得出效果。之後需要找/做適合 Maya 骨架的攻擊動畫（CC0 或需授權素材），再串接到 `AttackPhase`（例如 Startup 觸發 Trigger、Recovery 結束或連段成功時處理過渡）。
+- **攻擊時未鎖定/減速移動**：目前 `CharacterMovement` 與 `PlayerCombat` 完全獨立，攻擊全程角色仍可自由移動，這跟大多數動作遊戲「攻擊時至少 Startup/Active 期間會停下來或大幅減速」的手感不同，之後視實際 Play 手感決定是否要加上這個耦合。
 
 ## 已解決
 

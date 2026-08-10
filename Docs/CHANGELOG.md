@@ -114,3 +114,13 @@
 - 新增 `FixPlayerGroundedSpawn.cs`：從 Ground 的實際碰撞體邊界＋Player 目前的 `CharacterController` 尺寸動態反推正確重生高度（不是寫死常數），套用後重生 Y 從 1 改成 0.5，`GreyboxSceneBuilder.CreatePlayer()` 也同步改成動態計算，避免未來再度悄悄裂開懸空縫隙。
 - 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：滑鼠視角手感、角色是否穩定貼地不再瞬移。
+
+## 2026-08-10 — Phase 2 Step 2：三段普攻＋影格資料
+
+- `AttackData.cs` 新增 startup/active/recovery/comboWindow 影格欄位（60fps 基準），新增純 C# 狀態機 `ComboAttackState.cs`（`AttackPhase.cs`）處理三段連段的時序與連段視窗判定，比照既有 `AttackResolver` 的純邏輯慣例可在 EditMode 直接測試。
+- `PlayerCombat.cs` 改用 `AttackData[] comboAttacks` 陣列取代原本單一 `attackData` 欄位，每幀把狀態機推進一步，只在進入 Active 判定的那一步做一次 `Physics.OverlapSphere` + 傷害判定。
+- 新增三個 `LightAttack1/2/3.asset`（`Assets/_Project/Settings/Combat/`）取代舊的 `TestPunch.asset`；`GreyboxSceneBuilder.cs` 與新的 `FixComboAttacksSetup.cs` 都已同步建立/寫入。
+- 新增 `ComboAttackStateTests.cs`（EditMode，8 個測試），更新 `CombatPlayModeTests.cs` 配合新的陣列欄位與影格時序。
+- 20 個 EditMode + 10 個 PlayMode 測試全數通過。
+- 已知限制：Maya 目前沒有攻擊動畫（先做邏輯，動畫之後補，使用者已確認範圍）；攻擊時是否鎖定/減速移動尚未處理。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：連段輸入手感、連段視窗時機是否合理。

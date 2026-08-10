@@ -13,7 +13,7 @@ namespace Live2DAction.EditorTools
     internal static class GreyboxSceneBuilder
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";
-        private const string AttackDataPath = "Assets/_Project/Settings/TestPunch.asset";
+        private const string ComboAttacksFolder = "Assets/_Project/Settings/Combat";
 
         [MenuItem("Tools/Live2DAction/Build Greybox Test Scene")]
         public static void Build()
@@ -110,25 +110,59 @@ namespace Live2DAction.EditorTools
             movementSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
             movementSo.ApplyModifiedPropertiesWithoutUndo();
 
-            AttackData attackData = CreateOrLoadAttackData();
+            AttackData[] comboAttacks = CreateOrLoadComboAttacks();
             SerializedObject combatSo = new SerializedObject(combat);
             combatSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
-            combatSo.FindProperty("attackData").objectReferenceValue = attackData;
+            SerializedProperty comboProperty = combatSo.FindProperty("comboAttacks");
+            comboProperty.arraySize = comboAttacks.Length;
+            for (int i = 0; i < comboAttacks.Length; i++)
+            {
+                comboProperty.GetArrayElementAtIndex(i).objectReferenceValue = comboAttacks[i];
+            }
             combatSo.ApplyModifiedPropertiesWithoutUndo();
 
             return player;
         }
 
-        private static AttackData CreateOrLoadAttackData()
+        // Default frame data (see AttackData.FramesPerSecond) is a reasoned starting point,
+        // not tuned-by-feel numbers - matches common action-game proportions (each hit a bit
+        // slower/heavier than the last) and is meant to be adjusted from these assets in the
+        // Inspector, never by editing this script.
+        private static AttackData[] CreateOrLoadComboAttacks()
         {
-            var existing = AssetDatabase.LoadAssetAtPath<AttackData>(AttackDataPath);
+            return new[]
+            {
+                CreateOrLoadAttackData("LightAttack1", damage: 8f, startupFrames: 6, activeFrames: 4, recoveryFrames: 14, comboWindowFrames: 10),
+                CreateOrLoadAttackData("LightAttack2", damage: 10f, startupFrames: 7, activeFrames: 4, recoveryFrames: 16, comboWindowFrames: 10),
+                CreateOrLoadAttackData("LightAttack3", damage: 16f, startupFrames: 10, activeFrames: 5, recoveryFrames: 22, comboWindowFrames: 0),
+            };
+        }
+
+        private static AttackData CreateOrLoadAttackData(string assetName, float damage, int startupFrames, int activeFrames, int recoveryFrames, int comboWindowFrames)
+        {
+            string path = $"{ComboAttacksFolder}/{assetName}.asset";
+            var existing = AssetDatabase.LoadAssetAtPath<AttackData>(path);
             if (existing != null)
             {
                 return existing;
             }
 
+            if (!AssetDatabase.IsValidFolder(ComboAttacksFolder))
+            {
+                AssetDatabase.CreateFolder("Assets/_Project/Settings", "Combat");
+            }
+
             var data = ScriptableObject.CreateInstance<AttackData>();
-            AssetDatabase.CreateAsset(data, AttackDataPath);
+            var so = new SerializedObject(data);
+            so.FindProperty("attackId").stringValue = assetName;
+            so.FindProperty("damage").floatValue = damage;
+            so.FindProperty("startupFrames").intValue = startupFrames;
+            so.FindProperty("activeFrames").intValue = activeFrames;
+            so.FindProperty("recoveryFrames").intValue = recoveryFrames;
+            so.FindProperty("comboWindowFrames").intValue = comboWindowFrames;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            AssetDatabase.CreateAsset(data, path);
             return data;
         }
 
