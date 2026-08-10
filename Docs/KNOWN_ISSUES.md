@@ -18,9 +18,19 @@
 
 - 使用者要求接上真正的 3D Humanoid 角色後，Player 的視覺改為 Quaternius「Universal Base Characters」（CC0，見 `ASSET_LICENSES.md`）的 `Superhero_Male_FullBody.fbx`，取代先前的 Live2D 立牌。Cubism SDK／自寫 URP shader／`CubismBillboard` 都還留在專案裡（劇情演出功能仍會用到 Live2D，只是 Player 戰鬥視覺換掉了），076 的 Live2D 模型目前沒有被任何場景物件引用。
 - FBX 已設成 Humanoid Rig（`ModelImporter.animationType = Human`），材質手動建立（URP Lit + BaseColor + Normal 貼圖，**沒有處理 Roughness 貼圖**，用預設光滑度，非最終品質）。
-- 目前**沒有掛任何 Animator Controller／動畫**，Play 起來角色會是 T-pose 靜止不動（bind pose），這是預期中的暫時狀態；同作者的「Universal Animation Library」（也是 CC0、用同一套 Humanoid 骨架設計）可以之後接上 Idle/Run/Attack 等動作，尚未下載。
+- 目前**沒有掛任何 Animator Controller／動畫**，Play 起來角色會是 T-pose 靜止不動（bind pose）；同作者的「Universal Animation Library」（也是 CC0、用同一套 Humanoid 骨架設計）可以之後接上 Idle/Run/Attack 等動作，尚未下載。
 - 只複製了 Male 版本＋沒有髮型（`Hairstyles/Rigged to Head Bone/FBX (Unity)/` 裡有對應頭骨的髮型 FBX，需要的話之後再加）。
-- 用命令列算圖確認角色貼圖、比例、站姿都正確顯示，沒有粉紅材質；同樣**不是使用者本人在互動 Editor 裡看到的結果**。
+- 用命令列算圖確認角色貼圖、比例、站姿都正確顯示，沒有粉紅材質。
+- **2026-08-10 當天稍後被下方的 Maya（動漫風角色）取代成 Player 的主要視覺**，這組 Quaternius 素材保留在專案內作為備用/未來敵人角色使用，未刪除。
+
+## Maya 動漫風角色佔位（2026-08-10 新增，取代上面的 Humanoid 佔位，目前 Player 使用中）
+
+- 使用者要求動漫風角色，在 Sketchfab 找到「3D動漫風角色屋」的「Maya」（CC-BY 4.0，見 `ASSET_LICENSES.md`，**發布 Build 前必須加上署名**）。下載需要 Sketchfab 帳號登入，使用者本人完成登入後才能下載，AI 端無法代為登入（帳號/登入操作一律禁止代勞）。
+- 這個素材包本身就是完整的 Unity 套件（FBX＋Humanoid Rig 已由原作者設定好、Animator Controller、Idle/Walk/Run/Jump/Fall 動畫、13 個材質、Prefab），複製時連同原始 `.meta` 檔一起複製，讓 Prefab／Animator 內部的參照 GUID 能對上，不用重新手動連結。
+- 材質原本用 Unity Built-in RP 的 Standard shader（在 URP 下會顯示粉紅色），寫了 `ConvertMaterialsToUrp()`（在 `PlayerMayaVisualSetup.cs` 裡）批次把 13 個材質的 `_MainTex`／`_Color` 讀出來後，shader 換成 URP Lit、重新指定到 `_BaseMap`／`_BaseColor`——這次材質只用到主貼圖＋色調，沒有用到法線貼圖，所以不需要處理法線貼圖的轉換。
+- Prefab 自帶的 Animator 預設 `Apply Root Motion = true`，會跟我們自己的 `CharacterController` 移動邏輯打架（動畫本身位移 + 程式碼位移疊加），已在腳本裡關掉。Animator 的 Speed/H/V/Jump/Fly/Aim/Grounded 參數目前完全沒有接線，全部維持預設值（`Grounded` 預設是 true，其餘是 0/false），角色會穩定停在 Idle 動畫，**沒有走路/跑步動畫的接線**，等 Phase 2 要做真正的移動時才需要把 `CharacterMovement` 的速度餵給這些參數。
+- 這個角色目前**沒有穿衣服**（只有內衣的裸體版本），素材頁面上有另一個「Anime Girl Casual Outfit」是不同作者的獨立模型，沒有一起下載；要換裝或穿衣服是之後才需要處理的事。
+- 用命令列算圖確認：角色貼圖、比例、Idle 待機動作（不是 T-pose）都正確顯示，沒有粉紅材質。**仍是自動化截圖驗證，不是使用者本人在互動 Editor 裡看到的結果**。
 
 ## 待確認
 

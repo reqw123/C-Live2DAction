@@ -45,11 +45,23 @@
 - 用命令列算圖確認：角色貼圖、比例、站姿（bind pose，因為還沒接 Animator/動畫，會是 T-pose）都正確顯示，沒有粉紅材質。**仍是自動化截圖驗證，不是使用者本人在互動 Editor 裡看到的結果**。
 - 已知限制記入 `KNOWN_ISSUES.md`：無動畫（T-pose 靜止）；Roughness 貼圖未套用；只接了 Male、無髮型。
 
+### Phase 1 追加：Maya 動漫風角色佔位 — ✅ 完成（2026-08-10，取代上面的 Humanoid 佔位）
+
+使用者接著要求動漫風角色（企劃書的美術方向本來就是動漫風第三人稱動作遊戲），把上面的 Quaternius 角色降級為備用，改找動漫風 3D 角色。
+
+- 在 Sketchfab 找到「3D動漫風角色屋 / 3D Anime Character Store」的角色系列（Megumi/Yong/Maya），確認為 **CC-BY 4.0**（可商用，須署名，禁止轉售原始檔），使用者選定 Maya。
+- Sketchfab 下載需要帳號登入，AI 端依規定不能代為登入/建立帳號，使用者本人完成登入後才繼續下載。
+- 下載到的是完整 Unity 套件：FBX（已預先設定好 Humanoid Rig）、Animator Controller（含 Idle/Walk/Run/Jump/Fall 動畫）、13 個材質、Prefab。複製進 `Assets/_Project/Characters/Placeholder/MayaAnime/` 時**連原始 `.meta` 檔一起複製**，讓 Prefab／Animator 內部的 GUID 參照能直接對上，不用手動重新連結。
+- 新增 `PlayerMayaVisualSetup.cs`（Tools/Live2DAction/Replace Player Visual With Maya (Anime)）：材質原本是 Built-in RP 的 Standard shader（URP 下會粉紅），批次讀出 `_MainTex`／`_Color` 後轉存到 URP Lit 的 `_BaseMap`／`_BaseColor`；把 Prefab 掛到 Player 底下取代先前的 Humanoid 佔位；關閉 Animator 的 `Apply Root Motion`（避免跟 `CharacterController` 的位移邏輯打架）。
+- 用命令列算圖確認：角色貼圖、比例、**Idle 待機動作**（不是 T-pose，Animator 內建的動畫直接可用）都正確顯示，沒有粉紅材質。**仍是自動化截圖驗證，不是使用者本人在互動 Editor 裡看到的結果**。
+- 已知限制記入 `KNOWN_ISSUES.md`：無穿著（只有內衣）；Animator 的 Speed/H/V 等移動參數尚未接線，走路/跑步動畫還不會播放；發布 Build 前必須加上 CC-BY 署名（見 `ASSET_LICENSES.md`／`BUILD_RELEASE_GUIDE.md`）。
+- Quaternius 的 Humanoid 佔位保留在專案內作為備用/未來敵人角色素材，未刪除。
+
 ## Phase 2：戰鬥垂直切片（未開始）
 
 範圍完全比照企劃書「垂直切片最低範圍」：1 可操作角色、1 固定 3D 戰鬥場景、1 近戰敵人、1 遠程敵人、1 簡化 Boss、三段普攻、1 主動技能、1 閃避、敵人鎖定、血量、技能冷卻、受傷、死亡、勝利/失敗、暫停、重新開始、簡短 Live2D 開場/結束對話（佔位素材）、Windows 可執行 Build。
 
-阻塞項已解除（Humanoid 角色佔位已就位），但仍缺動畫（Idle/Run/Attack/Dodge/Hit/Death）——可以用同作者 CC0 的「Universal Animation Library」（骨架相容）補上，尚未下載。
+阻塞項已解除（Maya 動漫風角色已就位，含 Idle/Walk/Run/Jump/Fall 動畫），但 Animator 的移動參數（Speed/H/V）還沒接上 `CharacterMovement` 的實際速度，走路/跑步動畫暫時播不出來，需要在 Phase 2 補上。
 
 阻塞項：需要至少一個授權清楚的臨時 Humanoid 3D 角色模型（見 `PROJECT_AUDIT.md` 中風險）。
 

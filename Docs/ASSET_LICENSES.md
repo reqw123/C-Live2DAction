@@ -16,9 +16,12 @@
 
 ## 已授權/原創素材
 
-| 資產名稱 | 作者 | 來源 | 授權類型 | 允許商用 | 實際使用位置 |
-| --- | --- | --- | --- | --- | --- |
-| Cubism SDK for Unity 5-r.4.2 | Live2D Inc. | `CubismSdkForUnity-5-r.4.2.unitypackage`（官方發布的可重新散布安裝包，非角色專屬素材） | Live2D Open Software License | 是（依官方授權條款，需遵守 Live2D 的使用規範） | `Assets/Live2D/Cubism/`（SDK 執行環境，本身不含角色美術） |
-| Universal Base Characters（Standard，Superhero Male/Female FullBody + 貼圖） | Quaternius | https://quaternius.itch.io/universal-base-characters （2026-08-10 下載，`Universal Base Characters[Standard].zip`，122 MB，內附 `License_Standard.txt`） | **CC0 1.0 Universal**（公有領域宣告） | **是**，免署名、可修改、可再散布，正式上市 Build 也可以用 | `Assets/_Project/Characters/Placeholder/UniversalBaseCharacters/`（Humanoid FBX + 貼圖），作為 Phase 2 前的臨時可操作角色視覺，標記為 Placeholder，待正式原創角色美術到位後替換 | `Assets/_Project/Characters/Placeholder/UniversalBaseCharacters/License_Standard.txt`（隨資產一起放在專案內） |
+| 資產名稱 | 作者 | 來源 | 授權類型 | 允許商用 | 需要署名 | 實際使用位置 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Cubism SDK for Unity 5-r.4.2 | Live2D Inc. | `CubismSdkForUnity-5-r.4.2.unitypackage`（官方發布的可重新散布安裝包，非角色專屬素材） | Live2D Open Software License | 是（依官方授權條款，需遵守 Live2D 的使用規範） | 否 | `Assets/Live2D/Cubism/`（SDK 執行環境，本身不含角色美術） |
+| Universal Base Characters（Standard，Superhero Male/Female FullBody + 貼圖） | Quaternius | https://quaternius.itch.io/universal-base-characters （2026-08-10 下載，`Universal Base Characters[Standard].zip`，122 MB，內附 `License_Standard.txt`） | **CC0 1.0 Universal**（公有領域宣告） | 是，正式上市 Build 也可以用 | 否 | `Assets/_Project/Characters/Placeholder/UniversalBaseCharacters/`。2026-08-10 起被下面的 Maya 取代成 Player 主要視覺，**保留在專案內作為備用角色**，未來也可能用在別的敵人/NPC上 |
+| 【Anime Character】Maya (Free/Unity 3D) | 3D動漫風角色屋 / 3D Anime Character Store（Sketchfab @alex94i60） | https://sketchfab.com/3d-models/anime-charactermaya-freeunity-3d-44691835bd56472f9f890d380b836b28 （2026-08-10 下載，需 Sketchfab 帳號登入才能下載，使用者本人登入完成，`.fbx` 原始格式 29MB，含 Animator/動畫/材質的完整 Unity 套件） | **CC Attribution (CC-BY 4.0)** | 是，明確標示「Commercial use allowed」，但「Forbid secondary sales」（禁止轉售原始檔案本身） | **是**——署名文字：「[Anime Character] Maya (Free/Unity 3D) by 3D動漫風角色屋 / 3D Anime Character Store is licensed under Creative Commons Attribution」，並附上 Sketchfab（https://sketchfab.com ）與 VRoidHub 連結，需放進 `BUILD_RELEASE_GUIDE.md` 規劃的「第三方授權與署名頁面」 | `Assets/_Project/Characters/Placeholder/MayaAnime/`（FBX + 貼圖 + 材質 + 附帶的 Idle/Walk/Run/Jump/Fall 動畫與 Animator Controller），2026-08-10 起取代 Player 的視覺（Humanoid Rig，材質已從 Standard shader 轉成 URP Lit） |
 
 灰盒原型的地板／掩體方塊／訓練假人維持使用 Unity 內建基本形狀（Capsule／Cube）與 URP 預設材質，不需要外部授權。
+
+**署名待辦**：只要正式 Build 有包含 Maya 這個角色，就必須在遊戲內某處（設定/製作名單/授權頁）顯示上表的署名文字，這是 CC-BY 的強制要求，不是選配——`Docs/BUILD_RELEASE_GUIDE.md` 的正式 Build 檢查清單需要加這一項。
