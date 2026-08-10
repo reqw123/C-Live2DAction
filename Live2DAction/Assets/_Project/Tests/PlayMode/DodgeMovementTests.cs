@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Live2DAction.Characters;
+using Live2DAction.Core;
 using Live2DAction.Input;
 using Object = UnityEngine.Object;
 
@@ -138,5 +139,29 @@ public class DodgeMovementTests
         yield return null; // still holding DodgePressed = true
 
         Assert.AreEqual(DodgePhase.Cooldown, movement.CurrentDodgePhase, "A held/repeated press during Cooldown must not re-trigger Dodging");
+    }
+
+    [UnityTest]
+    public IEnumerator Dodge_SyncsInvulnerabilityIntoAssignedHealth()
+    {
+        CharacterMovement movement = _player.GetComponent<CharacterMovement>();
+        Health health = _player.AddComponent<Health>();
+        SetField(movement, "health", health);
+
+        yield return null; // let Health/CharacterMovement settle with no dodge active
+        Assert.IsFalse(health.IsInvulnerable, "Should not be invulnerable before any dodge is triggered");
+
+        _input.DodgePressed = true;
+        yield return null;
+        _input.DodgePressed = false;
+
+        Assert.IsTrue(health.IsInvulnerable, "Health should reflect the dodge's invulnerability window");
+
+        health.ApplyDamage(new DamageInfo(50f, Vector3.zero, Vector3.forward, null));
+        Assert.AreEqual(health.MaxHealth, health.CurrentHealth, "Damage taken while dodge-invulnerable should be ignored");
+
+        yield return RunForSeconds(1f); // comfortably longer than duration + cooldown
+
+        Assert.IsFalse(health.IsInvulnerable, "Invulnerability should end once the dodge (and its window) is over");
     }
 }

@@ -155,3 +155,13 @@
 - 已解決：先前「第一人稱下攻擊方向跟著移動朝向走」的已知限制——鎖定後角色朝向直接對準目標。
 - 已知限制：鎖定/解鎖沒有平滑過渡、沒有多目標循環切換。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按 Q 鎖定後攝影機/角色朝向與環繞移動手感。
+
+## 2026-08-10 — Phase 2 Step 5：近戰敵人 AI
+
+- 新增 `Assets/_Project/Game/AI/`：`EnemyState`/`EnemyBehaviorUtility`（純邏輯狀態判定，EditMode 可測）、`EnemyAI`（自己驅動 `CharacterController` 移動，同時實作 `IInputCommand` 讓 `PlayerCombat` 能原樣重用來跑跟玩家一樣的連段判定管線）。
+- `Health.cs` 新增 `IsInvulnerable`，`CharacterMovement.cs` 每幀把閃避的無敵狀態同步進去——接上了 Step 3 當時特意留白的接點。
+- `GreyboxSceneBuilder.cs`：Player 新增 `Health`，`TrainingDummy` 從靜態假人改寫成真正的 AI 敵人（`CharacterController`＋`EnemyAI`＋重用的 `PlayerCombat`＋新的 `EnemyAttack.asset`）。新增 `FixEnemyAISetup.cs` 套用到既有場景。
+- 新增 `EnemyBehaviorUtilityTests.cs`（EditMode，5 測試）、`EnemyAITests.cs`（PlayMode，5 測試）、`EnemyAttacksPlayerTests.cs`（PlayMode，2 個端到端測試：敵人真的能打到玩家、閃避真的能擋下傷害）；`HealthTests.cs`／`DodgeMovementTests.cs` 各新增測試覆蓋無敵幀機制。
+- 50 個 EditMode + 29 個 PlayMode 測試全數通過。
+- 已知限制：敵人沒有外觀/動畫、只有單一攻擊、數值未經實測調整、死亡沒有演出效果。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：敵人 AI 手感、被攻擊/被閃避擋下是否符合預期。

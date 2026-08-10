@@ -1,5 +1,6 @@
 using UnityEngine;
 using Live2DAction.CameraSystem;
+using Live2DAction.Core;
 using Live2DAction.Input;
 using Live2DAction.Targeting;
 
@@ -31,6 +32,10 @@ namespace Live2DAction.Characters
         // (unless dodging) instead of the movement direction, so attacks aim at the target
         // even while strafing around it or standing still.
         [SerializeField] private MonoBehaviour lockOnSource;
+
+        // Optional: kept in sync with IsDodgeInvulnerable every frame so dodging actually
+        // avoids damage, not just an inert flag nothing consumes.
+        [SerializeField] private Health health;
 
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
@@ -72,6 +77,11 @@ namespace Live2DAction.Characters
             // matching the common "backstep" convention when dodging from a standstill.
             Vector3 dodgeDirectionIfStarting = desiredDirection.sqrMagnitude > 0.0001f ? desiredDirection : -transform.forward;
             Vector3 dodgeVelocity = _dodgeState.Tick(Time.deltaTime, dodgePressed, dodgeDirectionIfStarting);
+
+            if (health != null)
+            {
+                health.IsInvulnerable = _dodgeState.IsInvulnerable;
+            }
 
             Vector3 facingDirection;
             if (_dodgeState.Phase == DodgePhase.Dodging)

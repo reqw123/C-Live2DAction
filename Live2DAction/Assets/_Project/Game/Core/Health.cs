@@ -30,12 +30,17 @@ namespace Live2DAction.Core
 
         public bool IsDead { get; private set; }
 
+        // Set by whatever grants temporary invulnerability (e.g. CharacterMovement mirroring
+        // its DodgeState) - Health doesn't know or care why, only that damage should be
+        // ignored while true.
+        public bool IsInvulnerable { get; set; }
+
         public event Action<DamageInfo> Damaged;
         public event Action Died;
 
         public void ApplyDamage(DamageInfo damageInfo)
         {
-            if (IsDead)
+            if (IsDead || IsInvulnerable)
             {
                 return;
             }

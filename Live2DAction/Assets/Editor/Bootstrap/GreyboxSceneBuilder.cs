@@ -2,6 +2,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Live2DAction.AI;
 using Live2DAction.CameraSystem;
 using Live2DAction.Characters;
 using Live2DAction.Combat;
@@ -26,7 +27,7 @@ namespace Live2DAction.EditorTools
             CreateCoverBlocks();
 
             GameObject player = CreatePlayer();
-            CreateDummy();
+            CreateEnemy(player.transform);
             ThirdPersonCameraController cameraController = CreateCamera(player.transform);
 
             TargetLockController lockController = player.GetComponent<TargetLockController>();
@@ -117,6 +118,7 @@ namespace Live2DAction.EditorTools
             CharacterMovement movement = player.AddComponent<CharacterMovement>();
             PlayerCombat combat = player.AddComponent<PlayerCombat>();
             TargetLockController lockController = player.AddComponent<TargetLockController>();
+            Health playerHealth = player.AddComponent<Health>();
 
             var lockControllerSo = new SerializedObject(lockController);
             lockControllerSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
@@ -128,6 +130,7 @@ namespace Live2DAction.EditorTools
             SerializedObject movementSo = new SerializedObject(movement);
             movementSo.FindProperty("inputSource").objectReferenceValue = inputProvider;
             movementSo.FindProperty("dodgeData").objectReferenceValue = CreateOrLoadDodgeData();
+            movementSo.FindProperty("health").objectReferenceValue = playerHealth;
             movementSo.ApplyModifiedPropertiesWithoutUndo();
 
             AttackData[] comboAttacks = CreateOrLoadComboAttacks();
@@ -210,13 +213,63 @@ namespace Live2DAction.EditorTools
             return data;
         }
 
-        private static void CreateDummy()
+        // TrainingDummy is now an AI-driven enemy rather than a static target - it reuses
+        // PlayerCombat for its attack (see EnemyAI: it implements IInputCommand purely so the
+        // same frame-data combo pipeline the player uses can be shared, per the project rule
+        // that player and AI input share one interface). It has no distinct visual yet
+        // (function before art, per the established pattern with the player's combo attacks).
+        private static GameObject CreateEnemy(Transform playerTarget)
         {
-            GameObject dummy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            dummy.name = "TrainingDummy";
-            dummy.transform.position = new Vector3(0f, 1f, 0f);
-            dummy.AddComponent<Health>();
-            dummy.AddComponent<LockOnTarget>();
+            var enemy = new GameObject("TrainingDummy");
+
+            CapsuleCollider capsuleReference = enemy.AddComponent<CapsuleCollider>();
+            float height = capsuleReference.height;
+            float radius = capsuleReference.radius;
+            Object.DestroyImmediate(capsuleReference);
+
+            CharacterController controller = enemy.AddComponent<CharacterController>();
+            controller.height = height;
+            controller.radius = radius;
+            controller.center = Vector3.zero;
+
+            GameObject ground = GameObject.Find("Ground");
+            float groundTopY = ground != null ? ground.GetComponent<Collider>().bounds.max.y : 0f;
+            enemy.transform.position = new Vector3(0f, groundTopY + controller.center.y + controller.height / 2f, 0f);
+
+            GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            visual.name = "Visual";
+            visual.transform.SetParent(enemy.transform, false);
+            Object.DestroyImmediate(visual.GetComponent<Collider>());
+
+            enemy.AddComponent<Health>();
+            enemy.AddComponent<LockOnTarget>();
+
+            EnemyAI ai = enemy.AddComponent<EnemyAI>();
+            var aiSo = new SerializedObject(ai);
+            aiSo.FindProperty("target").objectReferenceValue = playerTarget;
+            aiSo.FindProperty("detectionRange").floatValue = 8f;
+            aiSo.FindProperty("attackRange").floatValue = 2f;
+            aiSo.FindProperty("moveSpeed").floatValue = 2f;
+            aiSo.ApplyModifiedPropertiesWithoutUndo();
+
+            PlayerCombat combat = enemy.AddComponent<PlayerCombat>();
+            AttackData enemyAttack = CreateOrLoadEnemyAttack();
+            var combatSo = new SerializedObject(combat);
+            combatSo.FindProperty("inputSource").objectReferenceValue = ai;
+            SerializedProperty comboProperty = combatSo.FindProperty("comboAttacks");
+            comboProperty.arraySize = 1;
+            comboProperty.GetArrayElementAtIndex(0).objectReferenceValue = enemyAttack;
+            combatSo.ApplyModifiedPropertiesWithoutUndo();
+
+            return enemy;
+        }
+
+        // Lower damage than the player's combo (see CreateOrLoadComboAttacks) since the
+        // player is expected to generally win a straight fight - a reasoned starting point,
+        // not a balanced/tuned value.
+        private static AttackData CreateOrLoadEnemyAttack()
+        {
+            return CreateOrLoadAttackData("EnemyAttack", damage: 5f, startupFrames: 10, activeFrames: 4, recoveryFrames: 20, comboWindowFrames: 0);
         }
 
         private static ThirdPersonCameraController CreateCamera(Transform followTarget)

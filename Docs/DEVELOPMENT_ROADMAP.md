@@ -152,6 +152,20 @@
 - **已知限制**：`viewOrigin` 目前固定用 Main Camera 的朝向做候選篩選角度，鎖定/解鎖之間沒有平滑過渡（攝影機會瞬間轉向，不是漸進補間），沒有「多目標循環切換」功能（同一個鎖定鍵只能鎖最近的一個，無法切換到範圍內其他候選）——這些都留給之後視實際 Play 手感決定是否需要。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：按 Q 鎖定訓練假人後攝影機/角色朝向是否正確、鎖定中環繞移動手感如何、解鎖後視角是否能正常恢復。
 
+### Step 5：近戰敵人 AI — ✅ 完成（2026-08-10）
+
+目標：讓場景裡的敵人真的會主動接近並攻擊玩家，並把 Step 3 閃避預留的無敵幀真正接上傷害判定。使用者確認這一步先用 `TrainingDummy`（沒有外觀的 Capsule）測試邏輯，敵人外觀留到之後再處理。
+
+- 新增 `Assets/_Project/Game/AI/`：
+  - `EnemyState.cs`（Idle/Chasing/Attacking）與 `EnemyBehaviorUtility.cs`：純邏輯的狀態判定（距離 vs 偵測範圍 vs 攻擊範圍），比照 `AttackResolver` 既有慣例，可在 EditMode 直接測試。
+  - `EnemyAI.cs`：自己驅動 `CharacterController` 移動（沒有重用 `CharacterMovement`，因為那個元件帶有大量玩家專屬的概念——攝影機相對方向、閃避、鎖定朝向——套用在敵人身上不合理）。但它**有**實作 `IInputCommand`，純粹是為了讓 `PlayerCombat`（原樣掛到敵人身上重用）能讀到 `AttackPressed`，跑跟玩家完全一樣的影格資料連段判定管線——符合 `CLAUDE.md` 第 8 條「玩家與 AI 輸入共用同一個輸入介面」的規則精神，同時不強迫 AI 走玩家專屬的移動邏輯。敵人在攻擊範圍內即使沒有移動也會持續轉向面對玩家，避免玩家繞到側邊後敵人還對著空氣揮擊。
+- `Health.cs` 新增 `IsInvulnerable` 屬性，`ApplyDamage` 在無敵時直接忽略傷害。`CharacterMovement.cs` 新增可選的 `health` 欄位，每幀把 `DodgeState.IsInvulnerable` 同步進去——這是 Step 3 就規劃好、當時特意留白的接點，現在終於有敵人可以攻擊玩家，這個連結才有意義。
+- `GreyboxSceneBuilder.cs`：Player 新增 `Health`並接上 `CharacterMovement.health`；原本的 `CreateDummy()` 改寫成 `CreateEnemy()`——`TrainingDummy` 現在有 `CharacterController`、`EnemyAI`（`detectionRange=8`／`attackRange=2`／`moveSpeed=2`，合理起步值）、重用的 `PlayerCombat`（掛一個新的 `EnemyAttack.asset`，傷害 5，比玩家的連段傷害低，讓玩家在正面對決中理論上該贏，但這是未經實測手感的推測值）。新增一次性修正腳本 `FixEnemyAISetup.cs` 套用到既有場景（會先摧毀舊的靜態 `TrainingDummy` 再重建成敵人，因為舊物件的網格/碰撞體直接掛在根物件上、不是獨立的 "Visual" 子物件，直接原地改裝不如重建乾淨）。
+- 新增 `EnemyBehaviorUtilityTests.cs`（EditMode，5 個測試）驗證狀態判定的邊界條件。新增 `EnemyAITests.cs`（PlayMode，5 測試）驗證：超出偵測範圍不動作、偵測範圍內會朝目標移動、攻擊範圍內停下並觸發 `AttackPressed`、沒有目標時安全維持 Idle、攻擊範圍內即使靜止也會轉向面對目標。`HealthTests.cs` 新增 2 個測試驗證 `IsInvulnerable` 會擋下傷害、恢復後傷害正常生效。`DodgeMovementTests.cs` 新增 1 個測試驗證 `CharacterMovement` 真的會把閃避的無敵狀態同步進指定的 `Health`。新增 `EnemyAttacksPlayerTests.cs`（PlayMode，2 個端到端測試）：驗證敵人真的能透過重用的 `PlayerCombat` 管線打到玩家的 `Health`、以及玩家閃避時傷害確實被擋下——這兩個測試合起來驗證了這次「串接」的成果，不只是各自元件單獨測試通過。
+- 50 個 EditMode（原 43 + 新 7）＋ 29 個 PlayMode（原 21 + 新 8）測試全數通過。
+- **已知限制**：敵人沒有外觀（沿用 Capsule），沒有巡邏/待機動畫；只有一種攻擊（沒有連段），數值都是合理起步猜測，未經實際 Play 手感調整；敵人死亡後（`Health` 停用 GameObject）不會有任何演出效果，直接消失。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：敵人 AI 手感（偵測/攻擊範圍是否合理、移動速度是否過快/過慢）、被敵人打到時的傷害/被閃避擋下是否符合預期。
+
 ## Phase 3：Live2D 與完整流程（未開始）
 
 主選單 → Live2D 開場對話（佔位素材）→ 3D 戰鬥 → 結算 → Live2D 結束對話 → 返回選單 → Windows Build。此階段起，任何要交給他人測試的版本都必須先確認 076/077 佔位素材已被排除或不會被外流。
