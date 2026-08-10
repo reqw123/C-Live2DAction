@@ -34,9 +34,22 @@
 - 已知限制記入 `KNOWN_ISSUES.md`：不支援 Mask 裁切；目前只顯示 moc3 靜止綁定姿勢（剛好帶著技能火焰特效，看起來像一直在出招，等 Phase 2 接上 idle motion 才會正常）；`ToModel()` 產生的物件在 Play 模式下 `gameObject.name` 會變空字串（原因未查出，不影響功能，已改用摧毀全部子物件而非按名字尋找繞開）；billboard 朝向公式未經人眼確認方向是否正確（Inspector 有 `Face Away Instead` 勾選框可一鍵翻轉，不用改程式碼）。
 - **這是自動化截圖驗證，不是使用者本人在互動 Editor 裡看到的結果**，正式列入驗收前仍需要使用者自己 Play 一次確認。
 
+### Phase 1 追加：Humanoid 角色佔位 — ✅ 完成（2026-08-10，取代上面的 Live2D 立牌）
+
+使用者接著詢問網路上是否有現成可用的 3D 模型，解決「缺少 3D 人形角色模型」阻塞項（見 `PROJECT_AUDIT.md`）；比較 Mixamo／CC0 低多邊形套件／AI 生成模型後，選定 CC0 套件並取得使用者同意下載與接上。
+
+- 從 https://quaternius.itch.io/universal-base-characters 下載「Universal Base Characters」Standard 版（CC0 1.0，122 MB），內附 `License_Standard.txt` 已確認授權文字，登記進 `Docs/ASSET_LICENSES.md`（這是**真正取得合法商用授權**的素材，跟 076/077 的處境不同）。
+- 複製 `Superhero_Male_FullBody.fbx` 與對應貼圖到 `Assets/_Project/Characters/Placeholder/UniversalBaseCharacters/`（標記 Placeholder，比照 `ART_PIPELINE.md` 政策；髮型與 Female 版本這次沒有一起接，之後要用可以再加）。
+- 新增 `PlayerHumanoidVisualSetup.cs`（Tools/Live2DAction/Replace Player Visual With Humanoid Placeholder）：把 FBX 的 Import Settings 設成 Humanoid Rig，建立 URP Lit 材質（BaseColor + Normal，未處理 Roughness），取代 Player 底下先前的 Live2D 立牌。
+- Cubism SDK／URP shader／`CubismBillboard` 都還留著（Live2D 劇情演出功能仍會用），只是 Player 的戰鬥視覺換成這個 Humanoid 角色，076 模型目前沒有場景在引用。
+- 用命令列算圖確認：角色貼圖、比例、站姿（bind pose，因為還沒接 Animator/動畫，會是 T-pose）都正確顯示，沒有粉紅材質。**仍是自動化截圖驗證，不是使用者本人在互動 Editor 裡看到的結果**。
+- 已知限制記入 `KNOWN_ISSUES.md`：無動畫（T-pose 靜止）；Roughness 貼圖未套用；只接了 Male、無髮型。
+
 ## Phase 2：戰鬥垂直切片（未開始）
 
 範圍完全比照企劃書「垂直切片最低範圍」：1 可操作角色、1 固定 3D 戰鬥場景、1 近戰敵人、1 遠程敵人、1 簡化 Boss、三段普攻、1 主動技能、1 閃避、敵人鎖定、血量、技能冷卻、受傷、死亡、勝利/失敗、暫停、重新開始、簡短 Live2D 開場/結束對話（佔位素材）、Windows 可執行 Build。
+
+阻塞項已解除（Humanoid 角色佔位已就位），但仍缺動畫（Idle/Run/Attack/Dodge/Hit/Death）——可以用同作者 CC0 的「Universal Animation Library」（骨架相容）補上，尚未下載。
 
 阻塞項：需要至少一個授權清楚的臨時 Humanoid 3D 角色模型（見 `PROJECT_AUDIT.md` 中風險）。
 

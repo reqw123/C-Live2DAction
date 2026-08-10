@@ -19,5 +19,6 @@
 | 資產名稱 | 作者 | 來源 | 授權類型 | 允許商用 | 實際使用位置 |
 | --- | --- | --- | --- | --- | --- |
 | Cubism SDK for Unity 5-r.4.2 | Live2D Inc. | `CubismSdkForUnity-5-r.4.2.unitypackage`（官方發布的可重新散布安裝包，非角色專屬素材） | Live2D Open Software License | 是（依官方授權條款，需遵守 Live2D 的使用規範） | `Assets/Live2D/Cubism/`（SDK 執行環境，本身不含角色美術） |
+| Universal Base Characters（Standard，Superhero Male/Female FullBody + 貼圖） | Quaternius | https://quaternius.itch.io/universal-base-characters （2026-08-10 下載，`Universal Base Characters[Standard].zip`，122 MB，內附 `License_Standard.txt`） | **CC0 1.0 Universal**（公有領域宣告） | **是**，免署名、可修改、可再散布，正式上市 Build 也可以用 | `Assets/_Project/Characters/Placeholder/UniversalBaseCharacters/`（Humanoid FBX + 貼圖），作為 Phase 2 前的臨時可操作角色視覺，標記為 Placeholder，待正式原創角色美術到位後替換 | `Assets/_Project/Characters/Placeholder/UniversalBaseCharacters/License_Standard.txt`（隨資產一起放在專案內） |
 
 灰盒原型的地板／掩體方塊／訓練假人維持使用 Unity 內建基本形狀（Capsule／Cube）與 URP 預設材質，不需要外部授權。
