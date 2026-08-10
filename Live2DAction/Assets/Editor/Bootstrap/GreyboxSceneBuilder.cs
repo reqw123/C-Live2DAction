@@ -3,6 +3,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Unity.Cinemachine;
+using Live2DAction.CameraSystem;
 using Live2DAction.Characters;
 using Live2DAction.Combat;
 using Live2DAction.Core;
@@ -26,7 +27,12 @@ namespace Live2DAction.EditorTools
 
             GameObject player = CreatePlayer();
             CreateDummy();
-            CreateCamera(player.transform);
+            OrbitalCameraYawSource yawSource = CreateCamera(player.transform);
+
+            CharacterMovement movement = player.GetComponent<CharacterMovement>();
+            var movementSo2 = new SerializedObject(movement);
+            movementSo2.FindProperty("cameraYawSource").objectReferenceValue = yawSource;
+            movementSo2.ApplyModifiedPropertiesWithoutUndo();
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             AddSceneToBuildSettings(ScenePath);
@@ -129,7 +135,7 @@ namespace Live2DAction.EditorTools
             dummy.AddComponent<Health>();
         }
 
-        private static void CreateCamera(Transform followTarget)
+        private static OrbitalCameraYawSource CreateCamera(Transform followTarget)
         {
             var cameraGo = new GameObject("Main Camera");
             cameraGo.tag = "MainCamera";
@@ -149,6 +155,15 @@ namespace Live2DAction.EditorTools
             vcam.LookAt = followTarget;
 
             vcamGo.AddComponent<CinemachineInputAxisController>();
+
+            // CharacterMovement must read this raw orbital angle (driven only by mouse via
+            // the CinemachineInputAxisController above) for its camera-relative movement
+            // math - NOT the camera's fully-composed Transform.forward. RotationComposer's
+            // aim reactively sweeps as its LookAt target translates sideways past it, which
+            // would otherwise feed back into movement direction -> further translation ->
+            // further aim sweep, spinning the character in a full circle under pure strafe
+            // input. See ICameraYawSource for the full explanation.
+            return vcamGo.AddComponent<OrbitalCameraYawSource>();
         }
 
         private static void AddSceneToBuildSettings(string scenePath)

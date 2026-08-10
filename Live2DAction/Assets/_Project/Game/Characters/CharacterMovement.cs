@@ -1,4 +1,5 @@
 using UnityEngine;
+using Live2DAction.CameraSystem;
 using Live2DAction.Input;
 
 namespace Live2DAction.Characters
@@ -7,6 +8,13 @@ namespace Live2DAction.Characters
     public class CharacterMovement : MonoBehaviour
     {
         [SerializeField] private MonoBehaviour inputSource;
+
+        // Optional: a yaw driven only by explicit look input (see ICameraYawSource for why
+        // this must not be the camera's fully-composed Transform.forward). Falls back to
+        // Camera.main's yaw if unassigned, which is fine for a plain, non-reactive camera
+        // (e.g. in tests) but NOT safe with a "look at" Cinemachine camera in the real scene.
+        [SerializeField] private MonoBehaviour cameraYawSource;
+
         [SerializeField] private float moveSpeed = 5f;
         [SerializeField] private float rotationSpeedDegrees = 720f;
         [SerializeField] private float acceleration = 20f;
@@ -20,6 +28,7 @@ namespace Live2DAction.Characters
         // Resolved on every use rather than cached in Awake(), so assigning inputSource
         // after the component has already Awoken (e.g. from a test) still takes effect.
         private IInputCommand InputCommand => inputSource as IInputCommand;
+        private ICameraYawSource CameraYawSource => cameraYawSource as ICameraYawSource;
 
         public float MoveSpeed => moveSpeed;
         public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
@@ -33,7 +42,7 @@ namespace Live2DAction.Characters
         {
             IInputCommand inputCommand = InputCommand;
             Vector2 moveInput = inputCommand != null ? inputCommand.MoveInput : Vector2.zero;
-            Vector3 desiredDirection = CameraRelativeDirection(moveInput);
+            Vector3 desiredDirection = CameraRelativeDirection(moveInput, CurrentCameraYawDegrees());
             Vector3 desiredVelocity = desiredDirection * moveSpeed;
 
             float rate = desiredVelocity.sqrMagnitude > 0.0001f ? acceleration : deceleration;
@@ -56,27 +65,28 @@ namespace Live2DAction.Characters
             }
         }
 
-        private static Vector3 CameraRelativeDirection(Vector2 moveInput)
+        private float CurrentCameraYawDegrees()
+        {
+            ICameraYawSource yawSource = CameraYawSource;
+            if (yawSource != null)
+            {
+                return yawSource.YawDegrees;
+            }
+
+            Camera mainCamera = Camera.main;
+            return mainCamera != null ? mainCamera.transform.eulerAngles.y : 0f;
+        }
+
+        public static Vector3 CameraRelativeDirection(Vector2 moveInput, float cameraYawDegrees)
         {
             if (moveInput.sqrMagnitude < 0.0001f)
             {
                 return Vector3.zero;
             }
 
-            Camera mainCamera = Camera.main;
-            Vector3 forward;
-            Vector3 right;
-            if (mainCamera != null)
-            {
-                forward = Vector3.ProjectOnPlane(mainCamera.transform.forward, Vector3.up).normalized;
-                right = Vector3.ProjectOnPlane(mainCamera.transform.right, Vector3.up).normalized;
-            }
-            else
-            {
-                forward = Vector3.forward;
-                right = Vector3.right;
-            }
-
+            Quaternion yaw = Quaternion.Euler(0f, cameraYawDegrees, 0f);
+            Vector3 forward = yaw * Vector3.forward;
+            Vector3 right = yaw * Vector3.right;
             return (forward * moveInput.y + right * moveInput.x).normalized;
         }
     }

@@ -5,7 +5,7 @@
 1. **076/077 Live2D 素材著作權**（高風險，Phase 3 前必須解決）：目前唯一可用的 Live2D 角色模型是《Fairy Tail》同人素材，僅能作內部原型佔位，不得進入任何對外 Build。Alpha 開始前需要原創或合法授權的 Live2D／2D 角色素材，否則 Live2D 劇情演出功能無法進入 Alpha。詳見 `ASSET_LICENSES.md`。
 1b. **Player2 機甲模型來源不明**（高風險，Phase 3 前必須解決）：`MechaModel_DoNotShip/MechaCharacter2.fbx` 來源與授權都無法驗證，外觀疑似既有機甲動畫作品設計，AI 已警告風險，使用者仍要求保留作內部靜態看板。跟 076/077 同等級的阻塞項——**絕對不能進入任何對外 Build**，Alpha 前必須換成原創或合法授權的素材，或直接移除。
 2. ~~缺少 3D 人形角色模型~~ → 已解決（2026-08-10），見下方「Humanoid 角色佔位」項。
-3. **灰盒原型手感／攝影機尚未人眼驗證**（中風險，Phase 2 開始前應確認）：Phase 1 的移動、攻擊、Cinemachine 第三人稱攝影機都只透過 `-batchmode -runTests` 自動化測試驗證過邏輯正確性，也用命令列算圖截過一張畫面（見下方 Live2D 立牌項），但**沒有人在互動式 Unity Editor 裡實際按過 Play**。是否好操作、攝影機軌道與滑鼠視角是否順暢、掩體方塊視覺是否合理，都需要使用者親自打開 `GreyboxTest` 場景 Play 一次才能確認。
+3. **灰盒原型手感尚未完整人眼驗證**（中風險，Phase 2 開始前應確認）：使用者已實際 Play 過一次並回報一個真實 bug（見下方「方向鍵畫圈」項，已修好），證明人眼驗證確實會抓到自動化測試漏掉的問題。移動方向已修正，但攻擊手感、攝影機滑鼠視角順暢度、掩體方塊視覺配置是否合理，仍需要使用者再實際 Play 確認。
 
 ## Live2D 立牌視覺（2026-08-10 新增，已用自動化截圖驗證，未經人眼互動確認）
 
@@ -46,6 +46,18 @@
 - 已依照 076/077 的模式處理：複製進 `Assets/_Project/Characters/Placeholder/MechaModel_DoNotShip/`（資料夾名稱刻意標註 DoNotShip），登記進 `ASSET_LICENSES.md` 的「禁止進入對外 Build」表，並列為新的高風險阻塞項（見上方阻塞項 1b）。
 - 因為沒有骨架，只能當**靜態裝飾看板**（`Player2` GameObject，位置 (2.5, 0, -2)），套用預設 URP Lit 材質（無貼圖，純白色），沒有任何動畫或戰鬥邏輯，也沒有作為可操作的「2P 玩家」。
 - 用命令列算圖確認擺放位置、比例、材質都正常顯示（無粉紅材質），跟 Player／TrainingDummy／掩體方塊共存於同一場景不互相干擾。
+
+## 已修正：方向鍵移動會 360 度畫圈（2026-08-10，使用者實際 Play 回報）
+
+使用者實際在 Editor 裡 Play 後回報：純按左/右移動時，角色會像畫圓一樣持續轉圈，不是直線移動。這是這次專案第一個由「使用者實際操作」抓到、自動化測試完全沒發現的 bug（`CharacterMovementTests` 用的是固定朝向的假攝影機，測不出真正 Cinemachine 攝影機才會出現的問題），值得記錄完整的排查過程供之後參考：
+
+- **錯誤診斷 1**：一開始懷疑是 `CinemachineOrbitalFollow.TrackerSettings.BindingMode` 沒設對（懷疑攝影機軌道的參考座標系跟著角色朝向轉）。改成 `BindingMode.WorldSpace`（原始碼裡明確寫著這個模式應該讓 `GetReferenceOrientation()` 恆等於 `Quaternion.identity`，完全跟角色朝向無關）——**實測完全沒有效果**，問題原封不動。
+- **錯誤診斷 2**：懷疑即使 `BindingMode` 正確，Cinemachine 套件內部某處仍然讀了角色的旋轉，於是加了一個 `CameraFollowAnchor`（只跟隨角色位置、永遠不跟隨角色旋轉的中介物件），把攝影機的 Follow/LookAt 都改指向這個 anchor 而非角色本身——**實測依然完全沒有效果**，兩次「合理的」修法都沒用，逼著往下深挖。
+- **真正原因**：用一個會即時印出角色朝向／攝影機朝向／攝影機位置的診斷測試直接量測，才發現——攝影機軌道角度（`HorizontalAxis.Value`，只受滑鼠控制）其實從頭到尾都穩定停在 0，沒有被複製角色朝向；問題其實出在 `CinemachineRotationComposer`（負責讓攝影機「看向」角色的 Aim 元件）。角色純橫向移動（strafe）時，就算完全沒有旋轉，攝影機的瞄準角度也會因為「追蹤一個持續橫向平移的目標」而自然掃動——這是正常、預期中的攝影機行為。而 `CharacterMovement` 原本是直接讀攝影機**組合後、包含瞄準修正**的 `Transform.forward` 來算「相對攝影機的移動方向」，這就形成了迴圈：移動方向決定角色朝向 → 角色平移 → 攝影機瞄準角度跟著平移量掃動 → 下一幀「相對攝影機」的定義又變了 → 角色又要跟著再轉一點 → 无限循环，按住方向鍵就會持續畫圈。
+- **正確修法**：不要用攝影機「组合後」的 `Transform.forward`，改用攝影機軌道**未經瞄準修正**的原始角度（`CinemachineOrbitalFollow.HorizontalAxis.Value`，只受滑鼠輸入影響，跟角色平移/旋轉完全無關）。新增 `ICameraYawSource`／`OrbitalCameraYawSource`（`Assets/_Project/Game/Camera/`），`CharacterMovement` 改成優先讀這個穩定的 yaw 值（找不到就退回讀 `Camera.main` 的 yaw 分量，供沒有 Cinemachine 的測試環境使用）。已移除前兩次無效的嘗試（`CameraFollowAnchor`、`BindingMode` 調整）避免留下誤導性的死路徑。
+- **新增永久回歸測試**：`CameraRelativeMovementRegressionTests.cs`（PlayMode），直接載入真正的 `GreyboxTest` 場景（含真的 Cinemachine 攝影機，不是假的固定攝影機），模擬持續按住純橫移輸入，驗證角色朝向會收斂穩定、不會持續漂移——這是專門防止這個 bug 未來悄悄回歸用的。
+- **順帶修好一個測試隔離問題**：新增這個回歸測試後，發現它跟既有的 `CharacterMovementTests` 互相污染——如果回歸測試先跑，它載入的真實場景（含 Ground／TrainingDummy／掩體方塊／真攝影機）沒有被清掉，導致 `CharacterMovementTests` 新建的假角色會跟殘留的場景物件碰撞、`Camera.main` 也可能解析到錯的攝影機。修法：`CharacterMovementTests` 的 `[SetUp]` 改成先清空目前場景裡**所有**根物件，不只是清攝影機標籤，確保每個測試都是從真正乾淨的空場景開始，不假設自己是唯一會建立場景物件的測試。
+- 13 個 EditMode + 10 個 PlayMode 測試全數通過，且連續跑 3 次確認沒有間歇性失敗。
 
 ## 待確認
 

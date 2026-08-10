@@ -2,6 +2,7 @@ using System.Collections;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Live2DAction.Characters;
 using Live2DAction.Input;
@@ -34,11 +35,19 @@ public class CharacterMovementTests
     [SetUp]
     public void SetUp()
     {
-        // Destroying leftover objects immediately (rather than via Object.Destroy, which
-        // defers to end-of-frame) avoids two "MainCamera"-tagged objects existing at once
-        // across back-to-back UnityTest cases - Camera.main would otherwise pick whichever
-        // one Unity's internal search happens to find first, silently breaking every test
-        // after the first that relies on a known camera orientation.
+        // Other test fixtures (e.g. CameraRelativeMovementRegressionTests) load the real
+        // GreyboxTest scene and, if they ran first in the same session, leave its Ground/
+        // TrainingDummy/CoverBlock colliders and "Main Camera" behind - a fresh Player
+        // spawned at the origin here would physically collide with that leftover geometry
+        // and/or Camera.main could resolve to the wrong camera. Wipe every root object in
+        // the active scene first so this fixture always starts from a truly blank scene
+        // regardless of what ran before it, rather than only guarding against the one
+        // specific symptom (duplicate MainCamera tag) found in earlier debugging.
+        foreach (GameObject root in SceneManager.GetActiveScene().GetRootGameObjects())
+        {
+            Object.DestroyImmediate(root);
+        }
+
         _camera = new GameObject("TestMainCamera");
         _camera.tag = "MainCamera";
         _camera.AddComponent<Camera>();

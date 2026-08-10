@@ -62,3 +62,14 @@
 - 新增 `WireCharacterAnimatorLink.cs`（Tools/Live2DAction/Wire Character Animator Link On Player）並執行，把元件掛到場景裡的 Player 上。
 - 13 個 EditMode + 9 個 PlayMode 測試全數通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**手感與動畫轉換是否順暢。
+
+## 2026-08-10 — 修正方向鍵移動 360 度畫圈的真實 bug
+
+使用者實際 Play 後回報的第一個真實 bug：純按左/右移動會持續轉圈，不是直線移動。完整排查過程見 `KNOWN_ISSUES.md`，摘要：
+
+- 前兩次診斷都錯了：`CinemachineOrbitalFollow.BindingMode` 調整、`CameraFollowAnchor` 中介物件，兩者都對症狀毫無效果，已從專案移除。
+- 真正原因：`CharacterMovement` 讀的是攝影機「組合後」的 `Transform.forward`（含 `CinemachineRotationComposer` 為了追蹤平移中的角色而產生的瞄準修正），純橫移時這個瞄準角度本身就會自然掃動，跟角色朝向形成無限迴圈。
+- 修法：新增 `ICameraYawSource`／`OrbitalCameraYawSource`，改讀攝影機軌道未經瞄準修正的原始角度（只受滑鼠控制），`CharacterMovement.CameraRelativeDirection` 改成接受 yaw 角度參數而非直接讀 `Camera.main.transform.forward`。
+- 新增永久回歸測試 `CameraRelativeMovementRegressionTests.cs`（載入真實場景+真攝影機，防止此 bug 未來回歸）。
+- 順帶修好一個測試隔離 bug：`CharacterMovementTests` 的 `[SetUp]` 改成清空場景所有根物件，避免跟其他會載入真實場景的測試互相污染。
+- 13 個 EditMode + 10 個 PlayMode 測試全數通過，連續驗證 3 次無間歇性失敗。
