@@ -139,6 +139,15 @@
 - 12 個 EditMode + 10 個 PlayMode 測試全數重新驗證通過。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：滑鼠視角操作手感是否像原神一樣順手、角色現在是否穩定貼地行走、不再出現大跨步瞬移。
 
+## 已變更：攝影機再次改為固定世界座標軸，移除第一人稱（2026-08-11，使用者要求）
+
+使用者要求「固定世界座標軸」攝影機（類 Diablo/POE 的固定俯視角度），這是本專案第三次在「滑鼠自由視角」與「固定角度」之間切換（前兩次見上方 2026-08-10 的兩筆「攝影機改回固定視角」／「改回原神風格滑鼠視角」紀錄），但這次场景已經多了鎖定（Step ④）與第一人稱切換（Step 2 追加）兩個當時還不存在的系統，需要一併決定這兩者在固定角度下的行為：
+
+- **鎖定敵人時鏡頭要不要跟著轉**：使用者確認不要——鏡頭角度永遠固定，只有角色自己的朝向會轉向鎖定目標（`CharacterMovement` 既有邏輯，未改動）。`ThirdPersonCameraController` 因此移除了原本鎖定時改讀 `TargetLockUtility.ComputeLockOnYawPitch` 覆寫 yaw/pitch 的分支；`TargetLockUtility.ComputeLockOnYawPitch` 本身還留著（`TargetLockUtilityTests.cs` 仍有測試覆蓋），只是攝影機不再呼叫它，日後如果要做鎖定提示 UI／瞄準輔助可能還用得到。
+- **V 鍵第一人稱切換要不要保留**：使用者確認移除——固定角度鏡頭不支援自由看向的第一人稱視角。連帶刪除 `CameraViewMode.cs`、`CameraViewToggleTests.cs`、`FixFirstPersonToggleSetup.cs`；新增的 `FixFixedAxisCameraSetup.cs` 會順便確保 Player 的 "Visual" 子物件維持啟用，避免舊場景若剛好存檔在第一人稱隱藏狀態，因為 `ToggleViewMode()` 已經不存在而永遠卡住看不到角色。
+- 詳細技術改動見 `CHANGELOG.md` 對應日期條目。50 個 EditMode + 27 個 PlayMode 測試通過，連跑兩次確認跟本次改動直接相關的測試（`ThirdPersonCameraControllerTests`／`LockOnFacingAndCameraTests`／`CameraRelativeMovementRegressionTests`）穩定全過；`CharacterMovementTests` 有兩個既有測試間歇性失敗，數值只差在容許門檻附近，跟本次沒碰的檔案（`CharacterMovement.cs` 未改動）與已知的 headless batchmode 積分效率問題一致，不是新迴歸。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：固定角度（yaw 0°／pitch 45°、距離 8）的俯視感是否符合預期，之後可直接調 Inspector 上的 `fixedYaw`／`fixedPitch`／`distance`。
+
 ## 待確認
 
 - 本機沒有配置 Unity MCP 或其他可互動的 Editor 自動化工具，本次 Phase 1 全程透過 Unity 命令列 `-batchmode`／`-executeMethod`／`-runTests` 完成，AI 端無法產生「已手動 Play 驗證」的證據，這類驗證一律需要使用者自行操作。

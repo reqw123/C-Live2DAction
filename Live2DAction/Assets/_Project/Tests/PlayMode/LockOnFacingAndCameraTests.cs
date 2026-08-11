@@ -82,8 +82,11 @@ public class LockOnFacingAndCameraTests
     }
 
     [UnityTest]
-    public IEnumerator ThirdPersonCameraController_WithLockedTarget_YawPitchMatchTargetDirection()
+    public IEnumerator ThirdPersonCameraController_WithLockedTarget_YawPitchStayFixed()
     {
+        // Fixed-world-axis camera: locking onto an enemy must NOT rotate the camera - only
+        // CharacterMovement's own facing (covered by the test above) tracks the target. This
+        // guards against the camera-side lock-on override this controller used to have.
         var target = new GameObject("Player");
         target.transform.position = Vector3.zero;
 
@@ -97,20 +100,15 @@ public class LockOnFacingAndCameraTests
         var cameraGo = new GameObject("Camera");
         ThirdPersonCameraController controller = cameraGo.AddComponent<ThirdPersonCameraController>();
         SetField(controller, "target", target.transform);
-        SetField(controller, "lockOnSource", lockOnSource);
-        SetField(controller, "minPitch", -60f);
-        SetField(controller, "maxPitch", 60f);
+        SetField(controller, "fixedYaw", 15f);
+        SetField(controller, "fixedPitch", 45f);
 
         yield return null; // let LateUpdate run with the lock already in place
 
-        TargetLockUtility.ComputeLockOnYawPitch(target.transform.position, lockedTargetGo.transform.position, -60f, 60f, out float expectedYaw, out _);
+        Assert.AreEqual(15f, controller.YawDegrees, 0.01f, "Locking a target must not change the camera's fixed yaw");
 
-        Assert.AreEqual(expectedYaw, controller.YawDegrees, 0.01f);
-
-        // Camera should actually be looking toward the locked target's position.
-        Vector3 cameraForward = controller.transform.rotation * Vector3.forward;
-        Vector3 expectedDirection = (lockedTargetGo.transform.position - target.transform.position).normalized;
-        Assert.Greater(Vector3.Dot(cameraForward, expectedDirection), 0.99f, "Camera should be looking toward the locked target");
+        Quaternion expectedRotation = Quaternion.Euler(45f, 15f, 0f);
+        Assert.Less(Quaternion.Angle(expectedRotation, controller.transform.rotation), 0.1f, "Locking a target must not rotate the camera away from its fixed angle");
 
         Object.Destroy(target);
         Object.Destroy(lockOnSourceGo);

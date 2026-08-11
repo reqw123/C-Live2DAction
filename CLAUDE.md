@@ -18,7 +18,7 @@
 
 ## Non-negotiable rules
 
-1. **角色/劇情/技能/UI/世界觀必須原創**，不得複製其他商業作品（含但不限於角色外觀、服裝、武器造型、場景、圖示、音樂、音效、UI、商標）。
+1. **角色/劇情/技能/UI/世界觀可接受非原創**，不得複製其他商業作品（含但不限於角色外觀、服裝、武器造型、場景、圖示、音樂、音效、UI、商標）。
 2. **Live2D 素材授權界線**：`C:\question\live2d_my_like\models\076\`（納茲）與 `\077\`（露西）是《Fairy Tail》同人模型，**僅可作內部原型佔位**（驗證對話系統、演出流程、選角介面技術可行性），**不得出現在任何要交給他人或發布的 Build**（包含 Alpha 之後任何要給他人測試的版本、Beta、RC、正式發布）。正式角色必須是原創 Live2D 或 2D/3D 素材，見 `Docs/ASSET_LICENSES.md` 的佔位追蹤表。
 3. 不修改 `C:\question\` 底下任何原始檔案（`.moc3`、`.model3.json`、既有 `textures/`、`motions/`）；本專案只唯讀引用。
 4. Live2D 視覺模型不得用於戰鬥判定；戰鬥用 hitbox/hurtbox/pushbox 一律是獨立 collider 或幾何資料，由 `MoveData`/`SkillData` 驅動。

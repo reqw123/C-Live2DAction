@@ -165,3 +165,14 @@
 - 50 個 EditMode + 29 個 PlayMode 測試全數通過。
 - 已知限制：敵人沒有外觀/動畫、只有單一攻擊、數值未經實測調整、死亡沒有演出效果。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：敵人 AI 手感、被攻擊/被閃避擋下是否符合預期。
+
+## 2026-08-11 — Phase 2 Step 4 追加：攝影機改為固定世界座標軸，移除第一人稱
+
+使用者要求攝影機「固定世界座標軸」（類 ARPG 俯視角度），並確認兩個邊界案例：鎖定敵人時鏡頭角度不跟著旋轉（只有角色朝向會轉，沿用既有邏輯）、移除 V 鍵第一人稱切換（固定角度鏡頭不支援自由看向的第一人稱）。
+
+- `ThirdPersonCameraController` 大幅簡化：移除滑鼠 delta 讀取、`CameraViewMode`／`ToggleViewMode()`／第一人稱眼睛位置／`visualToHide`、以及鎖定時改讀 `TargetLockUtility.ComputeLockOnYawPitch` 覆寫 yaw/pitch 的邏輯。改成兩個固定欄位 `fixedYaw`／`fixedPitch`（預設 0°／45°），`LateUpdate` 每幀只用固定角度＋角色目前位置重算相機位置，旋轉永遠不變——不管是滑鼠、角色旋轉、或鎖定敵人都不會再改變鏡頭角度。因為 `ICameraYawSource.YawDegrees` 現在是常數，`CharacterMovement` 的相機相對移動方向也連帶變成永遠相對同一組世界座標軸。
+- 刪除 `CameraViewMode.cs`（列舉不再被任何地方使用）、`CameraViewToggleTests.cs`（PlayMode，測試的是已移除的 `ToggleViewMode()`）、`FixFirstPersonToggleSetup.cs` 與 `FixCameraCustomController.cs`（兩個一次性場景修正工具，寫入的欄位已不存在，功能被下面新增的 `FixFixedAxisCameraSetup.cs` 取代）。
+- 新增 `FixFixedAxisCameraSetup.cs`（Tools/Live2DAction/[Fix] Set Fixed-World-Axis Camera）：把既有 `GreyboxTest.unity` 場景的相機欄位設成新的固定角度預設值，並確保 Player 的 "Visual" 子物件維持啟用（防止舊場景若剛好存檔在第一人稱隱藏狀態，因為 `ToggleViewMode()` 已不存在而永遠卡在隱藏）。`GreyboxSceneBuilder.cs`（`CreateCamera`）與 `FixTargetLockSetup.cs` 同步移除寫入相機 `lockOnSource`／舊滑鼠欄位的程式碼。
+- 重寫 `ThirdPersonCameraControllerTests.cs`（EditMode，4 測試，涵蓋固定角度下的位置公式與 `YawDegrees` 不受滑鼠/鎖定影響）；`LockOnFacingAndCameraTests.cs` 的攝影機測試改成驗證「鎖定目標時 yaw/pitch 維持不變」（原本驗證的是鏡頭會轉向目標，行為已相反）。
+- 50 個 EditMode + 27 個 PlayMode 測試全數通過（EditMode 數量不變，PlayMode 少 2 個是刪除 `CameraViewToggleTests.cs` 的緣故）。連跑兩次 PlayMode 全套，`CharacterMovementTests.MoveInput_Left/Right_...` 兩個既有測試間歇性失敗（差值都在容許門檻附近的個位數百分比，跟本次改動的檔案無關）——這是 `KNOWN_ISSUES.md` 已記錄多次的 headless batchmode 積分效率不穩定問題，不是本次改動造成的新迴歸；跟本次修改直接相關的測試（`ThirdPersonCameraControllerTests`、`LockOnFacingAndCameraTests`、`CameraRelativeMovementRegressionTests`）兩次都全數通過。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：固定角度（0°／45°、距離 8）看起來是否符合預期的 ARPG 俯視感，之後可直接調整 `ThirdPersonCameraController` 的 `fixedYaw`／`fixedPitch`／`distance` 欄位。

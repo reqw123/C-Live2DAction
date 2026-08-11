@@ -41,9 +41,8 @@ namespace Live2DAction.EditorTools
             movementSo2.FindProperty("lockOnSource").objectReferenceValue = lockController;
             movementSo2.ApplyModifiedPropertiesWithoutUndo();
 
-            var cameraSo2 = new SerializedObject(cameraController);
-            cameraSo2.FindProperty("lockOnSource").objectReferenceValue = lockController;
-            cameraSo2.ApplyModifiedPropertiesWithoutUndo();
+            // The fixed-world-axis camera itself no longer reacts to a lock-on (see
+            // ThirdPersonCameraController) - only CharacterMovement's facing does, wired above.
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             AddSceneToBuildSettings(ScenePath);
@@ -279,27 +278,19 @@ namespace Live2DAction.EditorTools
             Camera camera = cameraGo.AddComponent<Camera>();
             camera.fieldOfView = 50f;
 
-            // Custom, Cinemachine-free orbit camera: see ThirdPersonCameraController for why
+            // Custom, Cinemachine-free camera: see ThirdPersonCameraController for why
             // Cinemachine's orbital/aim system was removed (Docs/KNOWN_ISSUES.md has the full
-            // investigation). CharacterMovement reads YawDegrees from this same component for
+            // investigation). Fixed world-axis angle (yaw/pitch never change, not even on
+            // enemy lock-on) - CharacterMovement reads YawDegrees from this same component for
             // its camera-relative movement math, so screen orientation and movement direction
             // can never disagree.
             ThirdPersonCameraController controller = cameraGo.AddComponent<ThirdPersonCameraController>();
-            Transform visual = followTarget.Find("Visual");
             var controllerSo = new SerializedObject(controller);
             controllerSo.FindProperty("target").objectReferenceValue = followTarget;
-            controllerSo.FindProperty("distance").floatValue = 4f;
+            controllerSo.FindProperty("distance").floatValue = 8f;
             controllerSo.FindProperty("targetOffset").vector3Value = new Vector3(0f, 1.4f, 0f);
-            controllerSo.FindProperty("mouseSensitivity").floatValue = 0.15f;
-            controllerSo.FindProperty("minPitch").floatValue = -20f;
-            controllerSo.FindProperty("maxPitch").floatValue = 60f;
-            controllerSo.FindProperty("initialYaw").floatValue = 0f;
-            controllerSo.FindProperty("initialPitch").floatValue = 25f;
-            controllerSo.FindProperty("firstPersonEyeOffset").vector3Value = new Vector3(0f, 1.6f, 0f);
-            if (visual != null)
-            {
-                controllerSo.FindProperty("visualToHide").objectReferenceValue = visual.gameObject;
-            }
+            controllerSo.FindProperty("fixedYaw").floatValue = 0f;
+            controllerSo.FindProperty("fixedPitch").floatValue = 45f;
             controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
             return controller;
