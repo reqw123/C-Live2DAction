@@ -829,3 +829,28 @@
 - **視覺驗證**：算圖截圖確認 Maya 模型正確顯示、腳有貼地、血條位置正確（滿血紅色）。
 - 84 個 EditMode 全過；59 個 PlayMode 測試（55 過、2 個既有已記錄的 flaky `JumpTests`／`WalkingIntoPlayer2_DoesNotPassThrough`、1 個既有已知未解決的 `EnemyAttackRangeSceneTests`、1 個 TrainingDummy 已知跳過），跟改動前一致，沒有新增任何失敗。
 - **仍待使用者本人 Play 一次確認**：Player3 目前放在場景座標 (5, ground+0.5, 0)，跟其他角色沒有重疊，位置是否需要調整；血條/鎖定手感是否符合預期。
+
+## 2026-08-13 — Player5 換裝＋接上 Attack3 專屬特效＋武器（狼的末路）
+
+大段落彙整：把 Player 的視覺從 Maya 換成使用者提供的「Player5」（暱稱 lacrimosa）角色、幫 Attack3 做了專屬的斬擊序列動畫特效（歷經 3 次素材更換）、最後在右手掛上武器模型。三個外部素材（Player5 本體、Attack3 特效圖、武器模型）授權來源都不明，已登記進 `ASSET_LICENSES.md`，僅限個人原型驗證，禁止進入對外 Build。
+
+**Player5 視覺替換**（`Player5VisualSetup.cs`，`Tools/Live2DAction/Replace Player Visual With Player5 (Lacrimosa)`）：
+- 原始 FBX 骨架匯入時被判定成 Generic（Unity 不會自動偵測 Humanoid），但骨架其實是標準 3ds Max Biped 命名（`Bip001-Pelvis` 等），手動切成 Humanoid 後 Unity 自動配對成功，因此可以直接共用 Maya 的 `NewAnimator.controller`（Idle/Walk/Run/Attack1-3 全部可用），不需要另外做動畫。
+- 材質原本是 FBX 內嵌的暫存資產（改了會在下次 reimport 時被沖掉），改用 `ModelImporter.AddRemap` 抽成正式 `.mat` 檔案（`Player5Anime/Materials/`）才能持久化，10 個材質裡 7 個配對到貼圖，`eyelash`／`gaoguang`／`03` 三個材質使用者沒提供對應貼圖，維持預設灰色。
+- 縮放改成動態量測 Maya 本人 Prefab 的實際身高去比例換算（而非寫死常數），量出來 Player5 目標身高約 1.34m。
+- **修了一個真實 bug**：`Player5VisualSetup` 一開始沿用 Maya 腳本「砍掉 Player 底下所有子物件重建」的寫法，結果把跟 `Visual`同層、額外掛在 Player 底下的 `HealthBarCanvas`（血條）一起砍掉了（"現在看不到玩家血量條"）。改成只精準砍 `Visual` 這一個節點（照抄 `EnemyHumanoidVisualSetup` 的安全寫法），並在流程最後補呼叫 `HealthBarSetup.AddHealthBar` 重建血條。
+- **修了第二個真實 bug**：`CharacterAttackAnimationLink`／`CharacterAnimatorLink` 這兩個原本指著 Maya Animator 的既有欄位，換視覺後變成空引用（Unity 不會自動重新指），攻擊動畫／走跑動畫混合因此失效。改成每次執行都自動重新指向 Player5 的新 Animator。
+
+**Attack3 專屬斬擊特效**（`Attack3SlashEffectSetup.cs`，`Tools/Live2DAction/Add Attack3 Slash Effect`）：
+- `AttackData` 新增 `HitEffectOverride`（per-attack 特效覆寫，null 時退回 `PlayerCombat` 共用的打擊火花）與 `AlwaysSpawnHitEffect`（沒打中人也要出特效，僅 `LightAttack3` 設為 true，其餘攻擊不受影響——`PlayerCombat.ResolveActiveHit` 沒打中時改在攻擊距離最遠端播放）。
+- 素材前後換了 3 次：5 幀單排 PNG → 6x4=24 幀 JPG（無 alpha） → 6x3=18 格、由 `Attack3SlashFrameAtlasBuilder` 從 17 張各自裁切大小不一的 PNG 拼成的圖集（沒有座標中繼資料，靠猜測每張置中對齊）→ 最終定案：使用者提供的 8x8=64 格（62 格有效）、自帶精確座標 `index.json` 的「X 型交叉斬」特效（原始 10240x5760、27MB，import 時限制在 4096）。
+- **修了三個真實 bug**：(1) 用 `AssetDatabase.GetBuiltinExtraResource<Mesh>("Quad.fbx")` 拿內建四方形網格在這個 Unity 版本悄悄回傳 null，導致 Mesh 渲染模式沒有網格可畫、完全不出特效——改用 `GameObject.CreatePrimitive(PrimitiveType.Quad)` 抓網格。(2) 8x8 那批素材的「空白」背景其實是不透明的深灰色（非透明也非純黑），Additive 混合只會讓純黑消失，結果背景洗成一片灰白——新增 `Attack3SlashBackgroundCleaner.cs`，量測背景色後對整張圖做「每個像素扣掉背景色」的清理。(3) 最根本的一個：URP 內建 `Particles/Unlit` shader 的 `_SrcBlend`/`_DstBlend` 用程式碼強制設成 One/One 後，只要材質被重新驗證（例如重開 Editor）就會被 shader 自帶的 GUI 邏輯依照 `_Blend` 下拉選單悄悄改回 SrcAlpha/One，特效又變得幾乎看不見——寫了專屬的最小 Shader `Assets/_Project/VFX/Shaders/AdditiveUnlit.shader`，把 `Blend One One` 寫死在 Pass 裡，不再是可被覆寫的屬性。
+- 特效渲染方式從 Billboard（永遠面向鏡頭）改成 Mesh + World 對齊（依角色出招方向站在場景裡，不會像貼紙一樣一直轉向鏡頭），`PlayerCombat` 生成特效時也從 `Quaternion.identity` 改成用攻擊者當下的實際朝向。
+
+**武器（狼的末路，*原神*武器仿製）**（`Player5WeaponSetup.cs`，`Tools/Live2DAction/Attach Wolf's Gravestone Weapon To Player5`）：
+- 掛在右手 `Rhand_Weapon2` 骨骼（Player5 自帶的武器掛點骨骼，使用者指定），完整路徑：
+  `Player/Visual/player_004_lacrimosa_skin_LOD1_Skeleton/root/Bip001/Bip001-Pelvis/Bip001-Spine/Bip001-Spine1/Bip001-Spine2/Bip001-R-Clavicle/Bip001-R-UpperArm/Bip001-R-Forearm/Bip001-R-Hand/Bip001-Prop1/Rhand_Weapon2/WolfsGravestone`
+- 材質只接了 BaseColor／Normal／Emissive 三張貼圖；Metallic／Roughness 因為要正確用在 URP/Lit 得先把兩張圖打包進同一張貼圖的不同色版（跟拼 Attack3 特效圖集同一類工作），先用固定數值（Metallic 0.8、Smoothness 0.5）代替。
+- **位置/縮放是使用者手動校正的權威值，不是公式算出來的**：第一版用 FBX 量出來的握把座標＋等比例縮放公式（`TargetLength/RawLength`）算出初始位置，這個環境沒辦法用截圖驗證握把對齊是否正確；使用者實機 Play 後在 Inspector 手動調整 Scale／Position 到正確大小/位置，把這兩個值（`localPosition=(-0.03,-0.18,-0.05)`、`localScale=(0.03,0.03,0.03)`）寫回腳本常數，之後重跑工具會重現使用者校正過的結果，不會被腳本自己的公式蓋回去——跟 `ThirdPersonCameraController` 的攝影機數值是同一種「使用者調過的值即權威」處理原則（見專案記憶 `camera-user-tuned-values-are-authoritative`）。
+
+- 每個步驟都跑過 84 個 EditMode 測試全過（`PlayerCombat`/`AttackData` 改動不影響既有合成測試資料）。這次 VFX 相關的視覺細節（貼圖顯示是否正確、握把對齊、朝向）大多沒辦法在這個環境用截圖可靠驗證，全部靠使用者本人多輪 Play 模式回報問題來回修正——過程記錄在上面，供之後遇到類似「特效看不見/顏色不對/背景沒透明」問題時參考排查方向。

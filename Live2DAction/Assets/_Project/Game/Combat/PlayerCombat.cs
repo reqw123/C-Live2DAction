@@ -80,11 +80,35 @@ namespace Live2DAction.Combat
             Collider[] candidates = Physics.OverlapCapsule(near, far, attackData.Radius);
             var hitPoints = AttackResolver.ResolveHits(far, attackData, transform.root, candidates);
 
-            if (hitEffectPrefab != null)
+            // Per-attack override (e.g. LightAttack3's dedicated slash VFX) takes priority
+            // over the shared spark prefab - see AttackData.HitEffectOverride's own comment.
+            GameObject effectPrefab = attackData.HitEffectOverride != null ? attackData.HitEffectOverride : hitEffectPrefab;
+            if (effectPrefab != null)
             {
-                foreach (Vector3 point in hitPoints)
+                // attackOrigin.rotation, not Quaternion.identity - 2026-08-13 real user
+                // report ("通常視角會從側面看，才會有劍氣掃過去的畫面"): a world-aligned
+                // slash VFX (see Attack3SlashEffectSetup's renderer.alignment) needs the
+                // attacker's actual facing to stand in the right plane; the shared spark
+                // prefab stays Billboard-rendered so this doesn't change its look (Billboard
+                // ignores the spawned rotation for its camera-facing, and its emission shape
+                // is an omnidirectional sphere - see HitEffectSetup).
+                if (hitPoints.Count > 0)
                 {
-                    Instantiate(hitEffectPrefab, point, Quaternion.identity);
+                    foreach (Vector3 point in hitPoints)
+                    {
+                        Instantiate(effectPrefab, point, attackOrigin.rotation);
+                    }
+                }
+                else if (attackData.AlwaysSpawnHitEffect)
+                {
+                    // 2026-08-13 explicit user request ("打空氣時也有特效出來") - no target
+                    // was hit (hitPoints is empty), but this attack's VFX represents the
+                    // swing itself rather than an impact (see AttackData.AlwaysSpawnHitEffect's
+                    // own comment), so it still spawns at the same "far" point the hit query
+                    // itself just missed against - the tip of the attack's reach, not the
+                    // attacker's own feet, so a whiffed Attack3 still visibly reaches out to
+                    // where the blade/qi actually swung.
+                    Instantiate(effectPrefab, far, attackOrigin.rotation);
                 }
             }
         }

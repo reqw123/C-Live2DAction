@@ -22,6 +22,23 @@ namespace Live2DAction.Combat
         // machine miss its own recovery-end check (see ComboAttackState).
         [SerializeField] private int comboWindowFrames = 10;
 
+        // Optional per-attack hit VFX (2026-08-13, explicit user request - a dedicated slash
+        // effect for LightAttack3, distinct from the shared spark PlayerCombat.hitEffectPrefab
+        // otherwise uses for every combo step). Null means "no override" - PlayerCombat falls
+        // back to its own shared prefab, so LightAttack1/2 (and anything else that never sets
+        // this) keep working unchanged.
+        [SerializeField] private GameObject hitEffectOverride;
+
+        // 2026-08-13 explicit user request ("打空氣時也有特效出來") - by default (false) the
+        // hit effect only spawns where AttackResolver actually landed a hit (PlayerCombat's
+        // original, still-correct behavior for the shared spark: a flash implying "I struck
+        // something" shouldn't appear when nothing was struck). LightAttack3's slash VFX is
+        // different in kind - it represents the swing/sword-qi release itself, not an impact,
+        // so it should play every time the attack executes whether or not it connects. Kept
+        // per-AttackData rather than a PlayerCombat-wide switch so this doesn't change
+        // LightAttack1/2's spark behavior.
+        [SerializeField] private bool alwaysSpawnHitEffect;
+
         public string AttackId => attackId;
         public float Damage => damage;
         public float Range => range;
@@ -30,6 +47,8 @@ namespace Live2DAction.Combat
         public int ActiveFrames => activeFrames;
         public int RecoveryFrames => recoveryFrames;
         public int ComboWindowFrames => comboWindowFrames;
+        public GameObject HitEffectOverride => hitEffectOverride;
+        public bool AlwaysSpawnHitEffect => alwaysSpawnHitEffect;
 
         public float StartupSeconds => startupFrames / FramesPerSecond;
         public float ActiveSeconds => activeFrames / FramesPerSecond;
