@@ -9,6 +9,7 @@ namespace Live2DAction.Input
         public bool AttackPressed { get; private set; }
         public bool DodgePressed { get; private set; }
         public bool LockOnPressed { get; private set; }
+        public bool JumpPressed { get; private set; }
 
         private void Update()
         {
@@ -19,6 +20,7 @@ namespace Live2DAction.Input
                 AttackPressed = false;
                 DodgePressed = false;
                 LockOnPressed = false;
+                JumpPressed = false;
                 return;
             }
 
@@ -30,12 +32,16 @@ namespace Live2DAction.Input
             if (keyboard.wKey.isPressed) y += 1f;
             MoveInput = new Vector2(x, y);
 
-            bool attackKey = keyboard.spaceKey.wasPressedThisFrame;
-            bool attackMouse = Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame;
-            AttackPressed = attackKey || attackMouse;
+            // Space used to double as an attack button alongside left-click; freed up for jump
+            // (attack is unaffected - left-click still works on its own).
+            AttackPressed = Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame;
 
             DodgePressed = keyboard.leftShiftKey.wasPressedThisFrame;
-            LockOnPressed = keyboard.qKey.wasPressedThisFrame;
+            // Changed from Q to the mouse wheel's click (middleButton is the scroll wheel
+            // being pressed down, not scrolled - Input System has no separate "wheel press"
+            // control distinct from middle-click).
+            LockOnPressed = Mouse.current != null && Mouse.current.middleButton.wasPressedThisFrame;
+            JumpPressed = keyboard.spaceKey.wasPressedThisFrame;
         }
     }
 }

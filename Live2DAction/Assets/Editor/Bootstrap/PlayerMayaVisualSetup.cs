@@ -38,7 +38,7 @@ namespace Live2DAction.EditorTools
             GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
             GameObject visual = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, player.transform);
             visual.name = "Visual";
-            visual.transform.localPosition = Vector3.zero;
+            visual.transform.localPosition = VisualFeetOffset(player);
             visual.transform.localRotation = Quaternion.identity;
             visual.transform.localScale = Vector3.one;
 
@@ -51,10 +51,37 @@ namespace Live2DAction.EditorTools
             }
 
             RemoveEmbeddedCameraRig(visual);
+            RemoveEmbeddedPhysicsRig(visual);
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
             Debug.Log("Replaced Player visual with Maya (anime placeholder).");
+        }
+
+        // Player's own transform sits at the CENTER of its CharacterController's capsule
+        // (center=(0,0,0), so the capsule spans from transform.y-height/2 to
+        // transform.y+height/2) - it's the CENTER that's grounded at the right height (see
+        // GreyboxSceneBuilder.CreatePlayer's spawn-Y formula), not the feet. Maya's own mesh
+        // origin is at her feet (standard humanoid rig convention), so parenting her at a
+        // flat Vector3.zero - as this used to do - puts her feet at the capsule's CENTER
+        // height, floating half the capsule's height above the ground. 2026-08-12 real bug
+        // report (screenshot showed feet not touching the floor after the Rigidbody fix
+        // below reset this to zero): needs to be shifted down by half the capsule height,
+        // derived from the actual CharacterController rather than hardcoded, so this can't
+        // silently drift out of sync if height/center are ever tuned later (same reasoning as
+        // GreyboxSceneBuilder's own spawn-Y formula). internal (not private) - same reuse
+        // reasoning as RemoveEmbeddedCameraRig/RemoveEmbeddedPhysicsRig below: Player5's own
+        // FBX root also sits at its feet (verified via bounds dump), so Player5VisualSetup
+        // reuses this instead of re-deriving the same formula.
+        internal static Vector3 VisualFeetOffset(GameObject player)
+        {
+            CharacterController controller = player.GetComponent<CharacterController>();
+            if (controller == null)
+            {
+                return Vector3.zero;
+            }
+
+            return new Vector3(0f, controller.center.y - controller.height / 2f, 0f);
         }
 
         // The Sketchfab package ships with its own preview camera rig (a "MainCamera"-tagged
@@ -63,11 +90,40 @@ namespace Live2DAction.EditorTools
         // was mistaken for the scene's real camera by an earlier fix script, attaching our
         // camera controller to the character's neck bone instead - see Docs/KNOWN_ISSUES.md)
         // and would otherwise render as a second, unwanted camera every frame regardless.
-        private static void RemoveEmbeddedCameraRig(GameObject visual)
+        // internal (not private) so any other tool instantiating this same Maya prefab (e.g.
+        // Player3TrainingDummySetup.cs) can reuse this cleanup instead of duplicating it - same
+        // reasoning as HealthBarSetup.AddHealthBar being made internal for reuse.
+        internal static void RemoveEmbeddedCameraRig(GameObject visual)
         {
             foreach (Camera embeddedCamera in visual.GetComponentsInChildren<Camera>(true))
             {
                 Object.DestroyImmediate(embeddedCamera.gameObject);
+            }
+        }
+
+        // The Sketchfab package's root object also ships with its own Rigidbody (mass 80,
+        // gravity on, position unconstrained - only rotation frozen) and CapsuleCollider,
+        // presumably left over from the asset author's own turntable/preview setup - same
+        // category of leftover as the embedded camera rig above. 2026-08-12 real bug report:
+        // as a child of Player (whose position is driven by CharacterController, not
+        // physics), this Rigidbody gets simulated independently by Unity's physics engine -
+        // falling under its own gravity and colliding with Player's own CharacterController
+        // capsule - and visibly launches the character's mesh up into the air, completely
+        // detached from where the (correctly grounded) parent Player transform actually is.
+        // This project doesn't use Rigidbody physics for characters at all (movement is
+        // CharacterController-driven; combat hit/hurtboxes are separate collider data per
+        // CLAUDE.md rule 4) - there's no scenario where keeping this makes sense.
+        // internal for the same reuse reason as RemoveEmbeddedCameraRig above.
+        internal static void RemoveEmbeddedPhysicsRig(GameObject visual)
+        {
+            foreach (Rigidbody rigidbody in visual.GetComponentsInChildren<Rigidbody>(true))
+            {
+                Object.DestroyImmediate(rigidbody);
+            }
+
+            foreach (Collider collider in visual.GetComponentsInChildren<Collider>(true))
+            {
+                Object.DestroyImmediate(collider);
             }
         }
 

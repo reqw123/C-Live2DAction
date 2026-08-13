@@ -2,6 +2,8 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Live2DAction.Characters;
+using Live2DAction.Targeting;
 
 namespace Live2DAction.EditorTools
 {
@@ -52,6 +54,30 @@ namespace Live2DAction.EditorTools
             visual.transform.localScale = Vector3.one * scale;
 
             player2.transform.position = new Vector3(2.5f, 0f, -2f);
+
+            // Player2 originally had no Collider at all and the player just walked straight
+            // through it (see Docs/CHANGELOG.md 2026-08-11) - added here (not just as a
+            // one-off Fix script) so it can't regress again the next time this tool
+            // recreates Player2 from scratch. Radius/height match that fix's own values
+            // (roughly matching TargetHeightMeters above); pivot is at ground level (position
+            // above is a bare Y=0, not TargetHeightMeters/2), so center is offset up by half
+            // the height rather than sitting at the transform's own origin.
+            CapsuleCollider collider = player2.AddComponent<CapsuleCollider>();
+            collider.radius = 0.6f;
+            collider.height = 2.2f;
+            collider.center = new Vector3(0f, 1.1f, 0f);
+
+            // Same "fold into source" reasoning as the collider above (see
+            // Docs/CHANGELOG.md 2026-08-11 "Player2 隨機漫遊") - decorative wandering so
+            // Player2 isn't just a static mannequin; all default field values, no per-field
+            // overrides were used originally.
+            player2.AddComponent<WanderMovement>();
+
+            // Lets the player Q-lock Player2 as a stand-in enemy (see Docs/CHANGELOG.md
+            // 2026-08-11 "Player2 補上鎖定") - no fields to configure,
+            // TargetLockController finds it via FindObjectsByType<LockOnTarget> without any
+            // extra registration.
+            player2.AddComponent<LockOnTarget>();
 
             AssignFallbackMaterial(renderers);
 

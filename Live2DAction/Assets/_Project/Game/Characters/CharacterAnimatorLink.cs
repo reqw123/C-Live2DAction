@@ -37,7 +37,15 @@ namespace Live2DAction.Characters
 
         private void Update()
         {
-            if (animator == null)
+            // isActiveAndEnabled, not just a null check: Animator.SetFloat on a disabled
+            // Animator (e.g. its GameObject deactivated - the "Visual" child gets toggled by
+            // the first-person camera setup, see ThirdPersonCameraController) doesn't throw,
+            // but logs "Animator is not playing an AnimatorController" every single call. This
+            // component runs on Player, which stays active regardless, so it kept hammering a
+            // disabled Animator every frame during any first-person Play session - 26,000+
+            // repeated warnings in one real session, expensive enough (each logs a full stack
+            // trace) to be the likely cause of a reported Editor hang. See Docs/KNOWN_ISSUES.md.
+            if (animator == null || !animator.isActiveAndEnabled)
             {
                 return;
             }

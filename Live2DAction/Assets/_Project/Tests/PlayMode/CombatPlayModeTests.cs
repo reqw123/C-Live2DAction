@@ -19,6 +19,7 @@ public class CombatPlayModeTests
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
+        public bool JumpPressed { get; set; }
     }
 
     private static void SetField(object target, string fieldName, object value)

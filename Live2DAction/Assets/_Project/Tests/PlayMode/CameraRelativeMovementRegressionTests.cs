@@ -11,10 +11,24 @@ using Live2DAction.Input;
 // line. Root cause was CharacterMovement reading the camera's fully-composed
 // Transform.forward, which reactively sweeps as CinemachineRotationComposer's aim tracks
 // the player translating sideways past it - feeding back into movement direction, which
-// feeds back into the camera's aim, and so on. Fixed by reading the orbital camera's raw,
-// mouse-only yaw angle instead (see ICameraYawSource / OrbitalCameraYawSource). This test
-// uses the real GreyboxTest scene (real Cinemachine rig), not a synthetic fixed camera,
-// specifically to catch this class of bug again if the camera rig setup regresses.
+// feeds back into the camera's aim, and so on. Fixed by reading a raw, mouse-only yaw
+// angle instead (see ICameraYawSource / ThirdPersonCameraController) - the critical
+// invariant is that camera yaw must be driven independently of the character's own
+// rotation, never read back from it.
+//
+// 2026-08-12 update: this exact bug class recurred same-day, in a different shape. A
+// same-day detour made ThirdPersonCameraController's yaw track the character's own
+// rotation directly (for a "camera rigidly over the right shoulder, matching facing"
+// request), while CharacterMovement still computed strafe direction relative to that same
+// camera yaw and auto-turned the character to face it - a closed loop again, this time
+// with zero independent reference frame anywhere: turning the character changed the
+// camera's yaw, which changed what "strafe left" meant next frame, which turned the
+// character again, forever. This test caught it. Reverted back to independent mouse yaw
+// the same day by explicit request ("改回剛剛那樣...參考原神鳴潮等等" - free camera + WASD
+// strafes relative to it, matching those games), restoring the invariant this test
+// protects. Uses the real GreyboxTest scene (real camera rig), not a synthetic fixed one,
+// specifically to catch this class of bug again if the camera/movement coupling
+// regresses either direction.
 public class CameraRelativeMovementRegressionTests
 {
     private class StubInputBehaviour : MonoBehaviour, IInputCommand
@@ -23,6 +37,7 @@ public class CameraRelativeMovementRegressionTests
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
+        public bool JumpPressed { get; set; }
     }
 
     private static void SetField(object target, string fieldName, object value)

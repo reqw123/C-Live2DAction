@@ -55,5 +55,17 @@ namespace Live2DAction.Core
                 gameObject.SetActive(false);
             }
         }
+
+        // For whatever wants to bring a dead GameObject back (e.g. RespawnController) - must
+        // be called AFTER re-activating the GameObject, or before, doesn't matter which, since
+        // this only touches Health's own state, not the GameObject's active flag.
+        // 2026-08-12: added alongside RespawnController (then named PlayerRespawnController) -
+        // see that class's comment for why "dead" previously meant permanently gone with no way
+        // back for the player.
+        public void ResetHealth()
+        {
+            CurrentHealth = maxHealth;
+            IsDead = false;
+        }
     }
 }

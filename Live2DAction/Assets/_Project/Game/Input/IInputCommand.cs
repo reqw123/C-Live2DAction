@@ -10,5 +10,6 @@ namespace Live2DAction.Input
         bool AttackPressed { get; }
         bool DodgePressed { get; }
         bool LockOnPressed { get; }
+        bool JumpPressed { get; }
     }
 }

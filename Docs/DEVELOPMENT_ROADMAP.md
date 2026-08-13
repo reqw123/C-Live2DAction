@@ -106,6 +106,16 @@
 - **已知限制**：連段判定完全靠邏輯與 debug 觸發驗證，Maya 沒有對應的三段攻擊動畫，Play 起來攻擊時角色視覺上不會有揮擊動作（只有 `Physics.OverlapSphere` 判定跟傷害會真的生效）；攻擊時是否要鎖定/減速移動也尚未處理，兩者都留給之後的步驟。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：連段輸入手感（尤其連段視窗的時機）是否合理，之後可依此調整 `LightAttack1/2/3.asset` 的影格數值。
 
+### Step 2 追加：玩家＋敵人攻擊動作（程式驅動的簡易佔位揮擊姿勢）— ✅ 完成（2026-08-11）
+
+使用者要求幫玩家與敵人加攻擊動作；因為 Maya 沒有攻擊動畫素材、敵人是無骨架 Capsule，兩者都做不出正式骨骼動畫，改採「用程式即時旋轉一個 Transform」的佔位方案，完整說明見 `Docs/CHANGELOG.md` 同日條目。
+
+- `ComboAttackState`／`PlayerCombat` 新增 `PhaseProgress`（目前影格階段內的 0~1 進度）；新增純函式 `AttackPoseUtility.ComputeSwingAngle` 把影格階段換算成揮擊角度；新增 `AttackPoseVisualizer` 在 `LateUpdate` 把角度疊乘到指定 Transform（玩家用右手臂骨骼、敵人用整個 `Visual`），沒有攻擊時角度為 0，不影響 Maya 原本的 Idle/Walk 動畫。
+- 新增一次性編輯器腳本 `WireAttackPoseVisualizers.cs` 並已對 `GreyboxTest.unity` 執行套用。
+- 64 EditMode + 37 PlayMode 測試全數通過（新增 8 個），有實際跑 Unity 驗證。
+- **已知限制**：這是「角度動畫」不是美術動畫，方向/角度是合理猜測，未經人眼確認（Inspector 有 `invert` 可調），見 `KNOWN_ISSUES.md`。
+- **仍待使用者本人在互動式 Editor 中 Play 一次確認**：揮擊方向/角度是否合理、敵人前傾出拳的視覺是否可接受。
+
 ### Step 2 追加：第一/第三人稱視角切換 — ✅ 完成（2026-08-10）
 
 使用者要求「把畫面做成第一視角」，確認範圍為：先做成可切換的第一/第三人稱（保留第三人稱），第一人稱下先隱藏整個角色模型（Maya 沒有分離的第一人稱手臂素材）。
@@ -173,6 +183,200 @@
 - `ThirdPersonCameraController` 只剩兩個固定角度欄位（`fixedYaw`／`fixedPitch`，預設 0°／45°），移除滑鼠輸入、第一人稱、鎖定時覆寫 yaw/pitch 三塊邏輯；`CharacterMovement` 的相機相對移動因此永遠相對同一組世界座標軸，不需要另外改動。
 - 50 個 EditMode + 27 個 PlayMode 測試全數通過（連跑兩次確認跟本次改動相關的測試穩定全過；兩個既有的 `CharacterMovementTests` 間歇性失敗是已知的 headless batchmode 時序問題，非本次迴歸）。
 - **仍待使用者本人在互動式 Editor 中 Play 一次確認**：固定角度的俯視感是否符合預期。
+
+### Step 5 之後多輪追加：攝影機重新設計＋移動手感調整＋跳躍 — ✅ 完成（2026-08-11，同一天多輪迭代）
+
+使用者在同一天內針對攝影機視角與移動手感做了多輪迭代式調整，完整排查過程與每一步的教訓見 `KNOWN_ISSUES.md`／`CHANGELOG.md` 對應日期條目，這裡只列結論：
+
+- **技術調查**：先用 `deep-research` 技能整理了一份現代 RPG 攝影機／移動控制做法研究，見 `Docs/Research/CAMERA_MOVEMENT_RESEARCH.md`。
+- **移動手感**：加減速從等速直線（`MoveTowards`）改成緩動曲線（`Vector3.SmoothDamp`），轉向從等角速度（`RotateTowards`）改成緩動角度（`Mathf.SmoothDampAngle`）；放開移動鍵的減速時間幾經調整，目前是 `decelerationSmoothTime=0.05`（幾乎立即停止，仍保留一點點緩動）。
+- **攝影機視角**：從最早的俯視固定角度，經過「角色視線水平高度」「真正第一人稱（`distance=0`，鏡頭釘死在角色眼睛位置只轉不動）」，最後定案為**滑鼠視角控制（RPG 風格，不需按鍵）＋小距離過肩視角（`distance=0.5`，接受一點點環繞感換取看得到角色）**。Play 模式會自動鎖定/隱藏游標，避免滑鼠移動「漏」到畫面外造成視角亂飄；Editor 裡按 Esc 可隨時解鎖。角色自己的模型（`Player/Visual`）現在是顯示狀態。
+- **敵人**：`TrainingDummy`（白色訓練假人）不再主動追逐/攻擊玩家（`detectionRange=0`），比較符合「訓練假人」的定位；玩家仍可按 Q 鎖定它。
+- **Player2**（機甲靜態看板，`DoNotShip`）：補上碰撞體（之前完全穿透）、新增緩慢隨機漫遊＋碰邊界自動折返的行為（`WanderMovement.cs`）、可被 Q 鎖定。
+- **邊界**：新增 4 面看不見的邊界牆，玩家不會再走出地板範圍掉出世界外。
+- **跳躍**：新增空白鍵跳躍（貼地才能跳，無雙跳），空白鍵原本兼職攻擊鍵（跟滑鼠左鍵重複）這次移除，攻擊維持只用滑鼠左鍵。**⚠️ 這個功能明確跟 `Docs/GAME_DESIGN_DOCUMENT.md` 目前寫的「垂直切片版本不含跳躍」牴觸**——使用者當下直接要求加入，AI 端已完成實作，但**還沒有回頭跟使用者確認是否要正式修改設計文件裡的這條範圍限制**，見下方「待確認」。
+- **過程中修好的真實 bug**：一次手算四元數沒有正確歸一化，導致 Console 被 `Quaternion To Matrix conversion failed` 洗版、拖累互動效能（教訓：非乾淨角度的旋轉一律要透過 Unity API 算，不能手算三角函數）；`CharacterAnimatorLink` 對著停用的 Animator 硬呼叫 `SetFloat`，單一場 Play session 洗出兩萬多次警告、疑似是一次 Editor 卡死沒回應的直接原因（已修正為檢查 `isActiveAndEnabled`）；`Player` 座標／`Player2` 啟用狀態／地板座標多次被使用者在 Editor 裡操作時意外拖動或取消勾選（不是程式碼問題，已在 `KNOWN_ISSUES.md` 給操作建議）。
+- 測試數量隨每一輪異動持續增加，目前（截至這輪）約 55 個 EditMode + 30 幾個 PlayMode 測試，新增涵蓋：攝影機定位公式、移動幀時間效能回歸、碰撞阻擋（玩家 vs 訓練假人／Player2）、Player2 漫遊邊界行為、玩家重生點落地穩定性、跳躍。
+- **仍待使用者本人在互動式 Editor 中 Play 一次完整確認**：這一整輪的攝影機/移動/跳躍手感是否都符合預期（先前每一步都有請使用者確認，但由於同一天內迭代速度很快，建議最後再完整玩一輪做整體確認）。
+
+### Step 5 之後再追加：把現有角色都呈現在場景中 — ✅ 完成（2026-08-12）
+
+使用者要求把專案裡現有的角色都放進 `GreyboxTest` 場景，確認範圍分三塊：① Enemy 換上已有的 Quaternius Humanoid 外觀、② 076/077 Live2D 立牌加入 3D 場景、③ Quaternius Female 變體另建一個新角色。三項都已完成，細節見 `CHANGELOG.md` 同日的兩則條目（③原以為需要下載 Female 素材，實際發現檔案早就在專案裡，下載變成多餘的一趟）。`GreyboxTest` 場景現在同時有：Player（Maya）、Enemy（Quaternius Male Humanoid）、Player2（機甲，`DoNotShip`）、NatsuStandee／LucyStandee（076/077 Live2D 立牌，`DoNotShip`）、FemaleStandee（Quaternius Female，純靜態展示，未接任何邏輯）。
+- **已知限制**：Enemy 跟 Female 站在一起的兩個 Quaternius Humanoid 都沒有動畫（bind pose 靜止），076/077 立牌是攝影機朝向 2D 立牌，不是真正的 3D 模型。
+- **仍待使用者本人 Play 一次確認**：這幾個新角色的比例/位置/朝向看起來是否合理。
+
+### Step 5 之後再追加：地板貼圖／背景景物／天空盒 — ✅ 完成（2026-08-12）
+
+使用者要求幫 `GreyboxTest` 加上地板與背景畫面，確認範圍是地板貼圖＋邊界外背景景物＋天空盒三層都做，素材來源選擇免費可商用素材包（CC0：Poly Haven Stone Floor 地板貼圖、Quaternius Simple Nature Pack 背景景物），寫進 `GreyboxSceneBuilder.cs`（地板/背景地形/天空盒）與新增的 `BackgroundSceneryStandeeSetup.cs`（邊界外景物，兩段式模式同 `FemaleStandeeSetup.cs`）。純視覺美術層，沒有動到任何戰鬥/AI/移動邏輯，64 個 EditMode 測試全過。細節見 `CHANGELOG.md` 同日條目、素材登記見 `ASSET_LICENSES.md`。
+- **已知限制**：`Skybox/Procedural` 尚未加進 Always Included Shaders；背景景物比例/密度、地板貼圖平鋪比例都是估計值。詳見 `KNOWN_ISSUES.md`。
+- **仍待使用者本人 Play 一次確認**：這次全程只跑過 batchmode 驗證編譯與測試，沒有人眼看過實際渲染畫面。
+
+### Step 5 之後再追加：攝影機改固定右肩視角＋移動改坦克式控制 — ⏪ 同日改回自由視角（2026-08-12）
+
+使用者要求攝影機「永遠在角色右手邊肩膀上、跟角色同方向、決不會跑到角色左邊」。`ThirdPersonCameraController` 的 yaw 改成每幀讀角色自己的朝向（不是滑鼠獨立控制），`targetOffset` 隨角色 yaw 旋轉維持右肩位置；配合這個改動，`CharacterMovement` 未鎖定目標時的移動改成坦克式控制（A/D 轉向、W/S 前後），因為原本「攝影機驅動移動方向＋角色自動轉向面對移動方向」的邏輯跟「攝影機鎖定角色朝向」放一起會形成無限旋轉的迴圈 bug（PlayMode 測試抓到後才發現，已修正並補測試）。過程中意外發現並修正一個會影響正式遊戲的真實 bug：`CharacterController.minMoveDistance` 預設值在高幀率下會靜默丟棄移動（這個修正保留，不受下面的回退影響）。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 65 個 EditMode、37 個 PlayMode 測試通過（1 個因 TrainingDummy 已被使用者故意刪除而合理跳過）。
+- **同一天使用者對結果不滿意，要求改回自由視角＋WASD 平移**（參考原神／鳴潮）：攝影機/移動已改回右肩視角實驗之前的設計（滑鼠自由環顧、WASD 相對攝影機平移、A/D 是左右平移不是轉向），這一步的右肩視角＋坦克控制設計**已不是目前狀態**，保留在這裡當歷史記錄。細節見 `CHANGELOG.md` 同日「攝影機/移動改回自由視角」條目。
+- **仍待使用者本人 Play 一次確認**：改回自由視角後的手感是否符合預期。
+
+### Step 5 之後再追加：攝影機加上可選的自動回正 — ✅ 完成（2026-08-12）
+
+使用者提出完整規格：維持自由視角＋鏡頭相對移動，只在放開滑鼠一段時間且角色正在前後移動時，讓攝影機平滑靠回角色背後；一有滑鼠輸入立刻交還控制權，鎖定目標時跳過。`ThirdPersonCameraController` 新增 `enableAutoCenter`／`autoCenterDelay`（0.8 秒）／`autoCenterSpeed`（2）／`lockOnSource` 四個欄位，核心公式抽成純函式 `ComputeAutoCenterYaw()`。實測抓到純側移時會跟自動回正互相追逐、漂移 134.8 度的邊界情況，改成只在前後移動為主時才觸發（`CharacterMovement` 新增 `CurrentMoveInput` 公開屬性供判斷）。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 67 個 EditMode（含 3 個新增的 `ComputeAutoCenterYaw` 純函式測試）、37 個 PlayMode 測試通過。
+- **仍待使用者本人 Play 一次確認**：自動回正的節奏（延遲/速度）手感、純前後移動時是否自然、純側移時維持不回正的手感。
+
+### Step 5 之後再追加：新增 Player4（動漫風角色 Arisa，純靜態展示）— ✅ 完成（2026-08-12）
+
+使用者要求「爬取免費的 3D 模型加入 Player4」，澄清風格為動漫風（像 Maya）、用途是之後可能做成敵人/可鎖定目標但目前先靜態展示。找到 Maya 同一位作者（3D動漫風角色屋 / 3D Anime Character Store）的「Arisa」模型，CC-BY 4.0、提供 FBX，比照 `PlayerMayaVisualSetup.cs` 的模式新增 `Player4AnimeVisualSetup.cs`：`(5,0,-8)` 加入獨立 `Player4` GameObject，材質轉 URP Lit、移除內嵌 Rigidbody/Collider/Camera 與原廠自帶腳本產生的 Missing Script 殘留，掛 `CapsuleCollider` 與 `LockOnTarget`。過程中一次算圖誤判「材質壞掉全黑」其實是背光角度問題，換角度後確認模型/貼圖/比例都正常。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md`／`ASSET_LICENSES.md` 同日條目。
+- 67 個 EditMode、37 個 PlayMode 測試（2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過，跟這次新增無關）確認過，前後兩輪（清 Missing Script 前後）數字一致。
+- **已知限制**：目前沒有任何動畫播放/AI/戰鬥邏輯，Idle/Walk/Run/Jump/Fall 動畫都隨套件帶進來但沒有接上任何觸發腳本。
+- **仍待使用者本人 Play 一次確認**：Player4 在互動式 Editor 光照下顯示是否正常、站姿/比例/位置是否符合預期。
+
+### Step 5 之後再追加：Player4 轉為 AI 自主攻擊敵人＋鎖定鍵改滑鼠滾輪＋鎖定搜索改用角色朝向 — ✅ 完成（2026-08-12）
+
+使用者要求「把 Player4 當作敵人開始製作 AI 自主攻擊模式，並且鎖定敵人從 Q 改為滑鼠滾輪點按，以角色1正面視線方向向量去搜索最近的敵人來鎖定」。三項改動範圍較大，先摘要受影響檔案/風險並取得使用者確認才動手（`CLAUDE.md` 第 9 條）。
+
+- **`PlayerInputProvider.cs`**：`LockOnPressed` 從 Q 鍵改讀滑鼠中鍵（`Mouse.current.middleButton`，Input System 裡「滾輪點按」＝中鍵）。
+- **`TargetLockController.viewOrigin`**：從攝影機改成 Player 自己的 `Transform`，讓鎖定搜索沿用既有的 `TargetLockUtility.FindBestTarget`（視線錐角內最近目標）邏輯，但視線來源換成角色1自己的朝向，不是自由視角攝影機的朝向——`GreyboxSceneBuilder.cs` 預設值與新增的一次性 `FixLockOnViewOriginToPlayer.cs`（套用到現有場景）都已更新。
+- **`Player4EnemyAISetup.cs`**（新工具）：比照原本 `TrainingDummy` 的既有做法，把 Player4 的 `CapsuleCollider` 換成 `CharacterController`，加上 `Health`／`EnemyAI`（`target`=Player，維持類別預設的偵測/攻擊範圍 8/2，不像 `TrainingDummy` 當年刻意關掉偵測）／`PlayerCombat`（複用既有的 `EnemyAttack.asset`）。座標系統從「站死擺放」換成「CharacterController 中心點貼地」，比照 Maya 的 `VisualFeetOffset` 公式重算腳底偏移，用算圖（真正 GfxDevice＋順光角度）驗證腳確實貼地。
+- **新增 `Player4EnemyIntegrationTests.cs`**（PlayMode，載入真實 `GreyboxTest` 場景）：驗證 Player4 的元件/欄位接線正確，並端到端確認玩家靠近後 Player4 真的會離開 Idle 追擊、追到範圍內真的會攻擊。
+- 67 個 EditMode、39 個 PlayMode 測試（37 既有 + 2 新增）跑兩輪，兩輪的失敗都完全落在既有已記錄的 flaky 測試類別（`JumpTests`／`WalkingIntoPlayer2_DoesNotPassThrough`，跟這次改動的檔案無關），新增的 2 個測試兩輪全過。
+- **已知限制**：Player4 的移動沒有接 `CharacterAnimatorLink`，追擊/攻擊時動畫不會跟著播放走路動畫；攻擊傷害沿用 `EnemyAttack.asset` 既有數值，沒有另外調校。詳見 `KNOWN_ISSUES.md`。
+- **仍待使用者本人 Play 一次確認**：滑鼠中鍵鎖定手感；角色朝向鎖定搜索的手感（站著不動轉鏡頭看敵人鎖不到，是否符合預期）；Player4 實際追擊/攻擊的節奏與傷害手感。
+
+### Step 5 之後再追加：角色1／Player4 頭頂紅色血條（100 HP，攻擊命中一次扣 10）— ✅ 完成（2026-08-12）
+
+使用者要求「幫角色1和角色4頭頂加上紅色血條100滴血 攻擊命中一次扣10滴血」。新增 `Live2DAction.UI` 命名空間：`HealthBarUtility.ComputeFillAmount`（純函式）＋ `WorldSpaceHealthBar`（World Space Canvas 上的紅色 `Filled` Image，`Update()` 寫入血量比例、`LateUpdate()` 對齊 `Camera.main` 旋轉）。新增 `HealthBarSetup.cs` 在 Player／Player4 底下各生成血條（位置公式從 `CharacterController` 實際高度算出，不寫死座標，比照 `PlayerMayaVisualSetup`／`Player4EnemyAISetup` 既有做法）。`Health.MaxHealth` 本來就是 100，沒有改動。新增一次性 `FixAttackDamageToTen.cs` 把所有 `AttackData`（`LightAttack1/2/3`／`EnemyAttack`）的傷害統一改成 10——**這會改變既有連段遞增設計（原本 8/10/16）**，是使用者這次的明確要求，不是側面影響。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增 `HealthBarUtilityTests.cs`（EditMode，6 個）、`WorldSpaceHealthBarTests.cs`（PlayMode，2 個：孤立情境下扣血後 `fillAmount` 正確更新、真實場景裡 Player／Player4 都有正確接線的血條）。73 個 EditMode、41 個 PlayMode 測試（僅 1 個既有已記錄的 flaky `JumpTests` 失敗，跟這次改動無關）確認過。
+- **已知限制**：血條大小/邊距是估計值，沒有人眼在互動 Editor 裡確認過比例觀感；World Space Canvas 沒有接 `GraphicRaycaster`，血條純顯示不能點擊互動。
+- **仍待使用者本人 Play 一次確認**：血條大小/位置/跟著鏡頭轉動的手感；統一 10 點傷害後的戰鬥節奏（10 下打死一個角色）是否符合預期。
+
+### Step 5 之後再追加：修正「很靠近敵人時角色1突然消失，畫面定格」— ✅ 完成（2026-08-12，真實 bug 回報）
+
+使用者實際 Play 後回報這個 bug。用診斷測試重現：Player 走向 Player4 時 Y 座標會在約 1 秒內從 0.58 爬升到 1.66，之後卡住來回震盪——根因是 Unity `CharacterController.stepOffset`（預設 0.3）讓互推的兩個角色其中一個爬上對方的膠囊體圓頂，卡在對方頭頂附近，這個場景又沒有攝影機防穿模，讀起來就像「角色消失、畫面定格」。修法：`GreyboxSceneBuilder.cs`／`Player4EnemyAISetup.cs` 新建的 `CharacterController` 都把 `stepOffset` 設成 0，新增一次性 `FixCharacterControllerStepOffset.cs` 套用到現有場景。順便修正排查過程中發現的次要 bug：`PlayerCombat.ResolveActiveHit` 在真正貼身距離會打空（判定球只放在 Range 距離處，貼身時直接飛過目標），改用 `Physics.OverlapCapsule` 涵蓋整個攻擊距離。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增永久回歸測試 `CharacterCollisionBlockingTests.WalkingIntoPlayer4_DoesNotClimbOnTop`（斷言 Y 漂移 < 0.2）。73 個 EditMode、42 個 PlayMode 測試（40 過、1 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+- **已知限制**：沒有幫攝影機加防穿模邏輯（既有限制），這次修的是「避免角色被推到頭頂高度」從根本上避開這個情境，不是治本攝影機穿模本身。
+- **仍待使用者本人 Play 一次確認**：實際走近 Player4 確認真的不會再消失/卡住；貼身近戰命中手感是否變得比較合理。
+
+### Step 5 之後再追加：攝影機加上真正的防穿模＋血條位置/大小修正 — ✅ 完成（2026-08-12）
+
+使用者把攝影機 `distance` 調到 2（自己在 Editor 裡調的）後回報靠近 Player4 還是會消失，並問是否血量計算有問題；同時回報血條太低（應該在頭部上方）、要再小一點、要能清楚看到血條隨傷害減少。用多支診斷測試排除了血量計算問題（扣血邏輯完全正常），確認真正根因是這個專案從頭到尾沒有攝影機防穿模邏輯（既有已知缺口，這次終於實作）：`ThirdPersonCameraController` 新增 `enableCameraCollision`（預設開）＋ `Physics.SphereCastAll`，撞到東西就把攝影機拉到障礙物前面。血條改成量測 `Visual` 底下 Renderer 的實際世界座標邊界（不是 `CharacterController` 高度，兩者對不上——碰撞膠囊只有 1 單位高，遠比角色視覺高度矮），尺寸從 `(0.8,0.12)` 縮到 `(0.5,0.06)`。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增 `ThirdPersonCameraControllerTests`（EditMode，4 個 `ClampDistanceForObstruction` 純函式測試）、`ThirdPersonCameraObstructionTests`（PlayMode，2 個：真實 Physics 查詢確認攝影機會被拉近/無障礙物時維持原距離）。77 個 EditMode、44 個 PlayMode 測試（41 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+- **過程中的插曲**：batchmode Unity 連續卡死兩次（Editor 自己的啟動流程，不是這次程式碼問題），強制關閉後忘記清 `Temp/UnityLockfile` 等殘留鎖檔導致又卡一次——已記進 `KNOWN_ISSUES.md` 給下次參考。
+- **仍待使用者本人 Play 一次確認**：靠近 Player4 是否真的不會再消失；血條新的位置/大小是否符合預期，攻擊時能否清楚看到血條隨傷害減少。
+
+### Step 5 之後再追加：找到「角色消失」真正根因＋玩家死亡原地重生 — ✅ 完成（2026-08-12）
+
+使用者回報攝影機防穿模修完後「角色依舊消失」。這次使用者的 Editor 開著沒辦法用命令列排查，改成請使用者截圖 Console＋Hierarchy——Console 只有 10 則已知警告（排除了「兩萬則警告洗死 Editor」的可能），但 Hierarchy 裡 `Player` 那一列是灰色的（Unity「已停用」樣式）。真正根因：`Health.ApplyDamage` 血量歸零時本來就會 `gameObject.SetActive(false)`，但這個專案完全沒有處理「玩家死亡後怎麼辦」——沒有重生、沒有 Game Over，Player 一關掉，掛在它身上的 `CharacterMovement`／`PlayerInputProvider` 全部停止運作，按什麼都沒反應，讀起來就像畫面凍結（不是引擎卡死，是遊戲設計上真的沒做死亡處理）。同一天稍早修的爬牆/貼身攻擊 bug 反而讓 Player4 更容易真的打死玩家，暴露了這個原本就存在的破洞。使用者選擇「原地重生，血量補滿」。新增 `Health.ResetHealth()`＋ `PlayerRespawnController.cs`（掛在新建的 `GameManager` 上，不能掛在 Player 自己身上——`Health.ApplyDamage` 是先觸發死亡事件才緊接著關掉 GameObject，掛在 Player 上的 Coroutine 會被一起砍掉）。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- **過程中抓到自己寫的一個真實 bug**：第一版用 `OnEnable()` 訂閱死亡事件，但欄位是在 `AddComponent()` 之後才接上（不管是編輯器工具還是測試都是這樣），訂閱當下參照還是 null，永遠訂閱不到——`PlayerRespawnControllerTests` 第一次跑就抓到，改成跟這個專案其他地方一樣的輪詢寫法解決。
+- 新增測試：`HealthTests.cs`（EditMode，2 個 `ResetHealth`）、`PlayerRespawnControllerTests.cs`（PlayMode，驗證死亡後 1 秒內原地重生、血量補滿）。79 個 EditMode、45 個 PlayMode 測試（42 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+- **已知限制**：只有 Player 有重生，Player4／未來的敵人死亡還是維持原本的「關掉」語意；重生延遲 0.5 秒沒有人眼確認過手感。
+- **仍待使用者本人 Play 一次確認**：故意讓角色1被 Player4 打死一次，確認真的會原地重生、血量補滿，不會再卡住。
+
+### Step 5 之後再追加：排查血條沒扣血的回報＋重生延遲改 5 秒 — ✅ 完成（2026-08-12）
+
+使用者回報「被攻擊時血量條貼圖不會扣」，並要求重生延遲從 0.5 秒改成 5 秒。**第一輪排查方向錯了**：三支診斷測試只驗證了 `fillAmount` 這個數值有沒有正確更新，數值正確就誤判「沒問題」，沒有實際去看畫面渲染結果。重生延遲改成 5 秒：`PlayerRespawnController.respawnDelaySeconds` 類別預設值改了，並重跑 `PlayerRespawnSetup.Apply()` 讓場景資料同步（這個欄位第一次 `AddComponent` 時就序列化了實際數值，光改程式碼不會回頭更新場景）。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 79 個 EditMode、46 個 PlayMode 測試（42 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+
+### Step 5 之後再追加：真正找到血條不會扣的根因（`Image.Type.Filled` 沒接 Sprite）— ✅ 完成（2026-08-12）
+
+使用者更正說明：不是血量計算問題，是畫面上的血條貼圖本身沒有視覺變化，並附截圖佐證。改用真正 Play 模式截圖比對（滿血 vs 50% 血量），發現兩張圖完全一樣——真正根因：Unity 的 `Image.Type.Filled` 沒有指定 `Sprite` 的話，`fillAmount` 數值完全不影響畫面渲染（這就是為什麼上一輪只讀屬性驗證「看起來沒問題」）。修法：`HealthBarSetup.cs` 補上 `image.sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd")`（Unity 內建預設 UI 圖片）。副作用：血條外觀從方形變圓角橢圓形。新增測試斷言 `Assert.IsNotNull(fillImage.sprite, ...)`鎖住這類 bug。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 79 個 EditMode、46 個 PlayMode 測試（43 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過，用真正 Play 模式截圖驗證過修好了。
+- **教訓**：UI 元件「數值正確」跟「畫面正確」是兩件事，之後排查 UI 相關回報一定要截圖比對實際渲染結果，不能只驗證程式碼屬性。
+- **仍待使用者本人 Play 一次確認**：血條現在應該會隨傷害正確縮短；橢圓形外觀是否可以接受，重生延遲現在是 5 秒。
+
+### Step 5 之後再追加：攻擊命中特效 — ✅ 完成（2026-08-12）
+
+使用者確認血條修好，接著要求「攻擊特效」，澄清為命中特效（粒子/閃光，命中點出現，不是揮擊軌跡或畫面震動）。順便確認 Maya／Arisa 都沒有真的攻擊動畫（Animator Controller 只有 Idle/Walk/Run/Jump/Fall/Pose，其他狀態引用的動畫檔案沒複製進專案），維持用 `AttackPoseVisualizer` 程式驅動揮擊角度。`AttackResolver.ResolveHits` 從只回傳命中數改成回傳實際命中點座標（`List<Vector3>`），`PlayerCombat` 新增 `hitEffectPrefab` 欄位，命中時在每個命中點生成一次。新增 `HitEffectSetup.cs` 純程式產生 `ParticleSystem` 預置物（球形爆發、淡黃白色、URP Additive 混合、放完自動銷毀），不需要美術素材，存成 `Assets/_Project/VFX/HitEffect.prefab` 並接到 Player／Player4。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增測試：`AttackResolverTests`（改 4 個既有 + 新增命中點驗證）、`PlayerCombatHitEffectTests`（PlayMode，命中生成特效／沒接特效不影響傷害）。80 個 EditMode、48 個 PlayMode 測試（44 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過，用真正 Play 模式截圖驗證特效跟血條同步正確。
+- **已知限制**：粒子外觀是方塊狀（沒接柔邊圓形貼圖），能用但不夠精緻。
+- **仍待使用者本人 Play 一次確認**：命中特效的時機/大小/顏色是否符合預期，方塊狀外觀能否接受。
+
+### Step 5 之後再追加：攻擊範圍 Gizmo 視覺化 — ✅ 完成（2026-08-12）
+
+使用者問「如何看到兩個角色的攻擊範圍」，`PlayerCombat.cs` 新增 `OnDrawGizmosSelected()`，畫出跟 `ResolveActiveHit` 實際查詢一致的膠囊範圍，連段三段紅→橙→黃區分，Scene 視窗選取角色即可看到。純 Editor 視覺化，不影響任何遊戲邏輯。順便確認 Maya／Arisa 都是 Humanoid 骨架（`animationType: 3`），為下一步找免費動畫鋪路。84 個 EditMode、48 個 PlayMode 測試（45 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+
+### Step 5 之後再追加：真的攻擊動畫（Mixamo，取代 AttackPoseVisualizer）— ✅ 完成（2026-08-12）
+
+使用者問「可否透過手戳程式碼創造攻擊動作」，說明程式手刻（品質上限低）vs. 找免費 Mixamo 動畫（品質好很多，需要額外工作量）的取捨後，使用者選擇 Mixamo。用瀏覽器工具導到 mixamo.com，使用者本人已登入的 Adobe 帳號跳出兩步驟驗證提示，選擇跳過（不擅自幫使用者決定帳號安全設定），取得下載內容確認後下載 3 個免費動畫（Cross Punch/Hook Punch/Uppercut，Without Skin 格式）。新增 `CombatAnimationImportSetup.cs`（設定 Humanoid 匯入）＋ `CombatAnimatorSetup.cs`（程式碼直接在 Maya／Arisa 的 Animator Controller 各自新增 `Attack1/2/3` 狀態、Trigger 參數、AnyState 轉場，兩隻角色共用同一組動畫，靠 Humanoid Retargeting）＋新元件 `CharacterAttackAnimationLink.cs`（取代 `AttackPoseVisualizer`，每幀讀 `PlayerCombat.ComboIndex` 觸發對應 Trigger）。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md`／`ASSET_LICENSES.md` 同日條目。
+- 新增測試：`CharacterAttackAnimationLinkTests`（EditMode，index→trigger 對應）、`CharacterAttackAnimationLinkIntegrationTests`（PlayMode，載入真實場景驗證按攻擊後 Animator 真的轉狀態——過程中發現 PlayMode 測試組件不能用 `UnityEditor` API，改用真實場景驗證解決）。84 個 EditMode、49 個 PlayMode 測試（47 過、1 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過，用真正 Play 模式截圖驗證攻擊動畫真的播放（揮拳姿勢，不是待機/T-pose）。
+- **已知限制**：動畫時長跟 frame data 沒有互相對齊；截圖裡 Maya 材質看起來偏白，懷疑是算圖角度問題，需要人眼確認。
+- **仍待使用者本人 Play 一次確認**：三段連段動畫的手感/時機；Maya 材質顯示是否正常。
+
+### Step 5 之後再追加：攻擊距離調整說明＋Player2 補上血條與受擊 — ✅ 完成（2026-08-13）
+
+使用者問「如何調整攻擊距離」（純說明：改 `Assets/_Project/Settings/Combat/` 底下 `AttackData` 資產的 `Range`／`Radius` 欄位即可，不用碰程式碼，可用既有的 Gizmo 直接在 Scene 視窗確認），並要求「幫我讓player2也有血條 也能受擊，但是他不會自主攻擊」。新增 `Player2DamageableSetup.cs`：Player2 補上 `Health` 元件（本來就有 `CapsuleCollider`，`AttackResolver` 找 `IDamageable` 本來就照 collider 所在物件找，不需要其他改動）跟血條（複用 `HealthBarSetup` 既有邏輯，改成 `internal` 給外部工具重用），**刻意沒有加 `PlayerCombat`／`EnemyAI`**——維持純被動、只挨打不反擊。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增測試：`WorldSpaceHealthBarTests.Player2_HasHealthBarAndCanBeDamaged_ButHasNoAttackCapability`（PlayMode，驗證血條接線正確、沒有攻擊元件、真的會扣血）。84 個 EditMode、50 個 PlayMode 測試（47 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過，用算圖驗證 Player2 頭頂血條正確顯示。
+- **仍待使用者本人 Play 一次確認**：Player2 血條位置/大小；被打時扣血是否正常、確認不會反擊。
+
+### Step 5 之後再追加：Player2 死亡後也能復活 — ✅ 完成（2026-08-13）
+
+使用者要求「設計player2可以復活」。既有的 `PlayerRespawnController`（2026-08-12 為 Player 而建）邏輯本身沒有 Player 專屬內容，因此更名為通用的 `RespawnController`（欄位 `player`/`playerHealth` → `target`/`targetHealth`；用 `mv` 同時搬動 `.cs`/`.cs.meta` 保留 GUID，避免既有場景元件變成「Missing Script」）後直接重用，而不是複製一份給 Player2。新增 `Player2RespawnSetup.cs`（`Tools/Live2DAction/Add Player2 Respawn Controller`），在 `GameManager` 上再掛一個 `RespawnController` 指向 Player2，沿用跟 Player 一樣的 5 秒延遲、原地滿血復活。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增測試：`Player2RespawnControllerTests`（PlayMode，2 個：Player2 單獨死亡復活、`GameManager` 上兩個 `RespawnController` 互不干擾）。84 個 EditMode、52 個 PlayMode 測試（48 過、3 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過；另外在真實 `GreyboxTest` 場景跑了一個暫時性 PlayMode 診斷測試直接驗證 Player2 死亡→復活的行為，通過後已刪除。
+- **視覺驗證侷限**：想截圖驗證但主攝影機跟隨 Player、不會轉向 Player2，畫面看不出差異，改以測試斷言為準（見 `KNOWN_ISSUES.md` 同日條目）。
+- **仍待使用者本人 Play 一次確認**：Player2 死亡後 5 秒等待感受是否合理；復活瞬間直接 `SetActive(true)`，沒有淡入效果，是否需要之後加。
+
+### Step 5 之後再追加：修正 Player 復活失效（同日更名 `RespawnController` 造成的真實回歸）— ✅ 完成（2026-08-13）
+
+使用者回報「現在角色1不會復活」——上面那則更名 `RespawnController` 的改動讓 Player 原本就存在的元件實例欄位資料變成孤兒（`target`/`targetHealth` 變 `null`），第一次修的時候又漏了考慮「接線工具找不到精準比對時該回收孤兒、不是無腦新增」，一度在 `GameManager` 上疊出 3 個 `RespawnController`（1 個永久失效）。修正兩支接線工具的比對邏輯（精準比對 → 回收孤兒 → 才新增），新增 `RespawnControllerCleanup.cs` 清掉已產生的孤兒元件，並新增 `RespawnControllerSceneWiringTests`（PlayMode，載入真實場景驗證 `GameManager` 上剛好 2 個、都正確接線）防止同類 bug 再次不被發現。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 84 個 EditMode、53 個 PlayMode 測試（50 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過，Player 現在確實會在死亡 5 秒後原地滿血復活。
+
+### Step 5 之後再追加：鎖定目標改用鏡頭朝向判斷 — ✅ 完成（2026-08-13）
+
+使用者要求「目前鎖定目標需要角色去面對敵人，能不能改為鼠標鏡頭面相來判斷?」——反轉 2026-08-12 當時「用角色自己面向判斷」的明確決定。`TargetLockController.viewOrigin` 原本就是可替換的 Transform 來源，不需要改判斷邏輯，只把場景接線從 Player 自己的 Transform 換成 Main Camera 的 Transform（攝影機旋轉本來就每幀同步滑鼠 yaw/pitch）。新增 `LockOnViewSourceSetup.cs`（`Tools/Live2DAction/Use Camera Facing For Lock-On`）套用到既有場景，`GreyboxSceneBuilder.cs` 也同步更新供之後重建用。範圍/距離判定仍量測自角色本人，鎖定後角色朝向轉向目標的既有行為不變。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增測試：`TargetLockControllerTests.LockOnPressed_ViewOriginFacesCandidateButCharacterFacesAway_StillLocksOn`（角色刻意背對目標、只有 `viewOrigin` 面向目標，驗證依然鎖得到）。84 個 EditMode、54 個 PlayMode 測試（51 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+- **仍待使用者本人 Play 一次確認**：實際轉鏡頭鎖定敵人的手感；`TargetLockController.Update()` 比 `ThirdPersonCameraController.LateUpdate()` 早一幀執行，鎖定判定用的攝影機朝向理論上落後約 16ms，正常應該感受不到。
+
+### Step 5 之後再追加：修正敵人攻擊距離加長後「沒有隔空打到」＋角色碰撞體總體檢 — ✅ 完成（2026-08-13）
+
+使用者自行把 `EnemyAttack.asset` 的 `Range` 調到 7.5（約原本5倍），實測回報沒感受到遠距離被打到，並要求檢查所有角色碰撞體。根因：`AttackData.Range`（判定膠囊多長）跟 `EnemyAI.attackRange`（AI 何時願意出手）是兩個獨立欄位，場景裡的 `attackRange` 還停在預設值 2，Player4 永遠要先走到貼身距離才會開始攻擊，長距離完全沒被用到。新增 `EnemyAttackRangeSync.cs`（`Tools/Live2DAction/Sync Player4 Attack Range To EnemyAttack Data`）動態同步兩者（`attackRange = Range - 0.5` 緩衝），保留使用者已調好的 `Range=7.5`／`Radius=1.5`。另外實際掃描場景確認 Player／Player4／Player2 都正確套用碰撞體＋`Health`，076/077 立牌與 FemaleStandee 沒有碰撞體是設計上的預期行為（純視覺展示，未接戰鬥邏輯）。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增測試：`EnemyAttackRangeSceneTests.Player4_AttacksPlayerFromRangeWithoutClosingToMeleeDistance_InRealScene`（PlayMode，載入真實場景，驗證 Player4 在 5 個單位遠處就能命中，不用先走近）。84 個 EditMode、55 個 PlayMode 測試（53 過、1 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+- **仍待使用者本人 Play 一次確認**：實際感受 Player4 現在的攻擊距離；`attackRange(7)` 很接近 `detectionRange(8)`，追逐感會很短（幾乎一發現就攻擊），如果覺得不夠自然可以再拉開兩者差距。
+
+### Step 5 之後再追加：Player4 攻擊距離縮小到3倍＋加上死亡復活 — ✅ 完成（2026-08-13）
+
+使用者實測上面那組 `Range=7.5` 的設定後回報「敵人離我離得很遠就開始原地揮拳」（判定距離遠超過揮拳動畫視覺長度，違和感明顯）＋「發現敵人死了不會復活」（Player4 先前是刻意設計成打倒即永久消失）。確認方向後：`EnemyAttack.asset` 縮小到 `Range=4.5`／`Radius=1`（3倍，使用者在 2~3倍／維持7.5 之間選了前者），重跑 `EnemyAttackRangeSync.cs` 同步 `attackRange` 到 4；新增 `Player4RespawnSetup.cs`，在 `GameManager` 加第三個 `RespawnController` 指向 Player4，跟 Player／Player2 一樣 5 秒後原地滿血復活——Player4 從此不會再被打死後永久消失。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增測試：`Player4RespawnControllerTests`（Player4 死亡復活）；`RespawnControllerSceneWiringTests` 擴充為驗證 3 個 `RespawnController`（Player/Player2/Player4）都正確接線。84 個 EditMode、56 個 PlayMode 測試（52 過、2 個既有已記錄的 flaky、1 個 TrainingDummy 已知跳過）確認過。
+- **已知限制**：`Range=4.5` 仍比揮拳動畫視覺長度長一截，只是沒有 7.5 那麼誇張；要做到真正「看起來合理」的長距離攻擊，需要專屬的突進/特效動畫，不是純調數字能解決的。Player4 現在會無限復活，之後若要做「擊敗所有敵人才能過關」的關卡設計，需要另外處理判定條件。
+- **仍待使用者本人 Play 一次確認**：新的攻擊距離違和感是否已經改善；Player4 死亡復活的節奏手感。
+
+### Step 5 之後再追加：攻擊距離／警備距離用不同顏色 Gizmo 呈現 — ✅ 完成（2026-08-13）
+
+使用者要求「能不能把 攻擊距離 警備距離 用不同顏色線條呈現嗎 角色1和4都要」。攻擊距離沿用既有的 `PlayerCombat` 膠囊 Gizmo（紅/橙/黃）不動，新增「警備距離」青色線框球：Player（角色1）對應 `TargetLockController.maxLockRange`（能偵測/鎖定敵人的範圍，使用者確認的對應方式），Player4 對應 `EnemyAI.detectionRange`（多遠會注意到玩家）——概念相同（「這個角色的感知範圍」）但方向相反，各自畫在自己的元件上，不集中寫成獨立工具腳本。純 Editor 視覺輔助，不影響任何執行期邏輯。細節見 `CHANGELOG.md` 同日條目。
+- 84 個 EditMode 全過。沒有自動化截圖驗證——Gizmo 是 SceneView 疊加層，批次模式相機截圖截不到，延續先前攻擊距離 Gizmo 就是純靠使用者肉眼在 Scene 視窗確認的做法。
+- **仍待使用者本人在 Scene 視窗確認**：選取 Player／Player4，青色圓圈半徑是否符合預期。
+- **附帶發現（跟這次 Gizmo 改動無關）**：跑完整測試時發現 `EnemyAttack.asset` 又被改動（`range=1.5`），跟場景裡 Player4 的 `attackRange`(4) 又不同步，`EnemyAttackRangeSceneTests` 因此暫時失敗——已回報使用者確認要保留目前數值還是換回先前 3× 那組，細節見 `KNOWN_ISSUES.md`。
+
+### Step 5 之後再追加：玩家／敵人攻擊距離 Gizmo 顏色分開＋判定頂端加實心標記 — ✅ 完成（2026-08-13）
+
+使用者要求「我需要分開敵人與玩家的攻擊判定 攻擊距離物件 並且顏色都要有區別，最好攻擊判定頂端要有更明顯的視覺效果」。Player（LightAttack1/2/3）跟 Player4（EnemyAttack）原本共用同一組紅/橙/黃配色，Player 第一段連段（紅）跟 Player4 唯一的攻擊（也是紅）視覺上分不出來。改成 Player 用綠色系、Player4 用紅色系（`GetComponent<EnemyAI>() != null` 判斷是不是敵人，重用 Player4 本來就有的既有機制，沒有新增欄位），跟警備距離的青色三方都不衝突；攻擊判定的「遠端」（實際打得到多遠的那一點）額外加一顆不透明實心球，在一堆半透明線框裡最顯眼。細節見 `CHANGELOG.md` 同日條目。
+- 84 個 EditMode 全過；PlayMode 55 過 3 個失敗，2 個既有已記錄的 flaky、1 個是上面提到還沒解決的 `EnemyAttackRangeSceneTests`（跟這次顏色改動無關）。
+- **仍待使用者本人在 Scene 視窗確認**：選取 Player／Player4，綠/紅配色跟頂端實心球是否符合預期。
+- **同日修正 #1**：使用者附截圖回報「線條很多，紅色的有兩圈銜接，分不清楚邊界」——`Radius` 相對 `Range` 偏大時 near/far 兩顆線框球疊在一起糾結成一團。改成拿掉兩顆線框球，只在 `far` 畫一顆原始半徑的實心球當唯一邊界標記，中間 4 條線保留。
+- **同日修正 #2**：使用者接著回報「頂端紅色區塊會遮擋線條影響判斷」——修正 #1 的全尺寸實心球把匯聚進來的線都蓋住了。改回線框圓（不遮擋，只有細線）當邊界標記，但這次只畫一顆（不是原本疊在一起的兩顆），中心加一個很小（15% 半徑）的實心點做強調，不會蓋住線條。兩次回報合起來的教訓：邊界標記本身要用不佔視覺面積的線框，「更明顯」的效果要靠額外的小裝飾物，不能拿邊界標記本身放大。細節見 `CHANGELOG.md` 同日兩則條目。
+- **同日修正 #3（改成動態偵測）**：使用者回報「還是很難判斷 有沒有明確的視覺表達方式 能讓我知道究竟有沒有進入到攻擊範圍」——靜態線框本身不會因為有沒有人站進去而改變，肉眼在任意鏡頭角度都很難準確判斷。改成即時跑一次跟 `ResolveActiveHit` 完全一樣的 `Physics.OverlapCapsule` 查詢，真的有目標在範圍內就整顆變成醒目亮黃色實心球，沒有就維持線框圈＋小實心點——不再是靠眼睛估，是跟真正的傷害判定共用同一個查詢算出來的真實答案，Edit 模式（不用按 Play）跟 Play 模式都能用。過程中遇到一次批次模式環境卡住（`TrimDiskCacheJob` 連續卡 3 次，跟這次程式改動無關，重試後正常），放棄了額外的自動化邏輯驗證，改依賴既有編譯檢查＋`CombatPlayModeTests` 不受影響確認。細節見 `CHANGELOG.md` 同日條目。
+- 84 個 EditMode 全過；`CombatPlayModeTests` 確認攻擊判定邏輯沒有受影響。
+- **仍待使用者本人在 Scene／Game 視窗確認**：把角色移進移出攻擊範圍，觀察亮黃色是否即時切換。
+- **同日修正 #4**：使用者回報「不要這樣包覆整個物體 看不見」——修正 #3 的全尺寸實心球會把站在範圍內的角色整個包住蓋住。徹底改成不填滿任何東西：邊界只用線框圓（`Radius` 準確大小，代表「碰到這條線一定被攻擊」）＋小參考點，有目標在範圍內時整組線條變亮黃色、邊界圓疊 2 圈模擬變粗，全程沒有任何實心區塊會遮擋角色。這是同一天第 4 次根據實際回饋調整這個 Gizmo，教訓見 `KNOWN_ISSUES.md`。細節見 `CHANGELOG.md` 同日條目。
+- 84 個 EditMode 全過；`CombatPlayModeTests` 確認攻擊判定邏輯沒有受影響。
+
+### Step 5 之後再追加：修正真實 bug——Gizmo 視覺呈現跟 Player4 實際攻擊判定不一致 — ✅ 完成（2026-08-13）
+
+使用者回報「我已經盡到敵人範圍內，線條從紅色變成黃色，但敵人尚未作出攻擊」——不是 Gizmo 畫錯，是真的暴露出既有邏輯 bug：Gizmo／`ResolveActiveHit` 用 `Physics.OverlapCapsule`（真正可達距離是 `Range+Radius`），`EnemyAI` 自己決定要不要攻擊卻是單純球體距離判斷（`attackRange`，獨立欄位，需要手動同步），兩套判斷用的形狀根本不一樣。改成架構性修正：`EnemyAI` 新增可選 `combat` 欄位，接上後每一幀直接從 `PlayerCombat.PrimaryAttack`（新增公開屬性）即時算出 `Range+Radius` 當攻擊距離，不再有獨立、會過期的數字（沒接時退回原欄位，向下相容）。新增 `Player4EffectiveAttackRangeSetup.cs`（`Tools/Live2DAction/Wire Player4 Effective Attack Range`）套用到 Player4。細節見 `CHANGELOG.md`／`KNOWN_ISSUES.md` 同日條目。
+- 新增測試：`EnemyAITests.TargetBeyondAttackRangeButWithinCapsuleReach_StillAttacksWhenCombatWired`（直接驗證這次回報的情境修好）、`TargetBeyondAttackRange_WithoutCombatWired_StaysChasing`（確認沒接 `combat` 時舊行為不變）。套用後意外多修好兩個既有測試（`Player4EnemyIntegrationTests`／`WorldSpaceHealthBarTests.PlayerBar_UpdatesWhenPlayer4DamagesPlayer_InRealScene`，原本因同一根因默默失敗）。
+- 84 個 EditMode 全過；58 個 PlayMode 測試（55 過、1 個既有已記錄的 flaky、1 個 `EnemyAttack.asset` 的 `Range` 仍偏小的已知未解決問題、1 個 TrainingDummy 已知跳過）確認過。
+
+### Step 5 之後再追加：玩家連段攻擊 Range/Radius 套用敵人已調好的數值 — ✅ 完成（2026-08-13）
+
+使用者要求「我調整好的敵人的參數配置，以一樣的公式和邏輯套用在player1身上」，確認只套用 `Range`／`Radius`（frame data／傷害維持 Player 自己的連段設計）。`LightAttack2`／`LightAttack3` 的 `range`／`radius` 從 1.5／0.75 改成 0.5／0.5，跟已經是這組數值的 `LightAttack1`／`EnemyAttack` 一致，三段連段起手/收招的節奏差異完全沒動。純資料變動，沒有碰程式碼。細節見 `CHANGELOG.md` 同日條目。
+- 84 個 EditMode 全過；58 個 PlayMode 測試（54 過、2 個既有已記錄的 flaky、1 個既有已知未解決的 `EnemyAttackRangeSceneTests`、1 個 TrainingDummy 已知跳過），跟改動前完全一致，沒有新增任何失敗。
+- **仍待使用者本人 Play 一次確認**：三段連段距離縮短後的手感；`Range+Radius=1.0` 剛好等於雙方預設半徑貼身時的下限，零緩衝，如果貼身偶爾打空這是最可能的原因。
+
+### Step 5 之後再追加：新增 Player3——跟 Player 完全一樣的攻擊機制，但完全不會動、不會攻擊 — ✅ 完成（2026-08-13）
+
+使用者要求「引入 Cross Punch.fbx，攻擊、動作判定、機制完全與p1一致，差別只在於他完全不會動，也不會攻擊」。檢查後發現該檔案跟專案裡已有的 `CrossPunch.fbx`（Player 自己 Attack1 用的）MD5 完全相同，沒有重複匯入。確認範圍（沿用 Player 的 Maya 模型、可受擊跟 Player2 一致）後，新增 `Player3TrainingDummySetup.cs`——`comboAttacks` 直接參照 Player 用的同一組 `LightAttack1/2/3.asset`（不是拷貝，之後調整會自動同步），視覺重用 Maya 的 prefab（天生共用同一個 Animator Controller，已有 Attack1/2/3 狀態）。靠 `inputSource` 留空保證永遠不會攻擊，沒有 `CharacterMovement`／`PlayerInputProvider`／`EnemyAI` 保證永遠不會動，用 `CapsuleCollider`（不是 `CharacterController`）。可受擊部分（Health／血條／LockOnTarget）沿用 Player2 的既有模式。細節見 `CHANGELOG.md` 同日條目。
+- 新增測試：`WorldSpaceHealthBarTests.Player3_SharesPlayersExactCombatData_ButNeverMovesOrAttacks`（驗證血條接線、`comboAttacks` 三格都跟 Player 參照同一份資產、沒有移動/攻擊相關元件、位置與 ComboIndex 永遠不變、真的會被打）。算圖截圖確認 Maya 模型正確顯示、血條位置正確。
+- 84 個 EditMode 全過；59 個 PlayMode 測試（55 過、2 個既有已記錄的 flaky、1 個既有已知未解決的 `EnemyAttackRangeSceneTests`、1 個 TrainingDummy 已知跳過），跟改動前一致。
+- **仍待使用者本人 Play 一次確認**：Player3 目前放在座標 (5, ground+0.5, 0)，位置是否需要調整。
 
 ## Phase 3：Live2D 與完整流程（未開始）
 

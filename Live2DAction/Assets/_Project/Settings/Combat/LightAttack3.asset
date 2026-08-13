@@ -13,9 +13,9 @@ MonoBehaviour:
   m_Name: LightAttack3
   m_EditorClassIdentifier: 
   attackId: LightAttack3
-  damage: 16
-  range: 1.5
-  radius: 0.75
+  damage: 10
+  range: 0.5
+  radius: 0.5
   startupFrames: 10
   activeFrames: 5
   recoveryFrames: 22

@@ -32,9 +32,9 @@ public class AttackResolverTests
         GameObject target = CreateDamageableTarget("Target", out Health health);
         target.transform.position = Vector3.zero;
 
-        int hits = AttackResolver.ResolveHits(Vector3.zero, attackData, attacker.transform, new Collider[] { target.GetComponent<Collider>() });
+        var hits = AttackResolver.ResolveHits(Vector3.zero, attackData, attacker.transform, new Collider[] { target.GetComponent<Collider>() });
 
-        Assert.AreEqual(1, hits);
+        Assert.AreEqual(1, hits.Count);
         Assert.AreEqual(health.MaxHealth - 25f, health.CurrentHealth);
     }
 
@@ -46,9 +46,9 @@ public class AttackResolverTests
         var attackerCollider = attacker.AddComponent<SphereCollider>();
         var selfHealth = attacker.AddComponent<Health>();
 
-        int hits = AttackResolver.ResolveHits(Vector3.zero, attackData, attacker.transform, new Collider[] { attackerCollider });
+        var hits = AttackResolver.ResolveHits(Vector3.zero, attackData, attacker.transform, new Collider[] { attackerCollider });
 
-        Assert.AreEqual(0, hits);
+        Assert.AreEqual(0, hits.Count);
         Assert.AreEqual(selfHealth.MaxHealth, selfHealth.CurrentHealth, "Attacker should never damage itself");
     }
 
@@ -60,9 +60,9 @@ public class AttackResolverTests
         var plainGeometry = new GameObject("Wall");
         var wallCollider = plainGeometry.AddComponent<BoxCollider>();
 
-        int hits = AttackResolver.ResolveHits(Vector3.zero, attackData, attacker.transform, new Collider[] { wallCollider });
+        var hits = AttackResolver.ResolveHits(Vector3.zero, attackData, attacker.transform, new Collider[] { wallCollider });
 
-        Assert.AreEqual(0, hits);
+        Assert.AreEqual(0, hits.Count);
     }
 
     [Test]
@@ -73,14 +73,33 @@ public class AttackResolverTests
         GameObject targetA = CreateDamageableTarget("TargetA", out Health healthA);
         GameObject targetB = CreateDamageableTarget("TargetB", out Health healthB);
 
-        int hits = AttackResolver.ResolveHits(
+        var hits = AttackResolver.ResolveHits(
             Vector3.zero,
             attackData,
             attacker.transform,
             new[] { targetA.GetComponent<Collider>(), targetB.GetComponent<Collider>() });
 
-        Assert.AreEqual(2, hits);
+        Assert.AreEqual(2, hits.Count);
         Assert.AreEqual(healthA.MaxHealth - 10f, healthA.CurrentHealth);
         Assert.AreEqual(healthB.MaxHealth - 10f, healthB.CurrentHealth);
+    }
+
+    // 2026-08-12: ResolveHits started returning actual hit points (not just a count) so
+    // PlayerCombat can spawn a hit-effect at each real impact location.
+    [Test]
+    public void ResolveHits_ReturnedPointIsOnTheTargetsSurface()
+    {
+        AttackData attackData = CreateAttackData(10f);
+        var attacker = new GameObject("Attacker");
+        GameObject target = CreateDamageableTarget("Target", out _);
+        target.transform.position = new Vector3(5f, 0f, 0f);
+
+        var hits = AttackResolver.ResolveHits(Vector3.zero, attackData, attacker.transform, new Collider[] { target.GetComponent<Collider>() });
+
+        Assert.AreEqual(1, hits.Count);
+        // The target's SphereCollider (radius 0.5) centered at (5,0,0), queried from the
+        // origin - the closest point on its surface should be roughly (4.5, 0, 0), not the
+        // target's own center or the query origin.
+        Assert.AreEqual(4.5f, hits[0].x, 0.01f);
     }
 }

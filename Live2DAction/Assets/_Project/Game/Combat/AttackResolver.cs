@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using Live2DAction.Core;
 
@@ -7,9 +8,13 @@ namespace Live2DAction.Combat
     // so it can be exercised directly in EditMode tests without a physics step.
     public static class AttackResolver
     {
-        public static int ResolveHits(Vector3 origin, AttackData attackData, Transform attackerRoot, Collider[] candidates)
+        // Returns the world-space point of every landed hit (empty list if none) - callers
+        // that only care about the count can just read .Count. 2026-08-12: changed from a
+        // plain int so PlayerCombat can spawn a hit-effect at each actual impact point (see
+        // its own comment) without a second, redundant Physics query.
+        public static List<Vector3> ResolveHits(Vector3 origin, AttackData attackData, Transform attackerRoot, Collider[] candidates)
         {
-            int hitCount = 0;
+            var hitPoints = new List<Vector3>();
             foreach (Collider candidate in candidates)
             {
                 if (candidate == null)
@@ -26,11 +31,11 @@ namespace Live2DAction.Combat
                 {
                     Vector3 point = candidate.ClosestPoint(origin);
                     damageable.ApplyDamage(new DamageInfo(attackData.Damage, point, Vector3.zero, attackerRoot.gameObject));
-                    hitCount++;
+                    hitPoints.Add(point);
                 }
             }
 
-            return hitCount;
+            return hitPoints;
         }
     }
 }
