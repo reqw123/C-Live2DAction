@@ -167,4 +167,61 @@ public class CharacterCollisionBlockingTests
         Assert.Less(yDrift, 0.2f,
             $"Player's Y drifted {yDrift} units (from {startingY} to {player.transform.position.y}) after walking straight into Player4 for 2s - it's climbing up onto Player4 instead of being blocked horizontally.");
     }
+
+    // Regression test for a real user report (2026-08-16, "跳躍有機會卡在敵人頭上，需要自行下來") -
+    // a different way onto Player4's head than the walk-in case above (which stepOffset=0
+    // already fixed): a jump's ballistic arc can land the player directly on top instead of
+    // climbing there by walking. See GroundSlopeUtility's own comment for the root cause
+    // (CharacterController.isGrounded reads true there regardless of how steep/round the
+    // surface actually is - slopeLimit only blocks walking UP onto a steep slope, it does
+    // nothing once already resting on one) and CharacterMovement's TryGetGroundNormal/slide
+    // fix.
+    [UnityTest]
+    public IEnumerator LandingOnTopOfPlayer4_SlidesOffWithoutAnyInput()
+    {
+        SceneManager.LoadScene("GreyboxTest");
+        yield return null;
+        yield return null;
+
+        GameObject player = GameObject.Find("Player");
+        GameObject player4 = GameObject.Find("Player4");
+        Assert.IsNotNull(player, "Player not found in GreyboxTest scene");
+        Assert.IsNotNull(player4, "Player4 not found in GreyboxTest scene");
+
+        var playerController = player.GetComponent<CharacterController>();
+        var player4Controller = player4.GetComponent<CharacterController>();
+        Assert.IsNotNull(playerController, "Player has no CharacterController");
+        Assert.IsNotNull(player4Controller, "Player4 has no CharacterController");
+
+        // Positions Player resting right on top of Player4's capsule, matching what a jump
+        // landing there would look like the instant it settles - deliberately offset slightly
+        // off-center (not dead on the apex), both because that's how a real jump would
+        // actually land and because GroundSlopeUtility.ComputeSlideDirection's own comment
+        // notes the exact apex is a genuinely undefined/unstable case, not this fix's target.
+        float player4TopWorldY = player4.transform.position.y + player4Controller.center.y + player4Controller.height / 2f;
+        float playerHalfHeight = playerController.center.y + playerController.height / 2f;
+        float startingY = player4TopWorldY + playerHalfHeight + 0.05f;
+        player.transform.position = new Vector3(
+            player4.transform.position.x + 0.15f,
+            startingY,
+            player4.transform.position.z + 0.1f);
+
+        // Deliberately no input at all, ever - the bug report is specifically that the player
+        // has to manually walk off; this test only passes if it resolves entirely on its own.
+        player.AddComponent<StubInputBehaviour>();
+        var movement = player.GetComponent<Live2DAction.Characters.CharacterMovement>();
+        SetField(movement, "inputSource", player.GetComponent<StubInputBehaviour>());
+
+        yield return RunForSeconds(3f);
+
+        // Checks Player's own Y height, not distance to Player4 - Player4 has its own EnemyAI
+        // that actively chases Player (confirmed live: detectionRange 8, moveSpeed 2), so
+        // Player4 closing the gap on its own would make an XZ-distance assertion pass/fail for
+        // the wrong reason regardless of whether the slide fix actually works. A player that's
+        // still resting elevated on top of Player4 stays near startingY; one that's slid/fallen
+        // off drops back down toward normal ground-level height.
+        float finalY = player.transform.position.y;
+        Assert.Less(finalY, startingY - 0.3f,
+            $"Player's Y only dropped from {startingY} to {finalY} after 3s with no input at all - it's still resting elevated on top of Player4 instead of sliding/falling off.");
+    }
 }

@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -36,6 +38,28 @@ namespace Live2DAction.EditorTools
         private const float OuterRadius = 26f;
         private const int PropCount = 40;
 
+        // 2026-08-16: this ring was originally scaled with one flat 0.8-1.4x multiplier
+        // applied to every prop regardless of type - discovered (while calibrating
+        // DistantMountainsSetup/MidDistanceTreeRingSetup for the same asset pack) that the
+        // Quaternius FBX files import at wildly different native scales per category
+        // (measured live via execute_code: Tree ~0.03 world-units of height per 1x scale,
+        // Rock ~0.027, Bush ~0.0096, Grass as low as ~0.0001 for the Grass1 variant vs
+        // ~0.0025 for Grass2/3) - a single uniform multiplier could never size all four
+        // categories correctly at once, and in practice left this entire ring rendering as
+        // sub-centimeter, effectively invisible specks since 2026-08-12. Fixed at the root
+        // instead of hardcoding another guessed multiplier: measures each instantiated prop's
+        // actual bounds at its native scale, then computes exactly the scale factor needed to
+        // hit a randomly chosen target height within its category's design range below - self-
+        // correcting regardless of how any individual asset happens to be imported, so this
+        // can't quietly go stale again the way the flat multiplier did.
+        private static readonly Dictionary<string, (float min, float max)> CategoryTargetHeight = new Dictionary<string, (float, float)>
+        {
+            { "Tree", (4f, 6f) },
+            { "Rock", (1.5f, 2.5f) },
+            { "Bush", (0.8f, 1.3f) },
+            { "Grass", (0.3f, 0.5f) },
+        };
+
         [MenuItem("Tools/Live2DAction/Add Background Scenery")]
         public static void Apply()
         {
@@ -72,8 +96,8 @@ namespace Live2DAction.EditorTools
                 instance.name = propName + "_" + i;
                 instance.transform.localPosition = position;
                 instance.transform.localRotation = Quaternion.Euler(0f, (float)random.NextDouble() * 360f, 0f);
-                float scale = 0.8f + (float)random.NextDouble() * 0.6f;
-                instance.transform.localScale = Vector3.one * scale;
+                instance.transform.localScale = Vector3.one;
+                instance.transform.localScale = Vector3.one * ComputeCalibratedScale(instance, propName, random);
 
                 ConvertMaterialsToUrp(instance);
             }
@@ -93,6 +117,56 @@ namespace Live2DAction.EditorTools
             }
 
             return prefab;
+        }
+
+        // Measures instance's actual rendered size at its current (native, scale=1) size and
+        // computes exactly the multiplier needed to hit a random target size within propName's
+        // category range - see CategoryTargetHeight's own comment for why this is measured
+        // live per-instance instead of a hardcoded per-category constant.
+        //
+        // Grass calibrates against the LARGEST of the three bounding dimensions rather than
+        // height - Grass1 turned out to have a completely different native aspect ratio from
+        // Grass2/3 (a flat, wide patch rather than a clump), and height-only calibration scaled
+        // it up into a 14-unit-wide sprawl to hit the same ~0.4-unit height target. Every other
+        // category stays height-calibrated - applying the same largest-dimension rule to Tree
+        // would instead calibrate off canopy width (wider than tall for this pack's tree
+        // meshes) and undershoot the intended height range.
+        private static float ComputeCalibratedScale(GameObject instance, string propName, System.Random random)
+        {
+            string category = Regex.Replace(propName, "[0-9]+$", ""); // "Tree1" -> "Tree", etc.
+            if (!CategoryTargetHeight.TryGetValue(category, out (float min, float max) targetRange))
+            {
+                Debug.LogWarning($"No target height range registered for category '{category}' (from '{propName}') - leaving at native scale.");
+                return 1f;
+            }
+
+            Renderer renderer = instance.GetComponentInChildren<Renderer>();
+            float nativeSize;
+            if (renderer == null)
+            {
+                nativeSize = 0f;
+            }
+            else if (category == "Grass")
+            {
+                nativeSize = Mathf.Max(renderer.bounds.size.x, renderer.bounds.size.y, renderer.bounds.size.z);
+            }
+            else
+            {
+                nativeSize = renderer.bounds.size.y;
+            }
+
+            // Deliberately far below Grass1's own genuine native height (~0.0001, confirmed
+            // live via execute_code) - that variant's mesh really is that tiny, it's not a
+            // degenerate/zero bounds case. This threshold only needs to catch an actually
+            // empty/missing renderer.
+            if (nativeSize <= 0.000001f)
+            {
+                Debug.LogWarning($"'{propName}' has no measurable renderer bounds - leaving at native scale.");
+                return 1f;
+            }
+
+            float targetSize = targetRange.min + (float)random.NextDouble() * (targetRange.max - targetRange.min);
+            return targetSize / nativeSize;
         }
 
         // The pack ships untextured (see Docs/ASSET_LICENSES.md) with legacy Built-in-RP

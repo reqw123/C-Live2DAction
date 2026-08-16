@@ -22,6 +22,11 @@ namespace Live2DAction.Combat
     {
         [SerializeField] private MonoBehaviour inputSource;
         [SerializeField] private UltimateEnergy energy;
+        // 2026-08-16, explicit user request: 施放必殺技瞬間，身體周圍散發一瞬間的霸氣感 - optional
+        // (left null-safe in Activate()) so existing tests that build a bare UltimateAbility
+        // without a burst effect keep working unchanged, same pattern as EnemyAI.combat's own
+        // "optional, defaults to null" field.
+        [SerializeField] private UltimateActivationBurst burst;
         [SerializeField] private float weaponScaleMultiplier = 10f;
         [SerializeField] private float attack1DamageMultiplier = 10f;
         [SerializeField] private float durationSeconds = 5f;
@@ -95,6 +100,11 @@ namespace Live2DAction.Combat
             _active = true;
             _remaining = durationSeconds;
             _combat.Attack1DamageMultiplier = attack1DamageMultiplier;
+
+            if (burst != null)
+            {
+                burst.Play();
+            }
 
             _weapon = FindWeapon();
             if (_weapon != null)

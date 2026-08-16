@@ -57,6 +57,12 @@ namespace Live2DAction.Characters
         // (roughly a 1.5-2 unit hop at gravity=-20), tune by eye.
         [SerializeField] private float jumpSpeed = 7f;
 
+        // 2026-08-16, real bug report ("跳躍有機會卡在敵人頭上，需要自行下來") - see
+        // GroundSlopeUtility's own comment for the root cause. Faster than moveSpeed (2) so a
+        // stuck landing resolves itself quickly and reads as "sliding off", not another slow
+        // walk-speed crawl.
+        [SerializeField] private float slideSpeed = 4f;
+
         [SerializeField] private DodgeData dodgeData;
 
         // Optional: while this reports a locked target, the character always faces it
@@ -176,7 +182,39 @@ namespace Live2DAction.Characters
 
             _verticalVelocity += gravity * Time.deltaTime;
 
-            Vector3 motion = _horizontalVelocity;
+            // See GroundSlopeUtility's own comment - isGrounded alone doesn't mean "standing
+            // somewhere walkable" (a jump can land directly on another character's rounded
+            // CharacterController capsule), so an active push is needed to actually slide off
+            // instead of just resting there indefinitely.
+            //
+            // 2026-08-16 correction: originally gated purely on IsTooSteepToStandOn against
+            // _controller.slopeLimit (45° default) - but a jump landing near the center of a
+            // small-radius capsule's dome (e.g. Player4's radius 0.4) contacts it at well
+            // under 45° from vertical, the same as any normal walkable slope, even though
+            // standing on a character's own collision capsule was never meant to be valid
+            // footing regardless of the exact angle (confirmed against the real regression:
+            // LandingOnTopOfPlayer4_SlidesOffWithoutAnyInput still failed with a mild ~16°
+            // contact normal). Now also unconditionally slides whenever the ground hit belongs
+            // to another character's CharacterController, on top of the original slope check
+            // (which still covers genuinely steep terrain, if any is ever added).
+            Vector3 slideVelocity = Vector3.zero;
+            if (_controller.isGrounded && TryGetGroundNormal(out Vector3 groundNormal, out CharacterController standingOnCharacter))
+            {
+                bool standingOnAnotherCharacter = standingOnCharacter != null;
+                bool tooSteep = GroundSlopeUtility.IsTooSteepToStandOn(groundNormal, _controller.slopeLimit);
+                if (standingOnAnotherCharacter || tooSteep)
+                {
+                    Vector3 slideDirection = GroundSlopeUtility.ComputeSlideDirection(groundNormal);
+                    if (slideDirection == Vector3.zero && standingOnAnotherCharacter)
+                    {
+                        slideDirection = GroundSlopeUtility.ComputeFallbackAwayDirection(transform.position, standingOnCharacter.transform.position);
+                    }
+
+                    slideVelocity = slideDirection * slideSpeed;
+                }
+            }
+
+            Vector3 motion = _horizontalVelocity + slideVelocity;
             motion.y = _verticalVelocity;
             _controller.Move(motion * Time.deltaTime);
 
@@ -190,6 +228,59 @@ namespace Live2DAction.Characters
                 float newYaw = Mathf.SmoothDampAngle(currentYaw, targetYaw, ref _yawAngularVelocity, rotationSmoothTime);
                 transform.rotation = Quaternion.Euler(0f, newYaw, 0f);
             }
+        }
+
+        // Physics.SphereCastAll (not a single SphereCast/Raycast) so a self-hit on the
+        // player's own CharacterController capsule can be explicitly filtered out rather than
+        // risking it being the first/only result - the cast origin sits exactly at the
+        // capsule's own bottom hemisphere center, so a self-overlap at the very start of the
+        // cast is expected, not just a theoretical edge case. transform.root comparison (not
+        // just transform) so this still correctly excludes self even if the capsule ever
+        // gains child colliders later.
+        //
+        // 2026-08-16 bug this fixes: the origin was originally computed as
+        // capsuleBottomLocalY + radius + 0.15 - an extra +0.15 on TOP of already adding the
+        // full radius, which places the origin well up inside the capsule's cylindrical body
+        // (e.g. local Y=0.05 for height=1/radius=0.4, nowhere near the actual bottom surface)
+        // instead of at the bottom hemisphere. The cast still technically ran, but from a
+        // point already deep inside solid geometry - confirmed via a failing regression test
+        // (LandingOnTopOfPlayer4_SlidesOffWithoutAnyInput) that the slide never actually
+        // triggered. capsuleBottomLocalY + radius alone is the correct bottom-hemisphere-
+        // center reference point.
+        // otherCharacterController is non-null when the closest hit's collider belongs to
+        // another CharacterController (i.e. another character, not terrain/environment) -
+        // used by Update() to unconditionally slide off another character regardless of the
+        // exact contact angle, see that call site's own comment for why the slope-angle check
+        // alone wasn't enough.
+        private bool TryGetGroundNormal(out Vector3 normal, out CharacterController otherCharacterController)
+        {
+            float capsuleBottomLocalY = _controller.center.y - _controller.height / 2f;
+            Vector3 origin = transform.position + new Vector3(0f, capsuleBottomLocalY + _controller.radius, 0f);
+            float castDistance = _controller.radius + 0.3f;
+            float castRadius = Mathf.Max(0.05f, _controller.radius * 0.8f);
+
+            RaycastHit[] hits = Physics.SphereCastAll(origin, castRadius, Vector3.down, castDistance, ~0, QueryTriggerInteraction.Ignore);
+            float closestDistance = float.MaxValue;
+            normal = Vector3.up;
+            otherCharacterController = null;
+            bool found = false;
+            foreach (RaycastHit hit in hits)
+            {
+                if (hit.collider == null || hit.collider.transform.root == transform.root)
+                {
+                    continue;
+                }
+
+                if (hit.distance < closestDistance)
+                {
+                    closestDistance = hit.distance;
+                    normal = hit.normal;
+                    otherCharacterController = hit.collider.GetComponent<CharacterController>();
+                    found = true;
+                }
+            }
+
+            return found;
         }
 
         private float CurrentCameraYawDegrees()

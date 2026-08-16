@@ -128,6 +128,31 @@ namespace Live2DAction.EditorTools
             return controller != null ? controller.center.y + controller.height / 2f : 1.6f;
         }
 
+        // Returns the local Y (relative to owner) where a second stacked bar of the given
+        // height should sit, directly under owner's existing health bar with a small gap -
+        // reads the real live HealthBarCanvas position/size instead of a hand-duplicated copy
+        // of MarginAboveHead, so a second bar can never drift out of sync with wherever the
+        // health bar actually ends up. 2026-08-16 bug this fixes: UltimateAbilitySetup carried
+        // its own separately-tuned margin constant that went stale the moment this class's own
+        // bar position changed, leaving the energy bar floating way above the health bar
+        // instead of the "directly underneath" position its own comment claimed - same "two
+        // numbers that have to be manually kept in sync" bug shape as EnemyAI.attackRange
+        // (see that field's comment), just for UI instead of combat. Requires AddHealthBar to
+        // have already been called on owner.
+        internal static float ComputeStackedBarLocalY(GameObject owner, float barHeight, float gap = 0.02f)
+        {
+            WorldSpaceHealthBar healthBar = owner.GetComponentInChildren<WorldSpaceHealthBar>(true);
+            if (healthBar == null)
+            {
+                Debug.LogError(owner.name + " has no WorldSpaceHealthBar yet - call AddHealthBar first.");
+                return MeasureVisualTopLocalY(owner) + MarginAboveHead;
+            }
+
+            RectTransform healthRect = healthBar.GetComponent<RectTransform>();
+            float healthBottom = healthBar.transform.localPosition.y - healthRect.sizeDelta.y / 2f;
+            return healthBottom - gap - barHeight / 2f;
+        }
+
         private static Image CreateStretchedImage(Transform parent, string name, Color color)
         {
             var go = new GameObject(name);

@@ -56,6 +56,20 @@ namespace Live2DAction.Core
             }
         }
 
+        // For whatever wants to restore some (not necessarily all) health outside of the
+        // damage pipeline (e.g. HealthRegeneration) - clamps to maxHealth and is a no-op while
+        // dead, same guard ApplyDamage uses, so a still-ticking regen timer on a just-died
+        // character can't quietly revive it a moment later.
+        public void Heal(float amount)
+        {
+            if (IsDead || amount <= 0f)
+            {
+                return;
+            }
+
+            CurrentHealth = Mathf.Min(maxHealth, CurrentHealth + amount);
+        }
+
         // For whatever wants to bring a dead GameObject back (e.g. RespawnController) - must
         // be called AFTER re-activating the GameObject, or before, doesn't matter which, since
         // this only touches Health's own state, not the GameObject's active flag.

@@ -88,14 +88,31 @@ public class JumpTests
         }
     }
 
+    // 2026-08-16: replaces a blind RunForSeconds(0.05f) "let isGrounded settle" wait, which was
+    // the documented source of this test's intermittent failure (see SetUp's own comment) - a
+    // fixed real-time budget doesn't guarantee isGrounded has actually turned true yet (its
+    // first read is always false, before any Move() call has swept the capsule against the
+    // floor), so on a slow/first frame gravity could still be accumulating unchecked when
+    // startY got captured, occasionally already well below the real resting position. Polling
+    // the actual precondition instead of guessing a duration removes that race outright; the
+    // timeout is just a safety net so a genuine regression fails fast with a clear message
+    // instead of hanging.
+    private IEnumerator WaitUntilGrounded(float timeoutSeconds = 1f)
+    {
+        CharacterController controller = _player.GetComponent<CharacterController>();
+        float start = Time.realtimeSinceStartup;
+        while (!controller.isGrounded)
+        {
+            Assert.Less(Time.realtimeSinceStartup - start, timeoutSeconds,
+                "Player never reported isGrounded=true within the timeout - check the test's Ground collider setup.");
+            yield return null;
+        }
+    }
+
     [UnityTest]
     public IEnumerator JumpPressed_WhileGrounded_LiftsPlayerUpward()
     {
-        // Headless batchmode can tick Update() with a near-zero deltaTime per frame (see
-        // CharacterMovementTests.MoveForSeconds), so a single yield-return-null isn't reliable
-        // for either "let isGrounded settle true" or "hold JumpPressed across an Update tick
-        // that actually sees isGrounded true" - bound both by real elapsed time instead.
-        yield return RunForSeconds(0.05f); // let isGrounded settle true on the floor
+        yield return WaitUntilGrounded();
         float startY = _player.transform.position.y;
 
         _input.JumpPressed = true;
@@ -111,7 +128,7 @@ public class JumpTests
     [UnityTest]
     public IEnumerator JumpPressed_WhileAirborne_DoesNotDoubleJump()
     {
-        yield return RunForSeconds(0.05f); // let isGrounded settle true first
+        yield return WaitUntilGrounded();
         float startY = _player.transform.position.y;
 
         _input.JumpPressed = true;
