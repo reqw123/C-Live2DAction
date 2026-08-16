@@ -11,5 +11,8 @@ namespace Live2DAction.Input
         bool DodgePressed { get; }
         bool LockOnPressed { get; }
         bool JumpPressed { get; }
+
+        // 2026-08-13, explicit user request (ultimate skill, R key).
+        bool UltimatePressed { get; }
     }
 }

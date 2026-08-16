@@ -36,6 +36,12 @@ namespace Live2DAction.Combat
         // so "primary" unambiguously means "the attack this component will actually use".
         public AttackData PrimaryAttack => comboAttacks != null && comboAttacks.Length > 0 ? comboAttacks[0] : null;
 
+        // 2026-08-13, explicit user request (ultimate skill: "attack1傷害乘10倍") - set/reset
+        // by UltimateAbility while its buff window is active. Only ever applied to
+        // PrimaryAttack (Attack1) specifically, not the whole combo - see ResolveActiveHit
+        // below. 1 = no effect, the default/inactive state.
+        public float Attack1DamageMultiplier { get; set; } = 1f;
+
         private void Awake()
         {
             if (attackOrigin == null)
@@ -78,7 +84,10 @@ namespace Live2DAction.Combat
             Vector3 near = attackOrigin.position;
             Vector3 far = near + attackOrigin.forward * attackData.Range;
             Collider[] candidates = Physics.OverlapCapsule(near, far, attackData.Radius);
-            var hitPoints = AttackResolver.ResolveHits(far, attackData, transform.root, candidates);
+            // Only Attack1 (PrimaryAttack) gets the buff, matching the explicit user request
+            // scope ("attack1傷害乘10倍", not the whole combo).
+            float damageMultiplier = attackData == PrimaryAttack ? Attack1DamageMultiplier : 1f;
+            var hitPoints = AttackResolver.ResolveHits(far, attackData, transform.root, candidates, damageMultiplier);
 
             // Per-attack override (e.g. LightAttack3's dedicated slash VFX) takes priority
             // over the shared spark prefab - see AttackData.HitEffectOverride's own comment.

@@ -854,3 +854,22 @@
 - **位置/縮放是使用者手動校正的權威值，不是公式算出來的**：第一版用 FBX 量出來的握把座標＋等比例縮放公式（`TargetLength/RawLength`）算出初始位置，這個環境沒辦法用截圖驗證握把對齊是否正確；使用者實機 Play 後在 Inspector 手動調整 Scale／Position 到正確大小/位置，把這兩個值（`localPosition=(-0.03,-0.18,-0.05)`、`localScale=(0.03,0.03,0.03)`）寫回腳本常數，之後重跑工具會重現使用者校正過的結果，不會被腳本自己的公式蓋回去——跟 `ThirdPersonCameraController` 的攝影機數值是同一種「使用者調過的值即權威」處理原則（見專案記憶 `camera-user-tuned-values-are-authoritative`）。
 
 - 每個步驟都跑過 84 個 EditMode 測試全過（`PlayerCombat`/`AttackData` 改動不影響既有合成測試資料）。這次 VFX 相關的視覺細節（貼圖顯示是否正確、握把對齊、朝向）大多沒辦法在這個環境用截圖可靠驗證，全部靠使用者本人多輪 Play 模式回報問題來回修正——過程記錄在上面，供之後遇到類似「特效看不見/顏色不對/背景沒透明」問題時參考排查方向。
+
+## 2026-08-13 — 場景裝飾：10 把《原神》風格劍展示組 ＋ 鍵盤即時調整工具
+
+- 新增 `GenshinSwordDisplaySetup.cs`（`Tools/Live2DAction/Add Genshin Sword Display (Scene Decoration)`）：把使用者提供的 10 把劍模型（Bakufu／Boreas／Cool Steel／Dull Blade／Freedom-Sworn／Katana／Lion's Roar／Mistsplitter Reforged／Narukami／Prototype Rancour）當場景裝飾放進 `GreyboxTest`，物件名 `GenshinSwordDisplay_DoNotShip`，放在裝飾環外圍（跟 `BackgroundSceneryStandeeSetup` 同一圈範圍）。這批素材的貼圖檔名（`Equip_Sword_Narukami_01_Tex_Diffuse.png` 等）跟《原神》官方內部資產命名規則一致，疑似資料探勘而非單純仿製，風險等級記錄進 `ASSET_LICENSES.md`（現在共 6 個佔位/風險素材禁止出貨）。
+- 材質沿用 Player5 那套「抽出正式 `.mat` 檔＋`AddRemap`」做法（避免重新匯入時被沖掉）；貼圖對應是用《原神》公開命名知識猜的（例如 Freedom-Sworn 內部代號 Widsith），9 把配到貼圖，`Lion's Roar` 是排除法猜的，`Mistsplitter Reforged` 完全沒有對應貼圖。
+- 模型原本已經排好一列展示隊形（各自帶約 100 倍的獨立縮放），沒有像散佈樹木/岩石那樣打亂，維持原始排列當一個整體場景物件、套一個整組縮放（從量到的整組高度換算，目標最高的劍約 1.3m）。
+- 新增 `SwordDisplayAdjuster.cs`（`Assets/_Project/Game/DebugTools/`）：Play 模式下 Z/X 持續調整整組高度、C/V 持續等比縮放，掛在展示物件上，讓使用者不需要透過 AI 就能自己微調到滿意的位置——這個環境沒辦法截圖驗證擺放對不對，這是繞開這個限制的做法。
+- 84 個 EditMode 測試全過。
+
+## 2026-08-13 — 玩家必殺技：藍色能量條 ＋ R 鍵釋放（武器放大5倍／Attack1傷害x10／持續5秒）
+
+使用者要求：「賦予角色藍色能量條，初始0，每三秒回復5點，最大100，100時可按下按鍵R釋放必殺技，必殺技是讓角色身上的武器瞬間放大5倍，attack1傷害乘10倍，持續時間5秒」。
+
+- 新增 `UltimateEnergy.cs`（`Assets/_Project/Game/Core/`）：純粹的能量回復元件（0-100，每 3 秒回 5 點），跟 `Health` 一樣不知道任何戰鬥/技能邏輯，只負責數值本身；`Consume()` 歸零並重置回復計時器。
+- 新增 `UltimateAbility.cs`（`Assets/_Project/Game/Combat/`）：`IInputCommand.UltimatePressed`（R 鍵，新增到介面，`PlayerInputProvider`／`EnemyAI` 以及 13 個測試用的 `StubInputBehaviour` 都要跟著補上這個成員，否則編譯失敗）在能量滿時觸發——把武器（用名字 `WolfsGravestone` 在階層裡找，不用序列化欄位寫死參照，因為武器是另一個可重複執行的 Editor 工具建立的，找不到就跳過縮放）暫時放大 5 倍、把 `PlayerCombat.Attack1DamageMultiplier` 設成 10，5 秒後自動復原兩者，期間無法重複觸發。
+- **傷害倍率刻意不是直接改 `AttackData.Damage`**：`LightAttack1.asset` 是跟 Player3 共用的同一個 ScriptableObject 資產物件（見上面 Player3 那則），在 Play 模式直接改欄位值，不但會讓 Player3 也一起被加成，離開 Play 模式後 ScriptableObject 的欄位變動還不會像場景物件一樣自動還原、會真的寫回資產檔案。改成 `AttackResolver.ResolveHits` 新增一個預設值 1 的 `damageMultiplier` 參數，實際傷害在套用當下才臨時乘上去，`AttackData` 資產本身完全沒被動到。
+- 新增 `WorldSpaceEnergyBar.cs`（藍色，疊在既有紅色血條正上方）與 `UltimateAbilitySetup.cs`（`Tools/Live2DAction/Add Ultimate Ability (Blue Energy Bar + R Skill)`）把上述元件掛到 Player 身上並接好血條。
+- 84 個 EditMode + 59 個 PlayMode 測試都跑過，PlayMode 2 個失敗是既有已記錄的 flaky（`JumpTests`、`EnemyAttackRangeSceneTests`），跟改動前一致，沒有新增任何失敗。
+- **仍待使用者本人 Play 一次確認**：滿能量按 R 的視覺效果（武器變大、下一次 Attack1 傷害是否明顯變高）是否符合預期；能量條位置（血條正上方）是否會跟頭髮/其他裝飾重疊。

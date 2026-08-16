@@ -27,6 +27,7 @@ public class PlayerCombatHitEffectTests
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
         public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
     }
 
     private static void SetField(object target, string fieldName, object value)

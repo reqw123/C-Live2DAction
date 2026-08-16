@@ -23,6 +23,7 @@ public class LockOnFacingAndCameraTests
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
         public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
     }
 
     private class StubLockOnSource : MonoBehaviour, ILockOnSource

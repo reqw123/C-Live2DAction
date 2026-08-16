@@ -10,6 +10,7 @@ namespace Live2DAction.Input
         public bool DodgePressed { get; private set; }
         public bool LockOnPressed { get; private set; }
         public bool JumpPressed { get; private set; }
+        public bool UltimatePressed { get; private set; }
 
         private void Update()
         {
@@ -21,6 +22,7 @@ namespace Live2DAction.Input
                 DodgePressed = false;
                 LockOnPressed = false;
                 JumpPressed = false;
+                UltimatePressed = false;
                 return;
             }
 
@@ -42,6 +44,8 @@ namespace Live2DAction.Input
             // control distinct from middle-click).
             LockOnPressed = Mouse.current != null && Mouse.current.middleButton.wasPressedThisFrame;
             JumpPressed = keyboard.spaceKey.wasPressedThisFrame;
+            // 2026-08-13, explicit user request - ultimate skill trigger (R key).
+            UltimatePressed = keyboard.rKey.wasPressedThisFrame;
         }
     }
 }

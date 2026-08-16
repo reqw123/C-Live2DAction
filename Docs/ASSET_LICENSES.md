@@ -11,10 +11,11 @@
 | 機甲角色模型（Player2 靜態看板，高達風設計） | 不明——使用者提供，來源與實際作者未知 | `C:\Users\homec\Downloads\fbx_53e34751-943b-45ee-8202-72ab8b01c4f5\modelToUsed.fbx`（2026-08-10，AI 已檢查發現：無骨架、無貼圖、單一網格約 100 萬三角面、外觀酷似既有機甲動畫作品的機體設計，AI 建議不採用，**使用者已知悉上述風險並明確要求保留使用**） | 不明 | **否**（未經證實授權，不得假設可商用） | 不適用 | 不適用 | **否** | 僅限開發機內部測試用的靜態裝飾看板（無骨架不能做動畫，未接入任何戰鬥/互動邏輯），**不得出現在任何要交付/發布給他人的 Build**，`Assets/_Project/Characters/Placeholder/MechaModel_DoNotShip/` | 無 |
 | Player5 角色模型（暱稱「lacrimosa」，疑似中國手機遊戲角色皮膚資產） | 不明——疑似某手機遊戲官方美術資產，非本專案原創，同人／原始作者不明 | 使用者提供，`C:\Users\homec\Downloads\lacrimosa-animated-neverness-to-everness (1)\source\lacrimosa final.fbx`（2026-08-13；貼圖另外由使用者提供，`Player5Anime/Texture/`，其中 eyelash／gaoguang／03 三個材質缺對應貼圖） | 2026-08-13 | 不明（未經證實授權） | **否**（未經證實授權，不得假設可商用） | 不適用 | 不適用 | **否** | 取代 Maya 成為 Player 主要視覺（`Player5VisualSetup.cs`）：骨架手動配成 Humanoid，共用 Maya 的 `NewAnimator.controller`（Idle/Walk/Run/Attack1-3 均可用）。僅限開發機內部原型驗證，**不得出現在任何要交付/發布給他人的 Build** | 無 |
 | 「狼的末路」武器模型（Wolf's Gravestone，*Genshin Impact* 武器資產仿製） | 不明——直接仿製 HoYoverse／miHoYo《原神》遊戲內武器資產，非本專案原創 | 使用者提供，`C:\Users\homec\Downloads\genshin-impact-wolfs-gravestone\`（2026-08-13，含 FBX + 完整 PBR 貼圖：BaseColor／Metallic／Normal／Emissive，Roughness 僅 Top 部位有） | 2026-08-13 | 不明（未經證實授權，直接仿製受著作權保護的遊戲資產） | **否** | 不適用 | 不適用 | **否** | 掛在 Player5 右手 `Rhand_Weapon2` 骨骼上（`Player5WeaponSetup.cs`），位置/縮放為使用者手動校正值。完整物件路徑：`Player/Visual/player_004_lacrimosa_skin_LOD1_Skeleton/root/Bip001/Bip001-Pelvis/Bip001-Spine/Bip001-Spine1/Bip001-Spine2/Bip001-R-Clavicle/Bip001-R-UpperArm/Bip001-R-Forearm/Bip001-R-Hand/Bip001-Prop1/Rhand_Weapon2/WolfsGravestone`。僅限開發機內部原型驗證，**不得出現在任何要交付/發布給他人的 Build** | 無 |
+| 10 把《原神》風格劍模型展示組（Bakufu／Boreas／Cool Steel／Dull Blade／Freedom-Sworn／Katana／Lion's Roar／Mistsplitter Reforged／Narukami／Prototype Rancour） | 不明——貼圖檔名（如 `Equip_Sword_Narukami_01_Tex_Diffuse.png`、`SkillObj_Shougun.png`）與 HoYoverse／miHoYo《原神》官方內部資產命名規則一致，疑似直接從遊戲檔案資料探勘（datamine）取得，風險等級高於單純仿製 | 使用者提供，`C:\Users\homec\Downloads\10-genshin-impact-inspired-sword-3d-models.zip`（2026-08-13） | 2026-08-13 | 不明（未經證實授權，疑似資料探勘遊戲資產） | **否** | 不適用 | 不適用 | **否** | 場景裝飾用途（非武器持握），`GenshinSwordDisplaySetup.cs` 以 `GenshinSwordDisplay_DoNotShip` GameObject 放在場景邊界外（同 `BackgroundSceneryStandeeSetup.cs` 的裝飾環外圍慣例），保留原始排列（10 把劍並排展示），非隨機散佈。僅限開發機內部原型驗證，**不得出現在任何要交付/發布給他人的 Build** | 無 |
 
-**處理原則**（2026-08-10 使用者確認，2026-08-13 擴及 Player5 與武器模型）：
-- 上述五個素材（076／077／機甲模型／Player5／狼的末路武器）只能用來做內部技術驗證，**不得出現在任何要交付/發布給他人的 Build**（含 Alpha 之後任何外部測試版本、Beta、RC、正式發布）。
-- 機甲模型、Player5、狼的末路武器都是使用者在 AI 提出風險警告後，**明確表示僅供個人原型/練習使用、自行承擔風險**才保留的，AI 端無法驗證其真實來源與授權。
+**處理原則**（2026-08-10 使用者確認，2026-08-13 擴及 Player5、狼的末路武器、原神劍展示組）：
+- 上述六個素材（076／077／機甲模型／Player5／狼的末路武器／原神劍展示組）只能用來做內部技術驗證，**不得出現在任何要交付/發布給他人的 Build**（含 Alpha 之後任何外部測試版本、Beta、RC、正式發布）。
+- 機甲模型、Player5、狼的末路武器、原神劍展示組都是使用者在 AI 提出風險警告後，**明確表示僅供個人原型/練習使用、自行承擔風險**才保留的，AI 端無法驗證其真實來源與授權。
 - 正式角色設計定案、取得原創或合法授權的素材後，需要在此表新增對應項目並移除佔位項目的依賴，詳見 `KNOWN_ISSUES.md` 的追蹤項。
 
 ## 已授權/原創素材

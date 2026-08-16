@@ -22,6 +22,7 @@ public class CharacterMovementTests
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
         public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
     }
 
     private GameObject _player;

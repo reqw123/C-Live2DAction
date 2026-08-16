@@ -59,6 +59,7 @@ namespace Live2DAction.AI
         public bool DodgePressed => false;
         public bool LockOnPressed => false;
         public bool JumpPressed => false;
+        public bool UltimatePressed => false; // AI never triggers the player-only ultimate
 
         private void Awake()
         {
