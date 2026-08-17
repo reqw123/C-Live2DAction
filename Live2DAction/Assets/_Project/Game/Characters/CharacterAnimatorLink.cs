@@ -29,6 +29,15 @@ namespace Live2DAction.Characters
         private CharacterMovement _movement;
         private int _speedParameterHash;
 
+        // 2026-08-18, explicit user request (flight: "接下來我想做飛行功能") - the Animator
+        // Controller already had an unused "Fly" bool parameter sitting on it from the imported
+        // template (see CharacterMovement.IsFlying's own comment) - this class already exists
+        // specifically to drive Animator state from CharacterMovement's own data every frame, so
+        // it's the natural place to also wire this one rather than a dedicated link component
+        // (unlike Staggered/Attack1-4, nothing else in the project drives Jump/Grounded/Aim
+        // either - Fly is just the first of that unused set to actually get consumed).
+        private static readonly int FlyParameterHash = Animator.StringToHash("Fly");
+
         private void Awake()
         {
             _movement = GetComponent<CharacterMovement>();
@@ -52,6 +61,7 @@ namespace Live2DAction.Characters
 
             float parameterValue = ComputeSpeedParameter(_movement.CurrentHorizontalSpeed, maxAnimatorSpeed);
             animator.SetFloat(_speedParameterHash, parameterValue);
+            animator.SetBool(FlyParameterHash, _movement.IsFlying);
         }
 
         public static float ComputeSpeedParameter(float currentSpeed, float maxAnimatorSpeed)

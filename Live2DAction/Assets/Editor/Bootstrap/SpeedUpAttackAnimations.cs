@@ -55,6 +55,15 @@ namespace Live2DAction.EditorTools
             ("Attack1", 3.4f), // CrossPunch, 2.0s raw, ~42% impact -> hit lands at ~0.25s (matches LightAttack1/EnemyAttack startupFrames=15)
             ("Attack2", 3.2f), // HookPunch, 2.167s raw, ~42% impact -> ~0.28s (LightAttack2 startupFrames=17)
             ("Attack3", 2.1f), // Uppercut, 1.333s raw, ~48% impact -> ~0.30s (LightAttack3 startupFrames=18)
+            // 2026-08-17, explicit user request ("把它變成滑鼠左鍵續力攻擊") - MmaKick, 1.667s
+            // raw. Measured directly (AnimationMode.SampleAnimationClip on the actual rig,
+            // tracking RightFoot's distance from Hips across the clip - the chamber/extend/
+            // retract pattern peaks at t=0.46, i.e. 0.767s raw) rather than eyeballed like the
+            // three punches above, since a kick's impact point isn't as visually obvious from a
+            // few spaced screenshots. Chosen as the heaviest hit (4th combo step, a kick
+            // "finisher") - slower than the punches on purpose so its startup reads as weightier
+            // -> hit lands at ~0.33s (LightAttack4 startupFrames=20).
+            ("Attack4", 2.3f),
         };
 
         [MenuItem("Tools/Live2DAction/Speed Up Player And Enemy Attack Animations")]

@@ -11,6 +11,8 @@ namespace Live2DAction.Input
         public bool LockOnPressed { get; private set; }
         public bool JumpPressed { get; private set; }
         public bool UltimatePressed { get; private set; }
+        public bool FlyPressed { get; private set; }
+        public bool FlyDescendPressed { get; private set; }
 
         private void Update()
         {
@@ -23,6 +25,8 @@ namespace Live2DAction.Input
                 LockOnPressed = false;
                 JumpPressed = false;
                 UltimatePressed = false;
+                FlyPressed = false;
+                FlyDescendPressed = false;
                 return;
             }
 
@@ -46,6 +50,16 @@ namespace Live2DAction.Input
             JumpPressed = keyboard.spaceKey.wasPressedThisFrame;
             // 2026-08-13, explicit user request - ultimate skill trigger (R key).
             UltimatePressed = keyboard.rKey.wasPressedThisFrame;
+
+            // 2026-08-18, explicit user request (flight: "按住鍵自由飛行") - Left Ctrl to
+            // ascend/enter flight, held Left Shift to descend while flying. isPressed (a level,
+            // not an edge) since flight needs to keep responding for as long as the key stays
+            // down. Reusing the same physical Shift key DodgePressed already uses is safe -
+            // DodgePressed reads wasPressedThisFrame (fires once on press), this reads isPressed
+            // (true for the whole hold), so a dodge-tap and a flight-descend-hold don't fight
+            // over the same control, they're just two different questions asked of it.
+            FlyPressed = keyboard.leftCtrlKey.isPressed;
+            FlyDescendPressed = keyboard.leftShiftKey.isPressed;
         }
     }
 }

@@ -11,6 +11,14 @@ namespace Live2DAction.Combat
         [SerializeField] private AttackData[] comboAttacks = new AttackData[3];
         [SerializeField] private Transform attackOrigin;
 
+        // 2026-08-17, explicit user request ("敵我雙方都套用架式條") - optional (null-safe
+        // below), mirrors CharacterMovement's own "stance" field for the same reason: a
+        // staggered character shouldn't be able to start swinging. Only blocks STARTING a new
+        // attack (attackPressed forced false) - a swing already resolving when stagger begins
+        // is allowed to finish rather than being torn out mid-animation, same "keep this minimal"
+        // scope as the movement-side gate.
+        [SerializeField] private StancePoise stance;
+
         // Spawned at each landed hit's actual impact point (2026-08-12, explicit user
         // request: "攻擊特效" - a hit spark, not a swing trail or a hit-stop/screen-shake
         // effect). Optional - null just means no visual, doesn't affect damage.
@@ -37,10 +45,17 @@ namespace Live2DAction.Combat
         public AttackData PrimaryAttack => comboAttacks != null && comboAttacks.Length > 0 ? comboAttacks[0] : null;
 
         // 2026-08-13, explicit user request (ultimate skill: "attack1傷害乘10倍") - set/reset
-        // by UltimateAbility while its buff window is active. Only ever applied to
-        // PrimaryAttack (Attack1) specifically, not the whole combo - see ResolveActiveHit
-        // below. 1 = no effect, the default/inactive state.
-        public float Attack1DamageMultiplier { get; set; } = 1f;
+        // by UltimateAbility while its buff window is active. 1 = no effect, the default/
+        // inactive state.
+        //
+        // 2026-08-18 rewrite, real bug report ("確定玩家施展必殺技時 5秒內每次攻擊都是10倍傷害
+        // 嗎") - originally only applied to PrimaryAttack (Attack1) specifically, matching the
+        // literal original request text ("attack1傷害乘10倍"). Explicit follow-up confirmed the
+        // actual intent was every hit landed during the buff window, not just the combo's first
+        // step - renamed from Attack1DamageMultiplier to reflect that it's no longer combo-step-
+        // scoped, see ResolveActiveHit below (now applied unconditionally, not gated on
+        // attackData == PrimaryAttack).
+        public float UltimateDamageMultiplier { get; set; } = 1f;
 
         private void Awake()
         {
@@ -62,6 +77,10 @@ namespace Live2DAction.Combat
 
             IInputCommand inputCommand = InputCommand;
             bool attackPressed = inputCommand != null && inputCommand.AttackPressed;
+            if (stance != null && stance.IsStaggered)
+            {
+                attackPressed = false;
+            }
             if (_state.Tick(Time.deltaTime, attackPressed))
             {
                 ResolveActiveHit(_state.CurrentAttack);
@@ -84,10 +103,10 @@ namespace Live2DAction.Combat
             Vector3 near = attackOrigin.position;
             Vector3 far = near + attackOrigin.forward * attackData.Range;
             Collider[] candidates = Physics.OverlapCapsule(near, far, attackData.Radius);
-            // Only Attack1 (PrimaryAttack) gets the buff, matching the explicit user request
-            // scope ("attack1傷害乘10倍", not the whole combo).
-            float damageMultiplier = attackData == PrimaryAttack ? Attack1DamageMultiplier : 1f;
-            var hitPoints = AttackResolver.ResolveHits(far, attackData, transform.root, candidates, damageMultiplier);
+            // Applies to every combo step while the ultimate is active - see
+            // UltimateDamageMultiplier's own comment for why this is no longer gated to
+            // PrimaryAttack specifically.
+            var hitPoints = AttackResolver.ResolveHits(far, attackData, transform.root, candidates, UltimateDamageMultiplier);
 
             // Per-attack override (e.g. LightAttack3's dedicated slash VFX) takes priority
             // over the shared spark prefab - see AttackData.HitEffectOverride's own comment.

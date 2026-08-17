@@ -26,6 +26,8 @@ public class Player4EnemyIntegrationTests
         public bool LockOnPressed { get; set; }
         public bool JumpPressed { get; set; }
         public bool UltimatePressed { get; set; }
+        public bool FlyPressed { get; set; }
+        public bool FlyDescendPressed { get; set; }
     }
 
     private static object GetField(object target, string fieldName)

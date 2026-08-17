@@ -26,6 +26,10 @@ namespace Live2DAction.EditorTools
             ("Attack1", "CrossPunch"),
             ("Attack2", "HookPunch"),
             ("Attack3", "Uppercut"),
+            // 2026-08-17, explicit user request - 4th combo step, see
+            // CharacterAttackAnimationLink.TriggerNameForComboIndex for the matching trigger
+            // mapping and LightAttack4.asset for its frame data.
+            ("Attack4", "MmaKick"),
         };
 
         [MenuItem("Tools/Live2DAction/Wire Combat Animations Into Both Animator Controllers")]

@@ -47,5 +47,37 @@ namespace Live2DAction.Core
             _currentEnergy = 0f;
             _regenTimer = 0f;
         }
+
+        // 2026-08-18, explicit user request ("泉水點...快速回復...能量條至滿格") - an external
+        // source (HealingSpring) adding energy directly, distinct from the passive tick-based
+        // regen above. Doesn't touch _regenTimer - the passive regen's own interval keeps
+        // counting independently and just has less ground left to cover, same as how Health.Heal
+        // doesn't interact with HealthRegeneration's own idle timer.
+        public void AddEnergy(float amount)
+        {
+            if (amount <= 0f)
+            {
+                return;
+            }
+
+            _currentEnergy = Mathf.Min(maxEnergy, _currentEnergy + amount);
+        }
+
+        // 2026-08-18, explicit user request (flight: "按住鍵自由飛行...消耗能量條") - the
+        // inverse of AddEnergy, for a continuous per-frame cost rather than a one-shot Consume()
+        // to zero. Doesn't touch _regenTimer either, same reasoning as AddEnergy - draining and
+        // the passive regen tick are independent and just net against each other, no special
+        // interaction needed (this is also how CharacterMovement's flight code and this class's
+        // own Update() end up working together correctly without either knowing about the
+        // other - drain while flying, regen resumes on its own once flight stops).
+        public void Drain(float amount)
+        {
+            if (amount <= 0f)
+            {
+                return;
+            }
+
+            _currentEnergy = Mathf.Max(0f, _currentEnergy - amount);
+        }
     }
 }

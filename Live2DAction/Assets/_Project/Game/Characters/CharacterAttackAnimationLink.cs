@@ -46,14 +46,22 @@ namespace Live2DAction.Characters
         // live Animator (matches this codebase's established pure-logic-first pattern).
         public static string TriggerNameForComboIndex(int comboIndex)
         {
+            // 2026-08-17, explicit user request ("把它變成滑鼠左鍵續力攻擊") - added a 4th combo
+            // step. Previously anything >= 2 fell through to "Attack3", which silently ate a
+            // would-be 4th hit (retriggering the SAME state via AnyState with
+            // canTransitionToSelf=false is a no-op - see CombatAnimatorSetup's own comment on
+            // that transition), so a combo array longer than 3 would have looked like the
+            // animation just stopped advancing.
             switch (comboIndex)
             {
                 case 0:
                     return "Attack1";
                 case 1:
                     return "Attack2";
-                default:
+                case 2:
                     return "Attack3";
+                default:
+                    return "Attack4";
             }
         }
     }

@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using Live2DAction.Core;
+using Live2DAction.Combat;
 
 namespace Live2DAction.Characters
 {
@@ -42,6 +43,17 @@ namespace Live2DAction.Characters
         [SerializeField] private GameObject target;
         [SerializeField] private Health targetHealth;
 
+        // 2026-08-18, explicit user request ("架式條在復活後應該回歸於滿格(適用任何角色)") -
+        // optional (null-safe below), so a revivable character with no StancePoise at all (most
+        // of them - the mechanic is still opt-in per character) behaves exactly as before. "回歸
+        // 滿格" mirrors how Health already reads on respawn - ResetHealth() puts CurrentHealth
+        // back at its own "fully okay" state (max), and EndStagger() is StancePoise's equivalent
+        // "fully okay" reset (CurrentStance back to 0/not-staggered, i.e. full remaining poise) -
+        // not a literal full ORANGE bar, which would read backwards (that fill direction means
+        // "about to be executed", the opposite of "freshly revived and fine"). Generic on this
+        // class rather than special-cased per character, matching "適用任何角色".
+        [SerializeField] private StancePoise targetStance;
+
         // 2026-08-12: raised from 0.5s to 5s by explicit user request for Player (still no UI/
         // game-over screen - the simplest death handling, just a longer pause before it kicks
         // in). Player2 reuses the same default rather than inventing a separate value with no
@@ -73,6 +85,10 @@ namespace Live2DAction.Characters
             yield return new WaitForSeconds(respawnDelaySeconds);
 
             targetHealth.ResetHealth();
+            if (targetStance != null)
+            {
+                targetStance.EndStagger();
+            }
             target.SetActive(true);
             _respawnScheduled = false;
             _wasDead = false;

@@ -74,8 +74,29 @@ namespace Live2DAction.Characters
         // avoids damage, not just an inert flag nothing consumes.
         [SerializeField] private Health health;
 
+        // 2026-08-17, explicit user request ("敵我雙方都套用架式條") - optional (null-safe
+        // below) so a character with no stance bar at all behaves exactly as before. Mirrors
+        // EnemyAI's own "stance" field/comment for the enemy side of the same mechanic - while
+        // staggered, move/dodge/jump INPUT is zeroed out (not the whole component disabled),
+        // same reasoning as EnemyAI: gravity/grounding/the character-slide-off-another-character
+        // safety net all still need to keep running every frame regardless, only the player's
+        // own control inputs should stop mattering.
+        [SerializeField] private Live2DAction.Combat.StancePoise stance;
+
+        // 2026-08-18, explicit user request ("接下來我想做飛行功能...按住鍵自由飛行") - reuses
+        // UltimateEnergy as a generic regen-over-time resource pool (it was already written
+        // generically despite the name - see that class's own header comment) rather than a
+        // dedicated FlightEnergy class; this is a SEPARATE instance/asset from the ultimate
+        // skill's own energy, wired independently. Optional (null-safe below) - flight simply
+        // never activates without one wired.
+        [SerializeField] private UltimateEnergy flightEnergy;
+        [SerializeField] private float flightAscendSpeed = 6f;
+        [SerializeField] private float flightDescendSpeed = 4f;
+        [SerializeField] private float flightEnergyDrainPerSecond = 20f;
+
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
+        private bool _isFlying;
 
         // SmoothDamp's own internal "current rate of change" state - not the same value as
         // _horizontalVelocity itself. Reset to zero whenever a dodge takes over so the eased
@@ -97,6 +118,24 @@ namespace Live2DAction.Characters
         public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
         public DodgePhase CurrentDodgePhase => _dodgeState != null ? _dodgeState.Phase : DodgePhase.Idle;
         public bool IsDodgeInvulnerable => _dodgeState != null && _dodgeState.IsInvulnerable;
+
+        // Exposed for CharacterAnimatorLink (drives the Animator's existing but previously-
+        // unused "Fly" bool) and for a wing visual to toggle itself on/off.
+        public bool IsFlying => _isFlying;
+
+        // 2026-08-18, explicit user request ("上升氣流，任何人碰到...會快速飛向空中") - lets an
+        // external trigger volume (Updraft) push this character upward without fighting its own
+        // gravity accumulation. Mathf.Max rather than a flat assignment/addition: Updraft calls
+        // this every physics tick for as long as the character overlaps it, so Max just keeps
+        // re-clamping the velocity back up to at least `speed` each tick (countering however
+        // much gravity ate into it since the last tick) instead of stacking additively into an
+        // ever-growing value, or (if called just once on trigger-enter) getting silently
+        // overwritten by this class's own `_verticalVelocity += gravity * Time.deltaTime` on
+        // every subsequent frame before the character ever leaves the volume.
+        public void ApplyUpwardLaunch(float speed)
+        {
+            _verticalVelocity = Mathf.Max(_verticalVelocity, speed);
+        }
 
         // Raw camera-relative input axes this frame (y = W/S, x = A/D), not the resulting
         // world-space direction - exposed so ThirdPersonCameraController's auto-center can
@@ -122,11 +161,13 @@ namespace Live2DAction.Characters
                 _dodgeState = new DodgeState(dodgeData);
             }
 
+            bool staggered = stance != null && stance.IsStaggered;
+
             IInputCommand inputCommand = InputCommand;
-            Vector2 moveInput = inputCommand != null ? inputCommand.MoveInput : Vector2.zero;
+            Vector2 moveInput = !staggered && inputCommand != null ? inputCommand.MoveInput : Vector2.zero;
             CurrentMoveInput = moveInput;
-            bool dodgePressed = inputCommand != null && inputCommand.DodgePressed;
-            bool jumpPressed = inputCommand != null && inputCommand.JumpPressed;
+            bool dodgePressed = !staggered && inputCommand != null && inputCommand.DodgePressed;
+            bool jumpPressed = !staggered && inputCommand != null && inputCommand.JumpPressed;
             Vector3 desiredDirection = CameraRelativeDirection(moveInput, CurrentCameraYawDegrees());
 
             // Dodge backward (relative to current facing) if there's no move input held,
@@ -180,7 +221,28 @@ namespace Live2DAction.Characters
                 _verticalVelocity = jumpSpeed;
             }
 
-            _verticalVelocity += gravity * Time.deltaTime;
+            bool flyHeld = !staggered && inputCommand != null && inputCommand.FlyPressed;
+            bool flyDescendHeld = !staggered && inputCommand != null && inputCommand.FlyDescendPressed;
+            UpdateFlightState(flyHeld);
+
+            if (_isFlying)
+            {
+                // Gravity is fully overridden while flying - ascend/descend/hover are all
+                // direct vertical speeds rather than forces, so flight feels immediately
+                // responsive instead of fighting the normal fall acceleration every frame.
+                // Holding descend takes priority over ascend if somehow both are held; holding
+                // neither hovers in place (see UpdateFlightState's own comment for why release
+                // doesn't end flight outright).
+                _verticalVelocity = flyDescendHeld ? -flightDescendSpeed : (flyHeld ? flightAscendSpeed : 0f);
+                if (flightEnergy != null)
+                {
+                    flightEnergy.Drain(flightEnergyDrainPerSecond * Time.deltaTime);
+                }
+            }
+            else
+            {
+                _verticalVelocity += gravity * Time.deltaTime;
+            }
 
             // See GroundSlopeUtility's own comment - isGrounded alone doesn't mean "standing
             // somewhere walkable" (a jump can land directly on another character's rounded
@@ -227,6 +289,32 @@ namespace Live2DAction.Characters
                 float targetYaw = Quaternion.LookRotation(facingDirection, Vector3.up).eulerAngles.y;
                 float newYaw = Mathf.SmoothDampAngle(currentYaw, targetYaw, ref _yawAngularVelocity, rotationSmoothTime);
                 transform.rotation = Quaternion.Euler(0f, newYaw, 0f);
+            }
+        }
+
+        // Entering flight requires holding the key with energy available (grounded or airborne
+        // - lifting straight off the ground is intentional, "自由飛行" reads as more than just
+        // an air-only ability). Once active, flight PERSISTS regardless of whether the key is
+        // still held - see Update()'s own flight block: releasing simply hovers instead of
+        // falling - and only actually ends on landing (isGrounded true again, which physically
+        // can't happen mid-ascent) or running out of energy. This asymmetry (easy entry
+        // condition, sticky exit condition) is deliberate: "按住鍵自由飛行" describes holding
+        // the key to CONTROL flight, not to merely stay airborne.
+        private void UpdateFlightState(bool flyHeld)
+        {
+            if (!_isFlying)
+            {
+                if (flyHeld && flightEnergy != null && flightEnergy.CurrentEnergy > 0f)
+                {
+                    _isFlying = true;
+                }
+
+                return;
+            }
+
+            if (_controller.isGrounded || flightEnergy == null || flightEnergy.CurrentEnergy <= 0f)
+            {
+                _isFlying = false;
             }
         }
 

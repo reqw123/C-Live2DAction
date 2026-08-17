@@ -19,4 +19,4 @@ MonoBehaviour:
   startupFrames: 15
   activeFrames: 4
   recoveryFrames: 13
-  comboWindowFrames: 0
+  comboWindowFrames: 8

@@ -27,6 +27,12 @@ namespace Live2DAction.Characters
         // GUI event).
         [SerializeField] private float rotationSmoothTime = 0.3f;
 
+        // 2026-08-18, explicit user request ("機甲戰士也給他架式條") - optional (null-safe
+        // below), same "freeze movement while staggered" gate CharacterMovement/EnemyAI already
+        // apply for their own characters. A wandering standee with no combat of its own still
+        // shouldn't keep strolling around while kneeling/dazed.
+        [SerializeField] private Live2DAction.Combat.StancePoise stance;
+
         private Vector3 _direction;
         private float _timeUntilDirectionChange;
         private float _yawAngularVelocity;
@@ -38,6 +44,11 @@ namespace Live2DAction.Characters
 
         private void Update()
         {
+            if (stance != null && stance.IsStaggered)
+            {
+                return;
+            }
+
             _timeUntilDirectionChange -= Time.deltaTime;
             bool pastBoundary = Mathf.Abs(transform.position.x) > boundaryHalfExtent || Mathf.Abs(transform.position.z) > boundaryHalfExtent;
 

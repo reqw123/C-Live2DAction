@@ -73,11 +73,27 @@ namespace Live2DAction.AI
         // attackRange directly via reflection keep working unchanged.
         [SerializeField] private PlayerCombat combat;
 
+        // 2026-08-17, explicit user request ("想要製作斬殺系統...滿格會陷入僵直") - optional
+        // (null-safe below) so ordinary enemies without the stagger/execution mechanic (076,
+        // any future enemy that never gets a StancePoise) behave exactly as before. While
+        // staggered this OVERRIDES whatever EnemyBehaviorUtility.DetermineState would have
+        // returned from raw distance - a staggered character stands frozen and open regardless
+        // of how close the player is, that's the entire point of the mechanic.
+        [SerializeField] private Live2DAction.Combat.StancePoise stance;
+
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private float _verticalVelocity;
 
         public EnemyState CurrentState { get; private set; } = EnemyState.Idle;
+
+        // 2026-08-18, explicit user request ("上升氣流，任何人碰到...會快速飛向空中") - see
+        // CharacterMovement.ApplyUpwardLaunch's own comment for why Max (not a flat assignment)
+        // and why this needs to exist at all rather than a single one-shot impulse.
+        public void ApplyUpwardLaunch(float speed)
+        {
+            _verticalVelocity = Mathf.Max(_verticalVelocity, speed);
+        }
 
         // MoveInput is exposed for IInputCommand compliance/inspection, but EnemyAI drives
         // its own CharacterController.Move directly rather than anything consuming this
@@ -88,6 +104,8 @@ namespace Live2DAction.AI
         public bool LockOnPressed => false;
         public bool JumpPressed => false;
         public bool UltimatePressed => false; // AI never triggers the player-only ultimate
+        public bool FlyPressed => false; // AI never triggers the player-only flight
+        public bool FlyDescendPressed => false;
 
         private void Awake()
         {
@@ -119,7 +137,11 @@ namespace Live2DAction.AI
             Vector3 toTarget = target.position - transform.position;
             toTarget.y = 0f;
             float distance = toTarget.magnitude;
-            CurrentState = EnemyBehaviorUtility.DetermineState(distance, detectionRange, ResolveEffectiveAttackRange());
+
+            bool staggered = stance != null && stance.IsStaggered;
+            CurrentState = staggered
+                ? EnemyState.Staggered
+                : EnemyBehaviorUtility.DetermineState(distance, detectionRange, ResolveEffectiveAttackRange());
 
             Vector3 direction = toTarget.sqrMagnitude > 0.0001f ? toTarget.normalized : Vector3.zero;
 

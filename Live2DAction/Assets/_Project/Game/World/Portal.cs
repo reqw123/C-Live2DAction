@@ -30,9 +30,23 @@ namespace Live2DAction.World
     {
         [SerializeField] private Transform destination;
 
-        // Small upward nudge so the player doesn't spawn with feet exactly at the destination
-        // pad's surface (CharacterController.Move's own gravity/grounding resolves a tiny gap
-        // instantly and harmlessly, but spawning slightly embedded risks a one-frame stutter).
+        // World-space offset added to destination.position to get the arrival spot. The small
+        // +0.1 Y component is a ground-clearance buffer (CharacterController.Move's own gravity/
+        // grounding resolves a tiny gap instantly and harmlessly, but spawning slightly embedded
+        // risks a one-frame stutter - see the half-height compensation in Move() for the other
+        // half of that fix).
+        //
+        // 2026-08-18, explicit user request ("不要定位在傳送門判定範圍上，避免剛傳送過去不動又被
+        // 傳回來") - the X/Z component is deliberately non-zero on both portal instances (set per-
+        // instance in the Inspector, verified clear of both the destination's own trigger and any
+        // solid geometry at both ends for every character size in the scene - see this session's
+        // own note). Landing exactly at the destination's position put the arrival capsule dead
+        // center in that portal's own trigger radius - technically fine for the PLAYER (nothing
+        // fires until E is pressed), but for autoTeleportNonPlayers destinations this meant a
+        // non-player that arrived and simply hadn't started moving yet was still standing in the
+        // trigger the instant its own cooldown (see teleportCooldownSeconds) expired, sending it
+        // straight back. Landing physically outside the trigger's footprint fixes both cases at
+        // once.
         [SerializeField] private Vector3 arrivalOffset = new Vector3(0f, 0.1f, 0f);
 
         // See this class's own header comment - both false reproduces the original player-only

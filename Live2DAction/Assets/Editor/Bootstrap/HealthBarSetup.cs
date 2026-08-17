@@ -30,7 +30,9 @@ namespace Live2DAction.EditorTools
         private static readonly Color FillColor = Color.red;
         private static readonly Color BackgroundColor = new Color(0.1f, 0.1f, 0.1f, 0.8f);
         private static readonly Vector2 BarSize = new Vector2(0.5f, 0.06f);
-        private const float MarginAboveHead = 0.15f;
+        // internal (not private) so StanceBarSetup can reuse the exact same margin for its own
+        // "no existing bar to stack under" fallback - see MeasureVisualTopLocalY's own comment.
+        internal const float MarginAboveHead = 0.15f;
 
         [MenuItem("Tools/Live2DAction/Add Health Bars To Player And Player4")]
         public static void Apply()
@@ -108,7 +110,10 @@ namespace Live2DAction.EditorTools
         // CharacterController's capsule top if there's no Visual/no renderers, same as the
         // pre-revision behavior, so this still degrades gracefully for a hypothetical
         // characterless test double.
-        private static float MeasureVisualTopLocalY(GameObject owner)
+        // internal (not private) so StanceBarSetup can reuse this for a character that has
+        // neither a health bar nor an energy bar to stack under (e.g. Player2 - see that
+        // class's own comment).
+        internal static float MeasureVisualTopLocalY(GameObject owner)
         {
             Transform visual = owner.transform.Find("Visual");
             Renderer[] renderers = visual != null ? visual.GetComponentsInChildren<Renderer>() : System.Array.Empty<Renderer>();
@@ -148,9 +153,20 @@ namespace Live2DAction.EditorTools
                 return MeasureVisualTopLocalY(owner) + MarginAboveHead;
             }
 
-            RectTransform healthRect = healthBar.GetComponent<RectTransform>();
-            float healthBottom = healthBar.transform.localPosition.y - healthRect.sizeDelta.y / 2f;
-            return healthBottom - gap - barHeight / 2f;
+            return ComputeStackedBarLocalY(healthBar.transform, healthBar.GetComponent<RectTransform>(), barHeight, gap);
+        }
+
+        // 2026-08-18, explicit user request ("架式條...放在能量條下方") - generalized overload
+        // so a THIRD bar can stack under whichever bar is directly above it (the energy bar, not
+        // necessarily the health bar) without yet another hand-copied margin constant - same
+        // "read the real live position instead of a parallel copy" fix this method's own header
+        // comment already explains for the energy-under-health case. Any world-space bar built
+        // by this file's own CreateStretchedImage pattern (a RectTransform sized by sizeDelta,
+        // positioned via localPosition) can be passed as the reference.
+        internal static float ComputeStackedBarLocalY(Transform referenceBar, RectTransform referenceBarRect, float barHeight, float gap = 0.02f)
+        {
+            float referenceBottom = referenceBar.localPosition.y - referenceBarRect.sizeDelta.y / 2f;
+            return referenceBottom - gap - barHeight / 2f;
         }
 
         private static Image CreateStretchedImage(Transform parent, string name, Color color)

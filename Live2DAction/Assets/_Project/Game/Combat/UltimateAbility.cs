@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 using Live2DAction.Core;
 using Live2DAction.Input;
 
@@ -6,8 +7,8 @@ namespace Live2DAction.Combat
 {
     // Ultimate skill (2026-08-13, explicit user request): pressing R while UltimateEnergy is
     // full consumes the whole bar and, for durationSeconds, scales the character's held
-    // weapon up by weaponScaleMultiplier and multiplies PlayerCombat's Attack1 damage by
-    // attack1DamageMultiplier. Both revert automatically when the timer runs out. Can't be
+    // weapon up by weaponScaleMultiplier and multiplies PlayerCombat's damage by
+    // ultimateDamageMultiplier. Both revert automatically when the timer runs out. Can't be
     // re-triggered or extended while already active - Update returns early during the buff
     // window, and energy is fully drained on activation so it can't refill mid-buff (regen
     // only resumes from 0 after Consume()).
@@ -17,6 +18,13 @@ namespace Live2DAction.Combat
     // to the full multiplier over scaleRampSeconds instead of snapping on the activation
     // frame. Only the GROWTH ramps; damage multiplier and the eventual revert-on-expiry are
     // still immediate (only the visual growth was called out as needing to not be instant).
+    //
+    // 2026-08-18, real bug report ("確定玩家施展必殺技時 5秒內每次攻擊都是10倍傷害嗎") - the
+    // damage multiplier originally only applied to Attack1 specifically (matching the literal
+    // 2026-08-13 request text), confirmed via explicit follow-up that every hit during the
+    // window should be buffed instead - see PlayerCombat.UltimateDamageMultiplier's own comment
+    // for the actual application-side change; this class just renamed its own field to match
+    // (FormerlySerializedAs keeps the already-tuned value of 10 from being reset on reimport).
     [RequireComponent(typeof(PlayerCombat))]
     public class UltimateAbility : MonoBehaviour
     {
@@ -28,7 +36,8 @@ namespace Live2DAction.Combat
         // "optional, defaults to null" field.
         [SerializeField] private UltimateActivationBurst burst;
         [SerializeField] private float weaponScaleMultiplier = 10f;
-        [SerializeField] private float attack1DamageMultiplier = 10f;
+        [FormerlySerializedAs("attack1DamageMultiplier")]
+        [SerializeField] private float ultimateDamageMultiplier = 10f;
         [SerializeField] private float durationSeconds = 5f;
         // "快速" (fast), not a slow buildup - reaches full size well within the 5s buff
         // window and holds there for the remainder.
@@ -99,7 +108,7 @@ namespace Live2DAction.Combat
             energy.Consume();
             _active = true;
             _remaining = durationSeconds;
-            _combat.Attack1DamageMultiplier = attack1DamageMultiplier;
+            _combat.UltimateDamageMultiplier = ultimateDamageMultiplier;
 
             if (burst != null)
             {
@@ -122,7 +131,7 @@ namespace Live2DAction.Combat
         {
             _active = false;
             _ramping = false;
-            _combat.Attack1DamageMultiplier = 1f;
+            _combat.UltimateDamageMultiplier = 1f;
 
             if (_weapon != null)
             {
