@@ -10,13 +10,15 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fceba8b3e429d334a8abd39a84e943a3, type: 3}
-  m_Name: EnemyAttack
+  m_Name: GiantAttack1
   m_EditorClassIdentifier: 
-  attackId: EnemyAttack
+  attackId: GiantAttack1
   damage: 10
-  range: 0.5
+  range: 0.4
   radius: 0.5
   startupFrames: 15
   activeFrames: 4
   recoveryFrames: 13
-  comboWindowFrames: 0
+  comboWindowFrames: 8
+  hitEffectOverride: {fileID: 0}
+  alwaysSpawnHitEffect: 0

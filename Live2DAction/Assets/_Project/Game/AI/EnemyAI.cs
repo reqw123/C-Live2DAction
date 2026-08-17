@@ -1,4 +1,5 @@
 using UnityEngine;
+using Live2DAction.Characters;
 using Live2DAction.Combat;
 using Live2DAction.Input;
 
@@ -24,6 +25,33 @@ namespace Live2DAction.AI
         [SerializeField] private float moveSpeed = 2f;
         [SerializeField] private float rotationSpeedDegrees = 480f;
         [SerializeField] private float gravity = -20f;
+
+        // 2026-08-17, real bug report ("076靠我太近時會飛到我頭上") - mirrors CharacterMovement's
+        // own slideSpeed/GroundSlopeUtility fix for the reverse direction of the same bug
+        // (see that field's comment: "跳躍有機會卡在敵人頭上，需要自行下來"). This class's own
+        // gravity handling had the identical gap - isGrounded reads true the moment this AI
+        // ends up resting on another character's CharacterController's rounded top (however it
+        // got there - a brief overlap-recovery push while chasing is enough, no jump needed),
+        // and nothing here ever pushed it back off. Player4 (the other user of this class) was
+        // presumably equally exposed, just not yet reported.
+        [SerializeField] private float slideSpeed = 4f;
+
+        // 2026-08-17, explicit user request ("移除面對鏡頭的需求 改為統一面對玩家") - supersedes
+        // that same day's earlier attackFacingOverride workaround. 076/077 originally had
+        // CubismBillboard re-facing the root at Camera.main every LateUpdate (so the flat Live2D
+        // plane never appeared edge-on to the camera), which fought this class's own facing
+        // logic below and was the actual root cause of that day's "076攻擊不到我" bug -
+        // attackFacingOverride patched around it with a second aim-only Transform. Now that
+        // CubismBillboard is removed from 076 entirely (user's explicit choice: always face the
+        // player instead of always facing the camera), the root's own rotation below IS already
+        // the correct, unhijacked aim direction again - PlayerCombat.attackOrigin can go back to
+        // its default null/self fallback, no override Transform needed. When true, the facing
+        // block below runs every frame regardless of CurrentState (including Idle/out-of-range)
+        // instead of only while Chasing/Attacking - "統一面對玩家" (uniformly/always face the
+        // player), a full replacement for what CubismBillboard used to do unconditionally every
+        // frame. Left false for ordinary enemies (e.g. Player4), which should keep only turning
+        // to face the player once actually aware of them.
+        [SerializeField] private bool alwaysFaceTarget;
 
         // 2026-08-13, real bug report ("我已經盡到敵人範圍內，線條從紅色變成黃色，但敵人尚未作
         // 出攻擊，這代表視覺呈現與數值邏輯判定很明顯不一致") - root cause: PlayerCombat's own
@@ -75,11 +103,24 @@ namespace Live2DAction.AI
                 return;
             }
 
-            float distance = Vector3.Distance(transform.position, target.position);
-            CurrentState = EnemyBehaviorUtility.DetermineState(distance, detectionRange, ResolveEffectiveAttackRange());
-
+            // 2026-08-17, real bug report ("076會看著我 但是不會追我也不會攻擊") - root cause:
+            // this used to measure raw 3D Vector3.Distance (including Y), which was fine back
+            // when every character's root sat at roughly chest height (Y~0.5-0.6). Once 076
+            // became a 5m-tall standee, its root had to move up to ~Y=2 so the visual feet line
+            // up with the ground (see the scene's own position comment/CHANGELOG) - but the
+            // *target*'s root (the player) is still down at Y~0.5, so that leftover ~1.5m of
+            // pure vertical separation was eating almost this whole 1.6m detectionRange budget
+            // before the player had closed any actual (horizontal) distance at all. Detection
+            // and the attack-range check both need "is the target within reach along the
+            // ground", not "including however tall this particular character happens to be" -
+            // matches the horizontal-only semantics toTarget/direction below already use for
+            // movement, just computed first now so distance can reuse it instead of measuring
+            // the (wrong) 3D distance separately.
             Vector3 toTarget = target.position - transform.position;
             toTarget.y = 0f;
+            float distance = toTarget.magnitude;
+            CurrentState = EnemyBehaviorUtility.DetermineState(distance, detectionRange, ResolveEffectiveAttackRange());
+
             Vector3 direction = toTarget.sqrMagnitude > 0.0001f ? toTarget.normalized : Vector3.zero;
 
             _horizontalVelocity = CurrentState == EnemyState.Chasing ? direction * moveSpeed : Vector3.zero;
@@ -92,14 +133,36 @@ namespace Live2DAction.AI
             }
             _verticalVelocity += gravity * Time.deltaTime;
 
-            Vector3 motion = _horizontalVelocity;
+            // See CharacterMovement's own identical block/GroundSlopeUtility comment - isGrounded
+            // alone doesn't mean "standing somewhere walkable", so an active push is needed to
+            // actually slide off another character's rounded capsule top instead of resting
+            // there indefinitely once ended up there.
+            Vector3 slideVelocity = Vector3.zero;
+            if (_controller.isGrounded && TryGetGroundNormal(out Vector3 groundNormal, out CharacterController standingOnCharacter))
+            {
+                bool standingOnAnotherCharacter = standingOnCharacter != null;
+                bool tooSteep = GroundSlopeUtility.IsTooSteepToStandOn(groundNormal, _controller.slopeLimit);
+                if (standingOnAnotherCharacter || tooSteep)
+                {
+                    Vector3 slideDirection = GroundSlopeUtility.ComputeSlideDirection(groundNormal);
+                    if (slideDirection == Vector3.zero && standingOnAnotherCharacter)
+                    {
+                        slideDirection = GroundSlopeUtility.ComputeFallbackAwayDirection(transform.position, standingOnCharacter.transform.position);
+                    }
+
+                    slideVelocity = slideDirection * slideSpeed;
+                }
+            }
+
+            Vector3 motion = _horizontalVelocity + slideVelocity;
             motion.y = _verticalVelocity;
             _controller.Move(motion * Time.deltaTime);
 
             // Faces the target whenever aware of it (chasing or attacking), not only while
             // actually moving - an idle-but-stationary attacker that never turns to track a
-            // circling player would keep swinging at empty air.
-            if (CurrentState != EnemyState.Idle && direction.sqrMagnitude > 0.0001f)
+            // circling player would keep swinging at empty air. alwaysFaceTarget (see that
+            // field's own comment) additionally runs this while Idle/out of detection range too.
+            if ((CurrentState != EnemyState.Idle || alwaysFaceTarget) && direction.sqrMagnitude > 0.0001f)
             {
                 Quaternion targetRotation = Quaternion.LookRotation(direction, Vector3.up);
                 transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, rotationSpeedDegrees * Time.deltaTime);
@@ -135,6 +198,44 @@ namespace Live2DAction.AI
         {
             Gizmos.color = new Color(0.2f, 0.9f, 1f, 0.5f);
             Gizmos.DrawWireSphere(transform.position, detectionRange);
+        }
+
+        // Direct port of CharacterMovement.TryGetGroundNormal - see that method's own comment
+        // for why the cast origin/distance are computed this way (bottom-hemisphere-center
+        // origin, not the capsule's naive local Y=0). Kept as a separate copy rather than
+        // extracted into a shared static utility: it needs live instance state (_controller,
+        // transform.root) that would just turn into extra parameters either way, and this
+        // class's own header comment already documents the deliberate choice not to share
+        // movement code with CharacterMovement.
+        private bool TryGetGroundNormal(out Vector3 normal, out CharacterController otherCharacterController)
+        {
+            float capsuleBottomLocalY = _controller.center.y - _controller.height / 2f;
+            Vector3 origin = transform.position + new Vector3(0f, capsuleBottomLocalY + _controller.radius, 0f);
+            float castDistance = _controller.radius + 0.3f;
+            float castRadius = Mathf.Max(0.05f, _controller.radius * 0.8f);
+
+            RaycastHit[] hits = Physics.SphereCastAll(origin, castRadius, Vector3.down, castDistance, ~0, QueryTriggerInteraction.Ignore);
+            float closestDistance = float.MaxValue;
+            normal = Vector3.up;
+            otherCharacterController = null;
+            bool found = false;
+            foreach (RaycastHit hit in hits)
+            {
+                if (hit.collider == null || hit.collider.transform.root == transform.root)
+                {
+                    continue;
+                }
+
+                if (hit.distance < closestDistance)
+                {
+                    closestDistance = hit.distance;
+                    normal = hit.normal;
+                    otherCharacterController = hit.collider.GetComponent<CharacterController>();
+                    found = true;
+                }
+            }
+
+            return found;
         }
     }
 }

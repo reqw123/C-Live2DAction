@@ -16,7 +16,7 @@ MonoBehaviour:
   damage: 10
   range: 0.5
   radius: 0.5
-  startupFrames: 6
+  startupFrames: 15
   activeFrames: 4
-  recoveryFrames: 14
-  comboWindowFrames: 10
+  recoveryFrames: 13
+  comboWindowFrames: 8

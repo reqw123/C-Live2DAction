@@ -52,7 +52,7 @@ AnimatorState:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: Attack2
-  m_Speed: 1
+  m_Speed: 3.2
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: -7543574674220884775}
@@ -4481,7 +4481,7 @@ AnimatorState:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: Attack1
-  m_Speed: 1
+  m_Speed: 3.4
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: 3988244933374058326}
@@ -6126,7 +6126,7 @@ AnimatorState:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: Attack3
-  m_Speed: 1
+  m_Speed: 2.1
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: -7837059041823826714}

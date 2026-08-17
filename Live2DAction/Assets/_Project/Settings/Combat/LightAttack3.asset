@@ -16,9 +16,9 @@ MonoBehaviour:
   damage: 10
   range: 0.5
   radius: 0.5
-  startupFrames: 10
+  startupFrames: 18
   activeFrames: 5
-  recoveryFrames: 22
+  recoveryFrames: 11
   comboWindowFrames: 0
   hitEffectOverride: {fileID: 753442366657099694, guid: 585bdf7682e2d9e4ca92e7100ddbf7a1, type: 3}
   alwaysSpawnHitEffect: 1
