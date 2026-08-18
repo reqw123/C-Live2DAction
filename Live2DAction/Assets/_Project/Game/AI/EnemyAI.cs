@@ -125,27 +125,24 @@ namespace Live2DAction.AI
         // airborne, so that's the correct "player's flight speed" baseline to scale from.
         [SerializeField] private float aerialHorizontalSpeed = 2.4f;
 
-        // Shared with CharacterMovement's own identical field/AimUtility - see that field's
-        // comment for why a hard clamp instead of tipping all the way to straight up/down.
-        [SerializeField] private float maxPitchDegrees = 60f;
-
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private float _verticalVelocity;
         private bool _isAerialCombat;
 
-        // 2026-08-18, REVERTED same day from applying pitch to THIS transform's rotation - real
-        // playtested bug: this is also the CharacterController's own transform, and the capsule's
-        // "up" axis follows the transform's local Y axis, so pitching it didn't just aim the body,
-        // it physically tipped the collision capsule over - the body visibly flickered between
-        // standing and lying flat ("一下站立一下躺著反覆"), and the tilted capsule's collision
-        // response fought the vertical climb enough that Player4 could never gain net altitude on
-        // the player ("位置始終會低於玩家"). Fixed the same way as CharacterMovement's identical
-        // problem: pitch now goes on the "Visual" child (Animator only, no CharacterController)
-        // instead, so the body still visually looks up/down at an aerial target without the
-        // capsule ever leaving upright.
-        private Transform _visual;
-        private float _visualPitch;
+        // 2026-08-18, this transform is the CharacterController's own transform, and the
+        // capsule's "up" axis follows the transform's local Y axis - real playtested bug: an
+        // earlier version pitched this to aim at aerial targets, which didn't just turn the body,
+        // it physically tipped the collision capsule over (visibly flickered between standing and
+        // lying flat, and the tilted capsule's collision response fought vertical climb enough
+        // that Player4 could never gain net altitude on the player). A LATER version moved that
+        // same pitch onto a separate "Visual" child instead (Animator only, no CharacterController)
+        // to sidestep the capsule problem - but once Aerial Combat started staying active for an
+        // entire engagement (see the hover-stability fix above), that became a near-constant tilt
+        // instead of a brief look-up flourish, and the user explicitly wants Player4 upright the
+        // whole time ("敵人仍然斜斜的 要像玩家一樣站直才行"). Removed entirely now - this
+        // transform stays yaw-only always, with no pitch applied anywhere, on either it or a
+        // visual child.
 
         public EnemyState CurrentState { get; private set; } = EnemyState.Idle;
 
@@ -178,7 +175,6 @@ namespace Live2DAction.AI
         private void Awake()
         {
             _controller = GetComponent<CharacterController>();
-            _visual = transform.Find("Visual");
         }
 
         private void Update()
@@ -217,10 +213,7 @@ namespace Live2DAction.AI
 
             // Aerial Combat enter/exit - see aerialCombatEnterHeight's own comment. Frozen
             // (neither entered nor exited) while staggered, same "don't touch anything while
-            // frozen open" reasoning the rest of this method already applies. Exit uses
-            // effectiveAttackRange, NOT aerialCombatEnterHeight - deliberate hysteresis so it
-            // keeps closing the vertical gap all the way down to actual melee range instead of
-            // bailing out (and losing the spherical judgment tolerance) 3m short of hitting range.
+            // frozen open" reasoning the rest of this method already applies.
             //
             // 2026-08-18, real playtested bug ("敵人飛行時如果攻擊玩家會停留在原地 導致跟不上玩家
             // 最後一直卡在飛行-攻擊落空-飛行的狀態") - the "close enough, exit aerial" check used
@@ -228,14 +221,35 @@ namespace Live2DAction.AI
             // The moment it exited, vertical tracking switched off (gravity took over) and
             // horizontal chase froze too (see the Attacking branch below) - exactly the ground-
             // melee "plant your feet and swing" assumption, which falls apart against a target
-            // that can freely reposition in 3D faster than any melee range tolerates. The result:
-            // it swings at wherever the player WAS, the player's long since moved, the whiffed
-            // attack ends, distance has grown back past the aerial threshold, it re-chases,
-            // catches up, swings again, whiffs again - the reported loop. Fix: while a swing is
-            // actually in progress (combat.CurrentPhase != Idle), don't exit aerial tracking even
-            // if the height gap has already closed - keep adjusting altitude (and, per the
-            // Attacking branch below, horizontal position too) for the swing's entire duration,
-            // only actually "landing" once it's both close AND between swings.
+            // that can freely reposition in 3D faster than any melee range tolerates. Fixed with
+            // the midSwing check below - kept aerial tracking alive for the swing's own duration.
+            //
+            // 2026-08-18 follow-up, real playtested bug ("敵人擁有只會飛到玩家下方...請讓他一定
+            // 要飛到玩家的身邊") - the midSwing fix above only kept tracking alive DURING a swing;
+            // the instant a swing ENDED with the height gap already closed, it still exited
+            // immediately - and exiting means gravity, not "stop and hover". With nothing holding
+            // it up mid-air, every single gap between swings became a stall-then-freefall, so it
+            // spent most of an engagement sinking below the player and re-climbing rather than
+            // ever settling in beside them at a matching, upright altitude. Fixed by no longer
+            // treating "close enough" as an exit condition at all - it now only actually leaves
+            // Aerial Combat (and hands off to gravity) once it's REALLY landed
+            // (_controller.isGrounded), so it keeps hovering at the player's own height for the
+            // entire time it's airborne and near them, landing only if the player themselves come
+            // back down to the ground. (Body orientation itself needs no separate fix here - see
+            // the facing block further down's own comment: this transform is yaw-only always,
+            // upright regardless of which direction it's approaching the player from.)
+            // 2026-08-18, found during a general review pass (no specific repro yet, but a real
+            // gap): the exit condition only ever checked VERTICAL distance (ceiling) and grounded
+            // state - nothing here re-checked HORIZONTAL distance once already engaged, even
+            // though entry itself requires distance <= detectionRange. A player who flies far away
+            // horizontally while staying elevated would leave Player4 with CurrentState==Idle
+            // (distance > detectionRange, so EnemyBehaviorUtility.DetermineState gives up on it -
+            // horizontal chase already freezes via the Chasing-only gate below) but STILL
+            // _isAerialCombat==true, so vertical tracking keeps running forever - an idle enemy
+            // stuck hovering motionless in mid-air indefinitely instead of giving up and landing.
+            // Added distance > detectionRange as a third exit trigger, gated by !midSwing the same
+            // way the grounded check already is (don't abandon an attack that's already committed
+            // mid-swing just because the target sprinted off during it).
             bool midSwing = combat != null && combat.CurrentPhase != AttackPhase.Idle;
             if (!staggered)
             {
@@ -247,7 +261,7 @@ namespace Live2DAction.AI
                     }
                 }
                 else if (Mathf.Abs(heightDiff) > aerialCombatChaseCeiling
-                    || (!midSwing && Mathf.Abs(heightDiff) <= effectiveAttackRange))
+                    || (!midSwing && (_controller.isGrounded || distance > detectionRange)))
                 {
                     _isAerialCombat = false;
                 }
@@ -284,12 +298,40 @@ namespace Live2DAction.AI
             bool verticallyInRange = !_isAerialCombat || Mathf.Abs(heightDiff) <= effectiveAttackRange;
             AttackPressed = CurrentState == EnemyState.Attacking && verticallyInRange;
 
-            if (!staggered && _isAerialCombat)
+            if (staggered)
             {
-                // Simple proportional approach toward the target's altitude, capped at
-                // aerialVerticalSpeed - closes fast when far, slows naturally as it nears rather
-                // than overshooting and oscillating around the target height.
-                _verticalVelocity = Mathf.Clamp(heightDiff, -aerialVerticalSpeed, aerialVerticalSpeed);
+                // 2026-08-18, found during a general review pass - horizontal velocity already
+                // freezes while staggered (CurrentState becomes Staggered, which isn't Chasing or
+                // Attacking, so shouldChaseHorizontally is false above), matching the intent of a
+                // stagger window being "stand frozen and open, waiting to be punished". Vertical
+                // velocity had no such freeze - it fell straight to the gravity branch below
+                // regardless of staggered, which was invisible back when Aerial Combat only ever
+                // left an enemy briefly airborne, but now that it keeps Player4 genuinely
+                // hovering for most of an engagement (see the hover-stability fix above), getting
+                // staggered mid-air would drop it into freefall mid-kneel instead of actually
+                // holding still - the opposite of what a punishable opening is supposed to look
+                // like. Holding vertical velocity at exactly 0 keeps it suspended wherever it was
+                // staggered, airborne or not.
+                _verticalVelocity = 0f;
+            }
+            else if (_isAerialCombat)
+            {
+                // 2026-08-18, real playtested bug ("敵人還是有機會卡在玩家下方且極限攻擊距離外導
+                // 致空打") - this used to be a plain proportional law (velocity = heightDiff
+                // itself, clamped to aerialVerticalSpeed) which is an exponential decay with
+                // roughly a 1-second time constant: it slows down the closer it gets, which
+                // reads fine against a STATIONARY target but means the LAST stretch of distance
+                // never actually finishes closing against a target that keeps repositioning -
+                // Player4 would sit at a small-but-nonzero residual gap indefinitely (often just
+                // outside effectiveAttackRange) instead of properly arriving. Switched to a
+                // constant-rate pursuit via MoveTowards instead - moves at the FULL
+                // aerialVerticalSpeed every frame until the remaining gap is smaller than one
+                // frame's own step, at which point MoveTowards's own no-overshoot guarantee
+                // closes it exactly rather than asymptotically approaching forever. Same fast
+                // far-field approach as before, but now actually finishes arriving instead of
+                // just trending toward arriving.
+                float step = Mathf.MoveTowards(0f, heightDiff, aerialVerticalSpeed * Time.deltaTime);
+                _verticalVelocity = Time.deltaTime > 0f ? step / Time.deltaTime : 0f;
             }
             else
             {
@@ -337,19 +379,20 @@ namespace Live2DAction.AI
                 transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, rotationSpeedDegrees * Time.deltaTime);
             }
 
-            // Visual-only pitch on top of that horizontal body turn, while Aerial Combat is
-            // active - purely cosmetic (spherical judgment doesn't need it, see
-            // UseSphericalJudgment's own comment), applied to _visual's LOCAL rotation so it
-            // never touches the CharacterController's own upright transform. Tracked as a plain
-            // float + MoveTowardsAngle (same constant-degrees/sec idiom this file already uses
-            // for yaw above) rather than reading back _visual.localEulerAngles.x each frame -
-            // Euler angles wrap at 0/360, which would fight a naive angle read-back near that seam.
-            float targetPitch = _isAerialCombat ? AimUtility.ClampedPitchDegrees(fullToTarget, maxPitchDegrees) : 0f;
-            _visualPitch = Mathf.MoveTowardsAngle(_visualPitch, targetPitch, rotationSpeedDegrees * Time.deltaTime);
-            if (_visual != null)
-            {
-                _visual.localRotation = Quaternion.Euler(-_visualPitch, 0f, 0f);
-            }
+            // 2026-08-18, REMOVED same day, real playtested follow-up ("敵人仍然斜斜的 要像玩家
+            // 一樣站直才行") - this used to also pitch _visual (the Animator-only child, not the
+            // CharacterController's own transform) to visually look up/down at an aerial target,
+            // on the reasoning that it was purely cosmetic and harmless since it never touched
+            // the collision capsule. That held for the ORIGINAL narrow window Aerial Combat used
+            // to stay active for (briefly, only while closing the gap) - but the hover-stability
+            // fix right above (exit only once _controller.isGrounded) means _isAerialCombat now
+            // stays true for almost an entire engagement, so this pitch became a near-constant
+            // tilt instead of a brief look-up flourish, and the user explicitly wants Player4
+            // upright the whole time, same as the player's own body reads (the player only
+            // pitches while actively locked onto a vertically-offset target, a deliberate rare
+            // action - Player4 has no equivalent "deliberate" gate, it was just tied to the whole
+            // aerial state). _visual is left at its default identity local rotation - always
+            // upright, matching this transform's own always-yaw-only facing exactly.
         }
 
         // See "combat" field's own comment for the full 2026-08-13 bug this fixes. Range+Radius
