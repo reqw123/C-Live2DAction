@@ -212,7 +212,15 @@ namespace Live2DAction.Characters
                 _dodgeState = new DodgeState(dodgeData);
             }
 
-            bool staggered = stance != null && stance.IsStaggered;
+            // 2026-08-18, explicit user request (death animation) - merged directly into the
+            // same `staggered` gate everything below already uses, rather than a separate check
+            // at each site: nothing in this file drives the Staggered ANIMATOR bool itself (that
+            // reads StancePoise.IsStaggered directly via StaggerAnimationLink, unaffected by this
+            // local variable), so `staggered` here is purely a movement/input freeze gate - safe
+            // to fold death into. Without this, a dying character would keep walking/dodging/
+            // flying for the ~3.5s the Dying animation plays before DeathAnimationLink actually
+            // deactivates the GameObject.
+            bool staggered = (stance != null && stance.IsStaggered) || (health != null && health.IsDead);
 
             IInputCommand inputCommand = InputCommand;
             Vector2 moveInput = !staggered && inputCommand != null ? inputCommand.MoveInput : Vector2.zero;

@@ -11,12 +11,14 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fceba8b3e429d334a8abd39a84e943a3, type: 3}
   m_Name: EnemyAttack4
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   attackId: EnemyAttack4
-  damage: 10
+  damage: 25
   range: 0.5
   radius: 0.5
   startupFrames: 20
   activeFrames: 5
   recoveryFrames: 14
   comboWindowFrames: 0
+  hitEffectOverride: {fileID: 0}
+  alwaysSpawnHitEffect: 0

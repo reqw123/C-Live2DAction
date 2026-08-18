@@ -13,10 +13,12 @@ MonoBehaviour:
   m_Name: EnemyAttack
   m_EditorClassIdentifier: 
   attackId: EnemyAttack
-  damage: 10
+  damage: 25
   range: 0.5
   radius: 0.5
   startupFrames: 15
   activeFrames: 4
   recoveryFrames: 13
   comboWindowFrames: 8
+  hitEffectOverride: {fileID: 0}
+  alwaysSpawnHitEffect: 0

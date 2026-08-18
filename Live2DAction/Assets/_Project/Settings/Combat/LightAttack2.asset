@@ -13,10 +13,12 @@ MonoBehaviour:
   m_Name: LightAttack2
   m_EditorClassIdentifier: 
   attackId: LightAttack2
-  damage: 10
+  damage: 25
   range: 0.5
   radius: 0.5
   startupFrames: 17
   activeFrames: 4
   recoveryFrames: 16
   comboWindowFrames: 10
+  hitEffectOverride: {fileID: 0}
+  alwaysSpawnHitEffect: 0

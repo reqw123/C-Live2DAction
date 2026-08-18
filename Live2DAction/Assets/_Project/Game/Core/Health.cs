@@ -35,6 +35,17 @@ namespace Live2DAction.Core
         // ignored while true.
         public bool IsInvulnerable { get; set; }
 
+        // 2026-08-18, explicit user request ("將這個動作作為所有角色死亡時的共同動作") - default
+        // false preserves the original "deactivate the instant it dies" behavior for anything
+        // that doesn't opt in (Player2, the Live2D 076/077 billboards - neither has a compatible
+        // Humanoid rig for the new death clip, see DeathAnimationLink's own comment). Set true by
+        // DeathAnimationSetup on whichever characters get a DeathAnimationLink wired, so THAT
+        // component can play the Dying animation for its own measured duration before deactivating
+        // the GameObject itself - deactivating synchronously here, in the same call that fires
+        // Died, never gave any Died listener a chance to render even a single frame of a death
+        // animation first.
+        [SerializeField] private bool deferDeactivationToDeathAnimation;
+
         public event Action<DamageInfo> Damaged;
         public event Action Died;
 
@@ -52,7 +63,10 @@ namespace Live2DAction.Core
             {
                 IsDead = true;
                 Died?.Invoke();
-                gameObject.SetActive(false);
+                if (!deferDeactivationToDeathAnimation)
+                {
+                    gameObject.SetActive(false);
+                }
             }
         }
 

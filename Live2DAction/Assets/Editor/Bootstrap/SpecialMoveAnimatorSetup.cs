@@ -21,6 +21,16 @@ namespace Live2DAction.EditorTools
     // characters per the same follow-up) - a BOOL, not a Trigger, wired into both controllers;
     // see WireBoolState's own comment for why this needs different transition wiring than
     // every trigger-driven state above.
+    //
+    // "Dead" (2026-08-18, explicit user request "將這個動作作為所有角色死亡時的共同動作") - wired
+    // into both controllers, same "one clip, both rigs" reuse as everything else. Uses
+    // WireDeadState, NOT WireState - deliberately has NO return transition back to Locomotion.
+    // Every other one-shot state above hands control back to Locomotion once its clip finishes,
+    // because the character is still alive and playing again - Dead is terminal: the whole point
+    // is the character stays down in the Dying pose (DeathAnimationLink deactivates the
+    // GameObject itself shortly after, see that class's own comment), so auto-returning to
+    // Locomotion would very briefly show the corpse popping back onto its feet right before
+    // deactivation - a visible glitch for something meant to be final.
     internal static class SpecialMoveAnimatorSetup
     {
         private const string ClipsFolder = "Assets/_Project/Characters/Placeholder/CombatAnimations/Mixamo";
@@ -40,6 +50,9 @@ namespace Live2DAction.EditorTools
 
             WireBoolState(MayaControllerPath, "Staggered", "KneelingDown");
             WireBoolState(ArisaControllerPath, "Staggered", "KneelingDown");
+
+            WireDeadState(MayaControllerPath, "Dead", "Dying");
+            WireDeadState(ArisaControllerPath, "Dead", "Dying");
         }
 
         private static void WireState(string controllerPath, string trigger, string clipName, float speed)
@@ -99,6 +112,54 @@ namespace Live2DAction.EditorTools
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
             Debug.Log($"Wired '{trigger}' ({clipName}, speed={speed}) into {controllerPath}");
+        }
+
+        // Trigger-driven like WireState (AnyState -> Dead can interrupt anything, including a
+        // mid-swing attack or an existing stagger), but deliberately has NO return transition -
+        // see this class's own "Dead" header comment for why. Also no `speed` parameter (unlike
+        // WireState) - death has no pacing reason to run faster/slower than authored.
+        private static void WireDeadState(string controllerPath, string trigger, string clipName)
+        {
+            var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+            if (controller == null)
+            {
+                Debug.LogError("Could not load AnimatorController at " + controllerPath);
+                return;
+            }
+
+            AnimatorStateMachine stateMachine = controller.layers[0].stateMachine;
+
+            if (!HasParameter(controller, trigger))
+            {
+                controller.AddParameter(trigger, AnimatorControllerParameterType.Trigger);
+            }
+
+            AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{ClipsFolder}/{clipName}.fbx");
+            if (clip == null)
+            {
+                Debug.LogError($"Could not load AnimationClip '{clipName}' - run [Tool] Configure Mixamo Combat Animations As Humanoid first.");
+                return;
+            }
+
+            AnimatorState state = FindState(stateMachine, trigger);
+            if (state == null)
+            {
+                state = stateMachine.AddState(trigger);
+            }
+            state.motion = clip;
+
+            if (!HasAnyStateTransitionTo(stateMachine, state))
+            {
+                AnimatorStateTransition enterTransition = stateMachine.AddAnyStateTransition(state);
+                enterTransition.AddCondition(AnimatorConditionMode.If, 0, trigger);
+                enterTransition.duration = 0.1f;
+                enterTransition.hasExitTime = false;
+                enterTransition.canTransitionToSelf = false;
+            }
+
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"Wired '{trigger}' ({clipName}) into {controllerPath} - terminal state, no return transition");
         }
 
         // Bool-driven, unlike WireState's Trigger-driven states above: KneelingDown needs to

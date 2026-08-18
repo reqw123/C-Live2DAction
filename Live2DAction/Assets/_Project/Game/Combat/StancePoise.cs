@@ -41,6 +41,16 @@ namespace Live2DAction.Combat
         [SerializeField] private float regenDelaySeconds = 3f;
         [SerializeField] private float regenPerSecond = 20f;
 
+        // 2026-08-18, explicit user request ("同時減緩架勢條成長速度") - applied to the incoming
+        // damage amount before it's added to _currentStance, so poise now fills SLOWER than raw
+        // damage dealt rather than 1:1 with it. 0.5 roughly doubles how many hits a stagger takes
+        // (at this project's common 10-damage light attacks against maxStance=60, 6 hits -> 12).
+        // A separate multiplier rather than just raising maxStance - raising maxStance would also
+        // widen the bar itself (changing how much accumulated damage a stagger represents),
+        // whereas this only changes the RATE it fills at, matching "成長速度" (growth SPEED)
+        // specifically, not "how full is full".
+        [SerializeField] private float stanceGainMultiplier = 0.5f;
+
         private Health _health;
         private float _currentStance;
         private float _staggerElapsed;
@@ -97,7 +107,7 @@ namespace Live2DAction.Combat
             }
 
             _timeSinceLastHit = 0f;
-            _currentStance = Mathf.Min(maxStance, _currentStance + info.Amount);
+            _currentStance = Mathf.Min(maxStance, _currentStance + info.Amount * stanceGainMultiplier);
             if (_currentStance >= maxStance)
             {
                 IsStaggered = true;

@@ -44,12 +44,27 @@ namespace Live2DAction.EditorTools
         // (a bool, not a Trigger, precisely because its duration isn't fixed).
         private static readonly string[] LoopingFbxNames = { "KneelingDown" };
 
+        // 2026-08-18, explicit user request ("將這個動作作為所有角色死亡時的共同動作") - Dying
+        // needs loopTime=FALSE (unlike KneelingDown - a death pose should play once and hold, not
+        // cycle) but heightFromFeet=TRUE like KneelingDown (not the standing-swing clips' false) -
+        // same reasoning as KneelingDown's own comment: a lying-down take's raw Mixamo root height
+        // wasn't authored against this rig's floor the way the standing punches/kicks were, so it
+        // needs to be re-grounded from the feet bones per-frame rather than trusting the raw
+        // translation, or the corpse floats. Neither existing array's (loop, heightFromFeet)
+        // combination fits, hence its own array/call rather than joining either.
+        private static readonly string[] NonLoopingGroundedFbxNames = { "Dying" };
+
         [MenuItem("Tools/Live2DAction/Configure Mixamo Combat Animations As Humanoid")]
         public static void Apply()
         {
             foreach (string name in FbxNames)
             {
                 Configure(name, loopTime: false, groundHeightFromFeet: false);
+            }
+
+            foreach (string name in NonLoopingGroundedFbxNames)
+            {
+                Configure(name, loopTime: false, groundHeightFromFeet: true);
             }
 
             foreach (string name in LoopingFbxNames)

@@ -81,6 +81,16 @@ namespace Live2DAction.AI
         // of how close the player is, that's the entire point of the mechanic.
         [SerializeField] private Live2DAction.Combat.StancePoise stance;
 
+        // 2026-08-18, explicit user request ("將這個動作作為所有角色死亡時的共同動作") - optional
+        // (null-safe below), same reasoning as `stance` above. Kept SEPARATE from `staggered`
+        // rather than merged into it - CurrentState==Staggered is StancePoise-specific AI-FSM
+        // bookkeeping (see EnemyState.Staggered's own comment), and a dead enemy isn't actually
+        // "staggered", it's dead; merging the two would mislabel CurrentState during the death
+        // animation window for no benefit. Instead ORed into a separate `frozen` local at each
+        // actual movement/attack gating site below, so both cases freeze the same way without
+        // conflating what CurrentState reports.
+        [SerializeField] private Live2DAction.Core.Health health;
+
         // 2026-08-18, explicit user request (aerial combat grilling session - see CONTEXT.md's
         // own "Aerial Combat" entry). An independent, simplified AI hover/chase - deliberately
         // does NOT share the player's Flight/Glide/Flight Energy system (see that decision's own
@@ -206,6 +216,10 @@ namespace Live2DAction.AI
             float heightDiff = fullToTarget.y;
 
             bool staggered = stance != null && stance.IsStaggered;
+            // See `health` field's own comment for why this stays separate from `staggered`
+            // itself (CurrentState below) but joins it for movement/attack gating purposes.
+            bool isDead = health != null && health.IsDead;
+            bool frozen = staggered || isDead;
 
             // effectiveAttackRange is needed by the aerial exit check below now (not just
             // CurrentState further down), so resolve it first.
@@ -251,7 +265,7 @@ namespace Live2DAction.AI
             // way the grounded check already is (don't abandon an attack that's already committed
             // mid-swing just because the target sprinted off during it).
             bool midSwing = combat != null && combat.CurrentPhase != AttackPhase.Idle;
-            if (!staggered)
+            if (!frozen)
             {
                 if (!_isAerialCombat)
                 {
@@ -272,9 +286,16 @@ namespace Live2DAction.AI
                 combat.UseSphericalJudgment = _isAerialCombat;
             }
 
+            // isDead falls back to Idle rather than a dedicated Dead enum value - deliberately a
+            // small simplification (see `health` field's own comment) rather than growing
+            // EnemyState for a label nothing else branches on; Idle already correctly yields
+            // shouldChaseHorizontally==false and AttackPressed==false below, which is the actual
+            // behavior that matters during the death animation window.
             CurrentState = staggered
                 ? EnemyState.Staggered
-                : EnemyBehaviorUtility.DetermineState(distance, detectionRange, effectiveAttackRange);
+                : isDead
+                    ? EnemyState.Idle
+                    : EnemyBehaviorUtility.DetermineState(distance, detectionRange, effectiveAttackRange);
 
             Vector3 direction = toTarget.sqrMagnitude > 0.0001f ? toTarget.normalized : Vector3.zero;
 
@@ -298,7 +319,7 @@ namespace Live2DAction.AI
             bool verticallyInRange = !_isAerialCombat || Mathf.Abs(heightDiff) <= effectiveAttackRange;
             AttackPressed = CurrentState == EnemyState.Attacking && verticallyInRange;
 
-            if (staggered)
+            if (frozen)
             {
                 // 2026-08-18, found during a general review pass - horizontal velocity already
                 // freezes while staggered (CurrentState becomes Staggered, which isn't Chasing or
@@ -312,6 +333,10 @@ namespace Live2DAction.AI
                 // holding still - the opposite of what a punishable opening is supposed to look
                 // like. Holding vertical velocity at exactly 0 keeps it suspended wherever it was
                 // staggered, airborne or not.
+                //
+                // 2026-08-18 follow-up (death animation) - `frozen` (staggered OR dead), not just
+                // `staggered`, for the same reason: an airborne Player4 dying mid-hover should
+                // stay suspended playing its Dying animation, not plummet while "dead".
                 _verticalVelocity = 0f;
             }
             else if (_isAerialCombat)

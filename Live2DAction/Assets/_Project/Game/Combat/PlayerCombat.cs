@@ -48,6 +48,14 @@ namespace Live2DAction.Combat
         // scope as the movement-side gate.
         [SerializeField] private StancePoise stance;
 
+        // 2026-08-18, explicit user request (death animation) - optional (null-safe below),
+        // same "only blocks STARTING a new attack" scope as `stance` above: a swing already
+        // resolving when the killing blow lands is allowed to finish (a whiffed apparent freeze
+        // mid-animation would look worse than the actual attack itself already committed), but
+        // a dead character shouldn't be able to start throwing new punches during its own death
+        // animation.
+        [SerializeField] private Health health;
+
         // Spawned at each landed hit's actual impact point (2026-08-12, explicit user
         // request: "攻擊特效" - a hit spark, not a swing trail or a hit-stop/screen-shake
         // effect). Optional - null just means no visual, doesn't affect damage.
@@ -115,6 +123,10 @@ namespace Live2DAction.Combat
             IInputCommand inputCommand = InputCommand;
             bool attackPressed = inputCommand != null && inputCommand.AttackPressed;
             if (stance != null && stance.IsStaggered)
+            {
+                attackPressed = false;
+            }
+            if (health != null && health.IsDead)
             {
                 attackPressed = false;
             }
