@@ -1,4 +1,5 @@
 using UnityEngine;
+using Live2DAction.AI;
 
 namespace Live2DAction.Characters
 {
@@ -26,8 +27,13 @@ namespace Live2DAction.Characters
         [SerializeField] private float flyingAmplitudeDegrees = 30f;
         [SerializeField] private float flyingFlapsPerSecond = 3f;
 
-        // Optional - null-safe below. Without one, the wings just always flap at the idle rate.
+        // Optional - null-safe below. Without either, the wings just always flap at the idle
+        // rate. Two independent optional sources rather than one shared interface: a player-
+        // driven character (CharacterMovement.IsFlying) and an AI-driven decorative-wings
+        // character (EnemyAI.CurrentState) mean genuinely different things by "working harder" -
+        // see WingFlap's own 2026-08-18 extension comment below for Player4's case.
         [SerializeField] private CharacterMovement movement;
+        [SerializeField] private EnemyAI enemyAI;
 
         private Quaternion _leftBaseRotation;
         private Quaternion _rightBaseRotation;
@@ -48,9 +54,18 @@ namespace Live2DAction.Characters
 
         private void Update()
         {
-            bool flying = movement != null && movement.IsFlying;
-            float amplitude = flying ? flyingAmplitudeDegrees : idleAmplitudeDegrees;
-            float flapsPerSecond = flying ? flyingFlapsPerSecond : idleFlapsPerSecond;
+            // 2026-08-18 extension (flight system grilling session, Q8) - Player4's mechanical
+            // Decorative Wings have no CharacterMovement/IsFlying at all (Player4 never flies -
+            // see CONTEXT.md's "Enemy flight scope" decision), so "working harder" instead means
+            // EnemyAI.CurrentState == Attacking - the wings visibly rev up right as Player4
+            // commits to a swing, reading as a mechanical tell/threat cue rather than being
+            // decorative all the time. Both sources are optional and independent; movement takes
+            // priority if somehow both are wired (shouldn't happen in practice - one character
+            // gets one or the other, never both).
+            bool working = (movement != null && movement.IsFlying) ||
+                           (enemyAI != null && enemyAI.CurrentState == EnemyState.Attacking);
+            float amplitude = working ? flyingAmplitudeDegrees : idleAmplitudeDegrees;
+            float flapsPerSecond = working ? flyingFlapsPerSecond : idleFlapsPerSecond;
 
             // Accumulate phase by deltaTime (not just Time.time) so a runtime change in
             // flapsPerSecond (e.g. entering/leaving flight) doesn't snap the wave to a

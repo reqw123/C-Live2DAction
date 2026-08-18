@@ -94,9 +94,53 @@ namespace Live2DAction.Characters
         [SerializeField] private float flightDescendSpeed = 4f;
         [SerializeField] private float flightEnergyDrainPerSecond = 20f;
 
+        // 2026-08-18, explicit user request (flight system grilling session - see CONTEXT.md's
+        // own "Glide" entry) - the fallback state when Flight Energy runs out mid-air. A soft,
+        // fixed-rate descent instead of Flight just handing control back to normal gravity (which
+        // at that point would usually mean falling from a serious height) - echoes Wuthering
+        // Waves' "drop back to glider, not a hard fall" behavior. Costs no energy (flightEnergy
+        // regenerates normally while gliding, same passive regen it already has), and horizontal
+        // movement stays fully controllable - only the vertical rate changes from Flight's.
+        [SerializeField] private float glideDescendSpeed = 2f;
+
+        // 2026-08-18, real playtested bug ("飛行有能耗 非一半就停下來導致飛行軌跡奇異") - Glide
+        // originally resumed Flight the instant CurrentEnergy > 0f while the key was still held.
+        // With this project's actual tuning (drain 20/sec, regen only 10/sec) that meant once
+        // energy hit zero, holding the key produced a rapid stutter instead of a clean Glide:
+        // regen ticks 10 energy back in, Flight instantly resumes, drains it back to 0 in just
+        // 0.5s, drops back to Glide, repeat - a visible up/down "hop-glide-hop-glide" sawtooth
+        // rather than a real recovery. Requiring a real reserve (not just >0) before Flight can
+        // resume gives Glide enough uninterrupted time to actually read as its own state.
+        [SerializeField] private float flightResumeEnergyThreshold = 30f;
+
+        // 2026-08-18, explicit user request (aerial combat grilling session, Q3/Q5) - until now
+        // this class only ever rotated Yaw (Quaternion.Euler(0, yaw, 0)) - fine for every
+        // ground fight so far since nothing was ever meaningfully above/below the player, but a
+        // locked-on aerial target needs the character to actually tip its head/body up or down
+        // to face it, or its attack capsule (which extends along attackOrigin.forward) would
+        // still only ever reach horizontally. Clamped to +/-maxPitchDegrees so a target directly
+        // overhead doesn't contort the character toward looking straight up - see AimUtility's
+        // own comment for the shared clamping math (EnemyAI uses the same utility for Player4's
+        // side of the same problem).
+        [SerializeField] private float maxPitchDegrees = 60f;
+
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private bool _isFlying;
+        private bool _isGliding;
+        private float _pitch;
+        private float _pitchAngularVelocity;
+        private float _desiredPitchDegrees;
+
+        // 2026-08-18, REVERTED same day from applying _pitch to the root transform.rotation -
+        // real playtested bug on EnemyAI's identical setup (see that class's own comment for the
+        // full story): CharacterController's capsule "up" axis follows the transform's own local
+        // Y axis, so pitching the CharacterController's own transform doesn't just turn the
+        // character's aim, it physically tips the collision capsule over, fighting vertical
+        // movement and reading as the body flickering between standing and lying flat. Cached
+        // here instead so pitch can be applied to the "Visual" child (which only holds the
+        // Animator, not the CharacterController) - same visual look-up cue, no capsule tilt.
+        private Transform _visual;
 
         // SmoothDamp's own internal "current rate of change" state - not the same value as
         // _horizontalVelocity itself. Reset to zero whenever a dodge takes over so the eased
@@ -120,8 +164,14 @@ namespace Live2DAction.Characters
         public bool IsDodgeInvulnerable => _dodgeState != null && _dodgeState.IsInvulnerable;
 
         // Exposed for CharacterAnimatorLink (drives the Animator's existing but previously-
-        // unused "Fly" bool) and for a wing visual to toggle itself on/off.
+        // unused "Fly" bool) and for a wing visual to toggle itself on/off. Deliberately NOT
+        // true while Gliding - WingFlap's own idle/flying two-tier flap rate treats Gliding as
+        // "not flying" on purpose (see glideDescendSpeed's own comment: gliding should read as a
+        // gentle flap, matching the idle rate, not the energetic flying one).
         public bool IsFlying => _isFlying;
+
+        // See glideDescendSpeed's own comment for what Glide is and why it exists.
+        public bool IsGliding => _isGliding;
 
         // 2026-08-18, explicit user request ("上升氣流，任何人碰到...會快速飛向空中") - lets an
         // external trigger volume (Updraft) push this character upward without fighting its own
@@ -149,6 +199,7 @@ namespace Live2DAction.Characters
         private void Awake()
         {
             _controller = GetComponent<CharacterController>();
+            _visual = transform.Find("Visual");
         }
 
         private void Update()
@@ -189,6 +240,7 @@ namespace Live2DAction.Characters
                 _horizontalVelocity = dodgeVelocity;
                 _horizontalVelocitySmoothDampRef = Vector3.zero;
                 facingDirection = _dodgeState.Direction;
+                _desiredPitchDegrees = 0f; // stay level while dodging, regardless of any lock-on
             }
             else
             {
@@ -200,11 +252,17 @@ namespace Live2DAction.Characters
                 if (lockedTarget != null)
                 {
                     Vector3 toTarget = lockedTarget.position - transform.position;
+                    // 2026-08-18, explicit user request (aerial combat) - the RAW (unflattened)
+                    // offset feeds the pitch calc below; facingDirection itself stays horizontal-
+                    // only, same as before, since yaw is computed separately via LookRotation on
+                    // a flat vector further down.
+                    _desiredPitchDegrees = AimUtility.ClampedPitchDegrees(toTarget, maxPitchDegrees);
                     toTarget.y = 0f;
                     facingDirection = toTarget;
                 }
                 else
                 {
+                    _desiredPitchDegrees = 0f;
                     facingDirection = desiredDirection;
                 }
             }
@@ -238,6 +296,13 @@ namespace Live2DAction.Characters
                 {
                     flightEnergy.Drain(flightEnergyDrainPerSecond * Time.deltaTime);
                 }
+            }
+            else if (_isGliding)
+            {
+                // Fixed gentle sink, no energy cost, horizontal movement untouched (the
+                // _horizontalVelocity computed above already applies regardless of state) - see
+                // glideDescendSpeed's own comment.
+                _verticalVelocity = -glideDescendSpeed;
             }
             else
             {
@@ -280,6 +345,24 @@ namespace Live2DAction.Characters
             motion.y = _verticalVelocity;
             _controller.Move(motion * Time.deltaTime);
 
+            // Pitch eases toward _desiredPitchDegrees (0 unless locked onto a vertically-offset
+            // target - see the lock-on block above), independently of the facingDirection gate
+            // below so it settles back level even in the one frame a dodge/idle-no-lock-on
+            // state briefly reports a zero facingDirection. Applied to _visual's LOCAL rotation
+            // only, never to this transform - see _visual's own field comment for why (the
+            // CharacterController capsule must stay upright).
+            _pitch = Mathf.SmoothDampAngle(_pitch, _desiredPitchDegrees, ref _pitchAngularVelocity, rotationSmoothTime);
+            if (_visual != null)
+            {
+                // Negated: Unity's Euler X convention is inverted from AimUtility's
+                // "positive = looking up" (confirmed empirically - Quaternion.Euler(+X,0,0) *
+                // forward tips DOWN, not up). This was a real latent sign bug in the original
+                // (pre-Visual-child) version of this line - never actually caught before because
+                // only _desiredPitchDegrees's raw value was reflection-tested, not the resulting
+                // forward vector.
+                _visual.localRotation = Quaternion.Euler(-_pitch, 0f, 0f);
+            }
+
             if (facingDirection.sqrMagnitude > 0.0001f)
             {
                 // SmoothDampAngle instead of a constant-degrees/sec RotateTowards, so the
@@ -290,6 +373,7 @@ namespace Live2DAction.Characters
                 float newYaw = Mathf.SmoothDampAngle(currentYaw, targetYaw, ref _yawAngularVelocity, rotationSmoothTime);
                 transform.rotation = Quaternion.Euler(0f, newYaw, 0f);
             }
+            // else: no yaw change this frame - transform.rotation already yaw-only, nothing to do.
         }
 
         // Entering flight requires holding the key with energy available (grounded or airborne
@@ -300,21 +384,51 @@ namespace Live2DAction.Characters
         // can't happen mid-ascent) or running out of energy. This asymmetry (easy entry
         // condition, sticky exit condition) is deliberate: "按住鍵自由飛行" describes holding
         // the key to CONTROL flight, not to merely stay airborne.
+        //
+        // 2026-08-18 extended with Glide (see glideDescendSpeed's own comment): running out of
+        // energy mid-air now drops into Glide instead of straight back to normal gravity/falling.
+        // Glide itself ends on landing, or resumes real Flight the moment the key is held again
+        // AND energy has regenerated past zero - same entry condition as the empty-handed case
+        // below, just checked from the Glide branch too.
         private void UpdateFlightState(bool flyHeld)
         {
-            if (!_isFlying)
+            if (_isFlying)
             {
-                if (flyHeld && flightEnergy != null && flightEnergy.CurrentEnergy > 0f)
+                if (_controller.isGrounded)
                 {
+                    _isFlying = false;
+                }
+                else if (flightEnergy == null || flightEnergy.CurrentEnergy <= 0f)
+                {
+                    _isFlying = false;
+                    _isGliding = true;
+                }
+
+                return;
+            }
+
+            if (_isGliding)
+            {
+                if (_controller.isGrounded)
+                {
+                    _isGliding = false;
+                    return;
+                }
+
+                // flightResumeEnergyThreshold, not just > 0f - see that field's own comment for
+                // the stutter bug this avoids.
+                if (flyHeld && flightEnergy != null && flightEnergy.CurrentEnergy >= flightResumeEnergyThreshold)
+                {
+                    _isGliding = false;
                     _isFlying = true;
                 }
 
                 return;
             }
 
-            if (_controller.isGrounded || flightEnergy == null || flightEnergy.CurrentEnergy <= 0f)
+            if (flyHeld && flightEnergy != null && flightEnergy.CurrentEnergy > 0f)
             {
-                _isFlying = false;
+                _isFlying = true;
             }
         }
 

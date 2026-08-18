@@ -48,6 +48,15 @@ namespace Live2DAction.CameraSystem
         [SerializeField] private float distance = 2f;
         [SerializeField] private Vector3 targetOffset = new Vector3(0f, 0.5f, 0f);
 
+        // 2026-08-18, explicit user request (flight system grilling session, Q5 - "飛行時鏡頭
+        //通常會拉遠一點") - multiplies `distance` (never overwrites it - see that field's own
+        // comment on why it's user-owned tuning) while the target is Flying/Gliding, so more of
+        // the terrain below is visible during open-world traversal. Applied BEFORE the existing
+        // obstruction clamp below, not instead of it - flying near a cliff face still pulls the
+        // camera back in exactly the same way normal movement already does, this only changes
+        // the desired/unobstructed baseline.
+        [SerializeField] private float flightDistanceMultiplier = 1.4f;
+
         // 2026-08-12: real bug report ("很靠近敵人時角色1突然消失，畫面定格") persisted even
         // after fixing the CharacterController-climbing root cause and raising distance to 2 -
         // this project genuinely never had any camera collision avoidance (documented as a
@@ -210,7 +219,11 @@ namespace Live2DAction.CameraSystem
             }
 
             Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0f);
-            float usedDistance = distance;
+
+            CharacterMovement targetMovement = ResolveTargetMovement();
+            bool targetAirborneUnderControl = targetMovement != null && (targetMovement.IsFlying || targetMovement.IsGliding);
+            float desiredDistance = targetAirborneUnderControl ? distance * flightDistanceMultiplier : distance;
+            float usedDistance = desiredDistance;
 
             // Physics.SphereCast needs the live scene, so this can't live in the pure
             // ComputeCameraPosition helper below - it only runs while actually playing, same
@@ -220,8 +233,8 @@ namespace Live2DAction.CameraSystem
             if (Application.isPlaying && enableCameraCollision)
             {
                 Vector3 lookAtPoint = target.position + targetOffset;
-                float? obstruction = FindObstructionDistance(lookAtPoint, rotation, distance);
-                usedDistance = ClampDistanceForObstruction(distance, obstruction, cameraCollisionSkin);
+                float? obstruction = FindObstructionDistance(lookAtPoint, rotation, desiredDistance);
+                usedDistance = ClampDistanceForObstruction(desiredDistance, obstruction, cameraCollisionSkin);
             }
 
             Vector3 position = ComputeCameraPosition(target.position, rotation, usedDistance, targetOffset);
@@ -285,19 +298,29 @@ namespace Live2DAction.CameraSystem
         // not just a held key against a wall) and a forward/back-dominant input axis.
         private bool IsPlayerWalkingForwardOrBack()
         {
+            CharacterMovement movement = ResolveTargetMovement();
+            if (movement == null || movement.CurrentHorizontalSpeed <= 0.05f)
+            {
+                return false;
+            }
+
+            Vector2 moveInput = movement.CurrentMoveInput;
+            return Mathf.Abs(moveInput.y) >= Mathf.Abs(moveInput.x);
+        }
+
+        // Extracted from IsPlayerWalkingForwardOrBack's own former inline lazy-resolve so the
+        // flight distance check in LateUpdate can share the same cached lookup instead of
+        // re-resolving GetComponent every frame independently - same "resolved lazily, re-
+        // resolved if target changes" reasoning that field's own comment already documents.
+        private CharacterMovement ResolveTargetMovement()
+        {
             if (_targetMovement == null || _targetMovementFor != target)
             {
                 _targetMovement = target != null ? target.GetComponent<CharacterMovement>() : null;
                 _targetMovementFor = target;
             }
 
-            if (_targetMovement == null || _targetMovement.CurrentHorizontalSpeed <= 0.05f)
-            {
-                return false;
-            }
-
-            Vector2 moveInput = _targetMovement.CurrentMoveInput;
-            return Mathf.Abs(moveInput.y) >= Mathf.Abs(moveInput.x);
+            return _targetMovement;
         }
 
         // Pure so the auto-center easing itself is directly EditMode-testable, same reasoning

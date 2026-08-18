@@ -81,11 +81,79 @@ namespace Live2DAction.AI
         // of how close the player is, that's the entire point of the mechanic.
         [SerializeField] private Live2DAction.Combat.StancePoise stance;
 
+        // 2026-08-18, explicit user request (aerial combat grilling session - see CONTEXT.md's
+        // own "Aerial Combat" entry). An independent, simplified AI hover/chase - deliberately
+        // does NOT share the player's Flight/Glide/Flight Energy system (see that decision's own
+        // reasoning: an AI doesn't need a player-facing resource meter, it just needs to
+        // reliably reach the target altitude). Entering requires the target to be more than
+        // aerialCombatEnterHeight away vertically (either direction) while still within
+        // detectionRange; once engaged, only exits on closing to within its OWN effective attack
+        // range vertically (see effectiveAttackRange below - NOT aerialCombatEnterHeight again,
+        // that was a real playtested bug: reusing the same 3m value for both enter and exit gave
+        // zero hysteresis, so the instant the climb reduced the gap to exactly 3m it would drop
+        // out of aerial control, free-fall under gravity, the gap would grow past 3m again as it
+        // fell, and it would re-enter next frame - a rapid enter/exit bounce that reads as
+        // "奇怪的飛行姿勢和軌跡" and, worse, meant it always dropped out of the vertical-tolerant
+        // spherical judgment BEFORE ever closing to melee range, so "盡量飛得很靠近玩家才攻擊得到
+        // 玩家" never actually happened - it would bail 3m short of hitting range every time)
+        // or exceeding aerialCombatChaseCeiling (a safety valve against chasing the player out of
+        // the level).
+        [SerializeField] private float aerialCombatEnterHeight = 3f;
+
+        // 2026-08-18, explicit user request ("讓敵人能夠飛得比角色高1.5倍 飛行速度比玩家快1.2
+        // 倍") - both tuned directly off the player's own CharacterMovement flight stats rather
+        // than picked arbitrarily, so "1.5x/1.2x the player" stays literally true:
+        //   - aerialCombatChaseCeiling: 1.5x the player's own max CONTINUOUS climb distance in
+        //     one full Flight burst (flightAscendSpeed * maxEnergy / flightEnergyDrainPerSecond
+        //     = 6 * 100/20 = 30m at this project's current player tuning) - 45m, so Player4 can
+        //     always out-climb the highest the player alone could reach in a single ascent,
+        //     never gives up the chase for merely matching the player's own ceiling.
+        //   - aerialVerticalSpeed: 1.2x the player's flightAscendSpeed (6 * 1.2 = 7.2) - lets it
+        //     actually gain on a climbing player instead of only matching their rate.
+        // Deliberately hardcoded (not read live from CharacterMovement each frame) - same
+        // "picked a number, wrote down why" precedent as every other stat tuned by direct request
+        // this session (health/damage percentages etc.), not a live-coupling relationship that
+        // needs to silently stay in sync if the player's own flight stats are retuned later.
+        [SerializeField] private float aerialCombatChaseCeiling = 45f;
+        [SerializeField] private float aerialVerticalSpeed = 7.2f;
+
+        // Aerial-only horizontal chase/attack speed (2026-08-18, same request as above) - kept
+        // SEPARATE from the ground `moveSpeed` above deliberately, so boosting Player4's flight
+        // speed doesn't also make it faster on the ground (the user asked for flight speed
+        // specifically). 1.2x the player's own ground moveSpeed (2 * 1.2 = 2.4) - the player's
+        // Flight doesn't have its own distinct horizontal speed, it reuses moveSpeed while
+        // airborne, so that's the correct "player's flight speed" baseline to scale from.
+        [SerializeField] private float aerialHorizontalSpeed = 2.4f;
+
+        // Shared with CharacterMovement's own identical field/AimUtility - see that field's
+        // comment for why a hard clamp instead of tipping all the way to straight up/down.
+        [SerializeField] private float maxPitchDegrees = 60f;
+
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private float _verticalVelocity;
+        private bool _isAerialCombat;
+
+        // 2026-08-18, REVERTED same day from applying pitch to THIS transform's rotation - real
+        // playtested bug: this is also the CharacterController's own transform, and the capsule's
+        // "up" axis follows the transform's local Y axis, so pitching it didn't just aim the body,
+        // it physically tipped the collision capsule over - the body visibly flickered between
+        // standing and lying flat ("一下站立一下躺著反覆"), and the tilted capsule's collision
+        // response fought the vertical climb enough that Player4 could never gain net altitude on
+        // the player ("位置始終會低於玩家"). Fixed the same way as CharacterMovement's identical
+        // problem: pitch now goes on the "Visual" child (Animator only, no CharacterController)
+        // instead, so the body still visually looks up/down at an aerial target without the
+        // capsule ever leaving upright.
+        private Transform _visual;
+        private float _visualPitch;
 
         public EnemyState CurrentState { get; private set; } = EnemyState.Idle;
+
+        // Exposed for anything that wants to react to Player4 specifically being in Aerial
+        // Combat (currently nothing external needs to - PlayerCombat.UseSphericalJudgment is
+        // set directly from here each frame instead - but this mirrors CharacterMovement's own
+        // IsFlying/IsGliding public exposure for consistency and future use).
+        public bool IsAerialCombat => _isAerialCombat;
 
         // 2026-08-18, explicit user request ("上升氣流，任何人碰到...會快速飛向空中") - see
         // CharacterMovement.ApplyUpwardLaunch's own comment for why Max (not a flat assignment)
@@ -110,6 +178,7 @@ namespace Live2DAction.AI
         private void Awake()
         {
             _controller = GetComponent<CharacterController>();
+            _visual = transform.Find("Visual");
         }
 
         private void Update()
@@ -134,26 +203,102 @@ namespace Live2DAction.AI
             // matches the horizontal-only semantics toTarget/direction below already use for
             // movement, just computed first now so distance can reuse it instead of measuring
             // the (wrong) 3D distance separately.
-            Vector3 toTarget = target.position - transform.position;
+            Vector3 fullToTarget = target.position - transform.position;
+            Vector3 toTarget = fullToTarget;
             toTarget.y = 0f;
             float distance = toTarget.magnitude;
+            float heightDiff = fullToTarget.y;
 
             bool staggered = stance != null && stance.IsStaggered;
+
+            // effectiveAttackRange is needed by the aerial exit check below now (not just
+            // CurrentState further down), so resolve it first.
+            float effectiveAttackRange = ResolveEffectiveAttackRange();
+
+            // Aerial Combat enter/exit - see aerialCombatEnterHeight's own comment. Frozen
+            // (neither entered nor exited) while staggered, same "don't touch anything while
+            // frozen open" reasoning the rest of this method already applies. Exit uses
+            // effectiveAttackRange, NOT aerialCombatEnterHeight - deliberate hysteresis so it
+            // keeps closing the vertical gap all the way down to actual melee range instead of
+            // bailing out (and losing the spherical judgment tolerance) 3m short of hitting range.
+            //
+            // 2026-08-18, real playtested bug ("敵人飛行時如果攻擊玩家會停留在原地 導致跟不上玩家
+            // 最後一直卡在飛行-攻擊落空-飛行的狀態") - the "close enough, exit aerial" check used
+            // to fire the instant heightDiff crossed effectiveAttackRange, INCLUDING mid-swing.
+            // The moment it exited, vertical tracking switched off (gravity took over) and
+            // horizontal chase froze too (see the Attacking branch below) - exactly the ground-
+            // melee "plant your feet and swing" assumption, which falls apart against a target
+            // that can freely reposition in 3D faster than any melee range tolerates. The result:
+            // it swings at wherever the player WAS, the player's long since moved, the whiffed
+            // attack ends, distance has grown back past the aerial threshold, it re-chases,
+            // catches up, swings again, whiffs again - the reported loop. Fix: while a swing is
+            // actually in progress (combat.CurrentPhase != Idle), don't exit aerial tracking even
+            // if the height gap has already closed - keep adjusting altitude (and, per the
+            // Attacking branch below, horizontal position too) for the swing's entire duration,
+            // only actually "landing" once it's both close AND between swings.
+            bool midSwing = combat != null && combat.CurrentPhase != AttackPhase.Idle;
+            if (!staggered)
+            {
+                if (!_isAerialCombat)
+                {
+                    if (Mathf.Abs(heightDiff) > aerialCombatEnterHeight && distance <= detectionRange)
+                    {
+                        _isAerialCombat = true;
+                    }
+                }
+                else if (Mathf.Abs(heightDiff) > aerialCombatChaseCeiling
+                    || (!midSwing && Mathf.Abs(heightDiff) <= effectiveAttackRange))
+                {
+                    _isAerialCombat = false;
+                }
+            }
+
+            if (combat != null)
+            {
+                combat.UseSphericalJudgment = _isAerialCombat;
+            }
+
             CurrentState = staggered
                 ? EnemyState.Staggered
-                : EnemyBehaviorUtility.DetermineState(distance, detectionRange, ResolveEffectiveAttackRange());
+                : EnemyBehaviorUtility.DetermineState(distance, detectionRange, effectiveAttackRange);
 
             Vector3 direction = toTarget.sqrMagnitude > 0.0001f ? toTarget.normalized : Vector3.zero;
 
-            _horizontalVelocity = CurrentState == EnemyState.Chasing ? direction * moveSpeed : Vector3.zero;
+            // Same bug/fix as the aerial exit condition above - ground melee freezes horizontal
+            // movement while Attacking (the target isn't going anywhere mid-swing), but Aerial
+            // Combat's target very much can, so it keeps chasing horizontally through its own
+            // swing too instead of planting in place and letting the player fly out of range.
+            bool shouldChaseHorizontally = CurrentState == EnemyState.Chasing
+                || (_isAerialCombat && CurrentState == EnemyState.Attacking);
+            // aerialHorizontalSpeed (not the ground moveSpeed) while genuinely in Aerial Combat -
+            // see that field's own comment for the 1.2x-the-player's-flight-speed reasoning.
+            float horizontalSpeed = _isAerialCombat ? aerialHorizontalSpeed : moveSpeed;
+            _horizontalVelocity = shouldChaseHorizontally ? direction * horizontalSpeed : Vector3.zero;
             MoveInput = new Vector2(direction.x, direction.z);
-            AttackPressed = CurrentState == EnemyState.Attacking;
 
-            if (_controller.isGrounded && _verticalVelocity < 0f)
+            // Attacking horizontally-in-range isn't enough while Aerial Combat is active - the
+            // vertical gap has to have actually closed too, or the swing has no real chance of
+            // landing even with UseSphericalJudgment's extra tolerance (see this class's own
+            // Aerial Combat comment - that tolerance is meant to forgive imperfect aim, not a
+            // 10m miss).
+            bool verticallyInRange = !_isAerialCombat || Mathf.Abs(heightDiff) <= effectiveAttackRange;
+            AttackPressed = CurrentState == EnemyState.Attacking && verticallyInRange;
+
+            if (!staggered && _isAerialCombat)
             {
-                _verticalVelocity = -1f;
+                // Simple proportional approach toward the target's altitude, capped at
+                // aerialVerticalSpeed - closes fast when far, slows naturally as it nears rather
+                // than overshooting and oscillating around the target height.
+                _verticalVelocity = Mathf.Clamp(heightDiff, -aerialVerticalSpeed, aerialVerticalSpeed);
             }
-            _verticalVelocity += gravity * Time.deltaTime;
+            else
+            {
+                if (_controller.isGrounded && _verticalVelocity < 0f)
+                {
+                    _verticalVelocity = -1f;
+                }
+                _verticalVelocity += gravity * Time.deltaTime;
+            }
 
             // See CharacterMovement's own identical block/GroundSlopeUtility comment - isGrounded
             // alone doesn't mean "standing somewhere walkable", so an active push is needed to
@@ -184,10 +329,26 @@ namespace Live2DAction.AI
             // actually moving - an idle-but-stationary attacker that never turns to track a
             // circling player would keep swinging at empty air. alwaysFaceTarget (see that
             // field's own comment) additionally runs this while Idle/out of detection range too.
+            // Body (this transform, yaw only - see _visual's own comment for why) always turns
+            // toward the horizontal `direction`, matching ground combat exactly.
             if ((CurrentState != EnemyState.Idle || alwaysFaceTarget) && direction.sqrMagnitude > 0.0001f)
             {
                 Quaternion targetRotation = Quaternion.LookRotation(direction, Vector3.up);
                 transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, rotationSpeedDegrees * Time.deltaTime);
+            }
+
+            // Visual-only pitch on top of that horizontal body turn, while Aerial Combat is
+            // active - purely cosmetic (spherical judgment doesn't need it, see
+            // UseSphericalJudgment's own comment), applied to _visual's LOCAL rotation so it
+            // never touches the CharacterController's own upright transform. Tracked as a plain
+            // float + MoveTowardsAngle (same constant-degrees/sec idiom this file already uses
+            // for yaw above) rather than reading back _visual.localEulerAngles.x each frame -
+            // Euler angles wrap at 0/360, which would fight a naive angle read-back near that seam.
+            float targetPitch = _isAerialCombat ? AimUtility.ClampedPitchDegrees(fullToTarget, maxPitchDegrees) : 0f;
+            _visualPitch = Mathf.MoveTowardsAngle(_visualPitch, targetPitch, rotationSpeedDegrees * Time.deltaTime);
+            if (_visual != null)
+            {
+                _visual.localRotation = Quaternion.Euler(-_visualPitch, 0f, 0f);
             }
         }
 

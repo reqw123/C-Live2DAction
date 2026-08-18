@@ -2,6 +2,7 @@ using UnityEngine;
 using Live2DAction.AI;
 using Live2DAction.Core;
 using Live2DAction.Input;
+using Live2DAction.Targeting;
 
 namespace Live2DAction.Combat
 {
@@ -10,6 +11,34 @@ namespace Live2DAction.Combat
         [SerializeField] private MonoBehaviour inputSource;
         [SerializeField] private AttackData[] comboAttacks = new AttackData[3];
         [SerializeField] private Transform attackOrigin;
+
+        // 2026-08-18, explicit user request (aerial combat grilling session, Q3/Q6). Optional
+        // (null-safe below) - on Player4 this is left unset and EnemyAI drives
+        // UseSphericalJudgment directly instead (see that class's own Aerial Combat comment),
+        // since Player4 has no lock-on concept of its own. On the player, wiring this to the
+        // same TargetLockController CharacterMovement already uses lets PlayerCombat
+        // independently notice "my locked target is far above/below me" without either
+        // component needing a reference to the other - matches this codebase's established
+        // preference for small, decoupled components over cross-wiring.
+        [SerializeField] private MonoBehaviour lockOnSource;
+
+        // Same 3m the aerial-combat-partner side (EnemyAI.aerialCombatEnterHeight) uses - kept
+        // as its own field rather than a shared constant since the two are conceptually
+        // independent checks that just happen to agree on the same number right now (see
+        // CONTEXT.md's own "Aerial Combat trigger" decision).
+        [SerializeField] private float aerialHeightThreshold = 3f;
+
+        // 2026-08-18, explicit user request (aerial combat grilling session, Q3/Q6) - "地面近戰
+        // 判定完全不動" (ground melee judgment untouched): the standard forward capsule reaches
+        // a fixed distance directly ahead and nowhere else, which is exactly wrong when the
+        // attacker's own pitch is aiming up/down at a vertically-offset target (a slightly-off
+        // pitch angle would otherwise still whiff completely). True while EITHER this
+        // character's own lock-on detects a vertically-far target (see lockOnSource above) OR -
+        // for Player4 - EnemyAI.IsAerialCombat says so directly. Settable so EnemyAI can drive it
+        // for a character with no lock-on concept of its own.
+        public bool UseSphericalJudgment { get; set; }
+
+        private ILockOnSource LockOnSource => lockOnSource as ILockOnSource;
 
         // 2026-08-17, explicit user request ("敵我雙方都套用架式條") - optional (null-safe
         // below), mirrors CharacterMovement's own "stance" field for the same reason: a
@@ -75,6 +104,14 @@ namespace Live2DAction.Combat
                 _state = new ComboAttackState(comboAttacks);
             }
 
+            // Auto-detect from lock-on, if wired (see lockOnSource's own comment - unset on
+            // Player4, which drives UseSphericalJudgment directly from EnemyAI instead).
+            if (LockOnSource != null)
+            {
+                Transform locked = LockOnSource.LockedTarget;
+                UseSphericalJudgment = locked != null && Mathf.Abs(locked.position.y - transform.position.y) > aerialHeightThreshold;
+            }
+
             IInputCommand inputCommand = InputCommand;
             bool attackPressed = inputCommand != null && inputCommand.AttackPressed;
             if (stance != null && stance.IsStaggered)
@@ -100,13 +137,24 @@ namespace Live2DAction.Combat
             // CharacterCollisionBlockingTests.WalkingIntoPlayer4_DoesNotClimbOnTop's 2026-08-12
             // bug report investigation) - a capsule spanning from the attacker out to Range
             // covers the whole reach instead of only a thin shell right at the tip.
+            //
+            // 2026-08-18: UseSphericalJudgment (Aerial Combat only - see that property's own
+            // comment) swaps this for a sphere centered on attackOrigin instead, so a slightly-
+            // off pitch angle at a vertically-offset target still lands. Ground combat's
+            // judgment shape is completely untouched either way.
             Vector3 near = attackOrigin.position;
             Vector3 far = near + attackOrigin.forward * attackData.Range;
-            Collider[] candidates = Physics.OverlapCapsule(near, far, attackData.Radius);
+            Collider[] candidates = UseSphericalJudgment
+                ? Physics.OverlapSphere(near, attackData.Range + attackData.Radius)
+                : Physics.OverlapCapsule(near, far, attackData.Radius);
+            // hitOrigin: the point ResolveHits/effect-spawning treats as "where the attack
+            // landed" - the capsule's own tip normally, but a sphere has no meaningful "tip", so
+            // its own center (attackOrigin) is used instead.
+            Vector3 hitOrigin = UseSphericalJudgment ? near : far;
             // Applies to every combo step while the ultimate is active - see
             // UltimateDamageMultiplier's own comment for why this is no longer gated to
             // PrimaryAttack specifically.
-            var hitPoints = AttackResolver.ResolveHits(far, attackData, transform.root, candidates, UltimateDamageMultiplier);
+            var hitPoints = AttackResolver.ResolveHits(hitOrigin, attackData, transform.root, candidates, UltimateDamageMultiplier);
 
             // Per-attack override (e.g. LightAttack3's dedicated slash VFX) takes priority
             // over the shared spark prefab - see AttackData.HitEffectOverride's own comment.
@@ -135,8 +183,9 @@ namespace Live2DAction.Combat
                     // own comment), so it still spawns at the same "far" point the hit query
                     // itself just missed against - the tip of the attack's reach, not the
                     // attacker's own feet, so a whiffed Attack3 still visibly reaches out to
-                    // where the blade/qi actually swung.
-                    Instantiate(effectPrefab, far, attackOrigin.rotation);
+                    // where the blade/qi actually swung. hitOrigin, not far, for the same
+                    // "sphere has no tip" reason noted above.
+                    Instantiate(effectPrefab, hitOrigin, attackOrigin.rotation);
                 }
             }
         }

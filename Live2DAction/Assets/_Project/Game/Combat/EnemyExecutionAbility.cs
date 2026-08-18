@@ -27,9 +27,10 @@ namespace Live2DAction.Combat
         // See ExecutionAbility's own field comment - same FlyingKick clip, same reasoning.
         [SerializeField] private float executionAnimationSeconds = 1.5f;
 
-        // 2026-08-18, explicit user request ("處決不要改成殺死對方 而是扣除對方總血量50%") - see
-        // ExecutionAbility's own matching field comment, same reasoning applied to the AI side.
-        [SerializeField] private float executionDamagePercentOfMaxHealth = 0.5f;
+        // 2026-08-18, explicit user request ("處決不要改成殺死對方 而是扣除對方總血量50%", later
+        // changed to "斬殺時改為扣除對方當前血量50%") - see ExecutionAbility's own matching field
+        // comment, same reasoning/change applied to the AI side.
+        [SerializeField] private float executionDamagePercentOfCurrentHealth = 0.5f;
 
         private EnemyAI _enemyAI;
         private PlayerCombat _combat;
@@ -121,7 +122,7 @@ namespace Live2DAction.Combat
         {
             if (target.TryGetComponent(out Health health) && !health.IsDead)
             {
-                float damage = health.MaxHealth * executionDamagePercentOfMaxHealth;
+                float damage = health.CurrentHealth * executionDamagePercentOfCurrentHealth;
                 health.ApplyDamage(new DamageInfo(damage, target.transform.position, Vector3.zero, gameObject));
             }
 

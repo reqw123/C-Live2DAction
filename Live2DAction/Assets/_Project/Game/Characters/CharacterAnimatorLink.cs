@@ -61,7 +61,12 @@ namespace Live2DAction.Characters
 
             float parameterValue = ComputeSpeedParameter(_movement.CurrentHorizontalSpeed, maxAnimatorSpeed);
             animator.SetFloat(_speedParameterHash, parameterValue);
-            animator.SetBool(FlyParameterHash, _movement.IsFlying);
+            // 2026-08-18: also true while Gliding (see CharacterMovement.IsGliding's own
+            // comment) - both are "airborne under wing control", not a normal fall, so the body
+            // pose shouldn't suddenly read as a plain fall just because Flight Energy ran out.
+            // WingFlap deliberately does NOT follow this same OR - it keys off IsFlying alone so
+            // gliding still reads as a gentle idle-rate flap, not the energetic flying one.
+            animator.SetBool(FlyParameterHash, _movement.IsFlying || _movement.IsGliding);
         }
 
         public static float ComputeSpeedParameter(float currentSpeed, float maxAnimatorSpeed)

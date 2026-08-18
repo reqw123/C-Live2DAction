@@ -27,13 +27,20 @@ namespace Live2DAction.Combat
         [SerializeField] private float executionAnimationSeconds = 1.5f;
 
         // 2026-08-18, explicit user request ("處決不要改成殺死對方 而是扣除對方總血量50%") -
-        // supersedes the original "instant kill" design. A fraction of MaxHealth (not
-        // CurrentHealth) so it's a consistent, predictable chunk of the fight regardless of how
-        // much HP the target already had left when staggered - still deducted through the normal
-        // Health.ApplyDamage pipeline, so if the target's remaining health happens to be below
-        // this amount it still dies (a natural combat outcome, not specially prevented), just no
+        // supersedes the original "instant kill" design. Deducted through the normal
+        // Health.ApplyDamage pipeline, so if the remaining health happens to be below this
+        // amount it still dies (a natural combat outcome, not specially prevented), just no
         // longer GUARANTEED lethal on its own.
-        [SerializeField] private float executionDamagePercentOfMaxHealth = 0.5f;
+        //
+        // 2026-08-18 follow-up, explicit user request ("斬殺時改為扣除對方當前血量50%") - changed
+        // from a fraction of MaxHealth to a fraction of CurrentHealth (whatever HP the target
+        // actually has left at the moment of the execution, not its full-health baseline). This
+        // makes an execution ALWAYS take off a proportional chunk of however much fight is
+        // actually left in the target, rather than a fixed MaxHealth-based amount that becomes a
+        // smaller and smaller fraction of remaining HP as the fight wears on (e.g. a target
+        // already at 20% HP would previously still take a 50%-of-max hit, guaranteed to kill it -
+        // now it takes 50% of that remaining 20%, leaving it alive at 10%).
+        [SerializeField] private float executionDamagePercentOfCurrentHealth = 0.5f;
 
         private static readonly int ExecuteTrigger = Animator.StringToHash("Execute");
 
@@ -134,15 +141,16 @@ namespace Live2DAction.Combat
             return null;
         }
 
-        // Deals executionDamagePercentOfMaxHealth of the target's MaxHealth - see that field's
-        // own comment for why this is no longer a guaranteed kill. Called only once the Flying
-        // Kick animation has actually finished playing (see TickPendingExecution) - the target
-        // stays staggered/kneeling for the whole windup, only actually taking the hit on impact.
+        // Deals executionDamagePercentOfCurrentHealth of the target's CurrentHealth (not
+        // MaxHealth - see that field's own comment) - no longer a guaranteed kill. Called only
+        // once the Flying Kick animation has actually finished playing (see
+        // TickPendingExecution) - the target stays staggered/kneeling for the whole windup, only
+        // actually taking the hit on impact.
         private void ResolveExecution(StancePoise target)
         {
             if (target.TryGetComponent(out Health health) && !health.IsDead)
             {
-                float damage = health.MaxHealth * executionDamagePercentOfMaxHealth;
+                float damage = health.CurrentHealth * executionDamagePercentOfCurrentHealth;
                 health.ApplyDamage(new DamageInfo(damage, target.transform.position, Vector3.zero, gameObject));
             }
 
