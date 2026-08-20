@@ -22,6 +22,11 @@ public class LockOnFacingAndCameraTests
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
+        public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
+        public bool FlyPressed { get; set; }
+        public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private class StubLockOnSource : MonoBehaviour, ILockOnSource
@@ -55,13 +60,15 @@ public class LockOnFacingAndCameraTests
         camera.transform.rotation = Quaternion.identity;
 
         var player = new GameObject("Player");
-        player.AddComponent<CharacterController>();
+        // minMoveDistance=0: see CharacterMovementTests.SetUp - default 0.001 silently drops
+        // sub-threshold Move() calls at the frame rates headless batchmode can hit.
+        player.AddComponent<CharacterController>().minMoveDistance = 0f;
         var input = player.AddComponent<StubInputBehaviour>();
         var lockOnSource = player.AddComponent<StubLockOnSource>();
         CharacterMovement movement = player.AddComponent<CharacterMovement>();
         SetField(movement, "inputSource", input);
         SetField(movement, "gravity", 0f);
-        SetField(movement, "rotationSpeedDegrees", 100000f); // snap for the test
+        SetField(movement, "rotationSmoothTime", 0.01f); // converges within the short wait below
         SetField(movement, "lockOnSource", lockOnSource);
 
         var target = new GameObject("Target");
@@ -71,7 +78,17 @@ public class LockOnFacingAndCameraTests
         // Face away from the target first so this can't trivially pass by coincidence.
         player.transform.rotation = Quaternion.LookRotation(Vector3.back, Vector3.up);
 
-        yield return null; // no move input at all this frame
+        // No move input at all - facing is driven purely by the lock-on target. A single
+        // yield-return-null isn't reliable here: headless batchmode can tick Update() with a
+        // near-zero deltaTime (see CharacterMovementTests.MoveForSeconds), and the eased
+        // SmoothDampAngle rotation - unlike the old constant-degrees/sec RotateTowards -
+        // needs a non-negligible amount of simulated time to converge, not just one tick.
+        // Bound by real elapsed time instead, same pattern as MoveForSeconds/RunForSeconds.
+        float waitStart = Time.realtimeSinceStartup;
+        while (Time.realtimeSinceStartup - waitStart < 0.2f)
+        {
+            yield return null;
+        }
 
         float angleToTarget = Quaternion.Angle(player.transform.rotation, Quaternion.LookRotation(Vector3.right, Vector3.up));
         Assert.Less(angleToTarget, 5f, "With a locked target and zero move input, the player should still turn to face it");
@@ -82,8 +99,16 @@ public class LockOnFacingAndCameraTests
     }
 
     [UnityTest]
-    public IEnumerator ThirdPersonCameraController_WithLockedTarget_YawPitchMatchTargetDirection()
+    public IEnumerator ThirdPersonCameraController_WithLockedTarget_YawPitchStayFixed()
     {
+        // Locking onto an enemy must NOT rotate the camera - only CharacterMovement's own
+        // facing (covered by the test above) tracks the target. This guards against the
+        // camera-side lock-on override this controller used to have. (Mouse-look, added later,
+        // is a separate concern - this test asserts on the very first LateUpdate tick, before
+        // any mouse delta could accumulate, so it isolates "does locking affect yaw/pitch" from
+        // "does the mouse". 2026-08-12: a same-day detour made yaw track the target's own
+        // rotation directly instead of independent mouse input - reverted back to independent
+        // mouse yaw the same day, restoring this test's original assumption.)
         var target = new GameObject("Player");
         target.transform.position = Vector3.zero;
 
@@ -97,20 +122,15 @@ public class LockOnFacingAndCameraTests
         var cameraGo = new GameObject("Camera");
         ThirdPersonCameraController controller = cameraGo.AddComponent<ThirdPersonCameraController>();
         SetField(controller, "target", target.transform);
-        SetField(controller, "lockOnSource", lockOnSource);
-        SetField(controller, "minPitch", -60f);
-        SetField(controller, "maxPitch", 60f);
+        SetField(controller, "initialYaw", 15f);
+        SetField(controller, "initialPitch", 45f);
 
         yield return null; // let LateUpdate run with the lock already in place
 
-        TargetLockUtility.ComputeLockOnYawPitch(target.transform.position, lockedTargetGo.transform.position, -60f, 60f, out float expectedYaw, out _);
+        Assert.AreEqual(15f, controller.YawDegrees, 0.01f, "Locking a target must not change the camera's yaw");
 
-        Assert.AreEqual(expectedYaw, controller.YawDegrees, 0.01f);
-
-        // Camera should actually be looking toward the locked target's position.
-        Vector3 cameraForward = controller.transform.rotation * Vector3.forward;
-        Vector3 expectedDirection = (lockedTargetGo.transform.position - target.transform.position).normalized;
-        Assert.Greater(Vector3.Dot(cameraForward, expectedDirection), 0.99f, "Camera should be looking toward the locked target");
+        Quaternion expectedRotation = Quaternion.Euler(45f, 15f, 0f);
+        Assert.Less(Quaternion.Angle(expectedRotation, controller.transform.rotation), 0.1f, "Locking a target must not rotate the camera away from its starting angle");
 
         Object.Destroy(target);
         Object.Destroy(lockOnSourceGo);

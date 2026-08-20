@@ -23,6 +23,11 @@ public class EnemyAttacksPlayerTests
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
+        public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
+        public bool FlyPressed { get; set; }
+        public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private static void SetField(object target, string fieldName, object value)
@@ -57,7 +62,9 @@ public class EnemyAttacksPlayerTests
     {
         var player = new GameObject("Player");
         player.transform.position = new Vector3(0f, 0f, 1f);
-        player.AddComponent<CharacterController>();
+        // minMoveDistance=0: see CharacterMovementTests.SetUp - default 0.001 silently drops
+        // sub-threshold Move() calls at the frame rates headless batchmode can hit.
+        player.AddComponent<CharacterController>().minMoveDistance = 0f;
         health = player.AddComponent<Health>();
         movement = player.AddComponent<CharacterMovement>();
         SetField(movement, "gravity", 0f);
@@ -69,7 +76,7 @@ public class EnemyAttacksPlayerTests
     {
         var enemy = new GameObject("Enemy");
         enemy.transform.position = Vector3.zero;
-        enemy.AddComponent<CharacterController>();
+        enemy.AddComponent<CharacterController>().minMoveDistance = 0f;
 
         EnemyAI ai = enemy.AddComponent<EnemyAI>();
         SetField(ai, "target", target);

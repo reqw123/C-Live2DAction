@@ -2,7 +2,6 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using Live2DAction.CameraSystem;
 using Live2DAction.Characters;
 using Live2DAction.Input;
 using Live2DAction.Targeting;
@@ -10,9 +9,9 @@ using Live2DAction.Targeting;
 namespace Live2DAction.EditorTools
 {
     // Adds the enemy lock-on system to the existing GreyboxTest scene: TargetLockController
-    // on Player, LockOnTarget on TrainingDummy, and cross-wires CharacterMovement /
-    // ThirdPersonCameraController to read the lock via ILockOnSource. One-time because none
-    // of these fields/components existed when the scene was last saved.
+    // on Player, LockOnTarget on TrainingDummy, and cross-wires CharacterMovement to read the
+    // lock via ILockOnSource. One-time because none of these fields/components existed when
+    // the scene was last saved.
     internal static class FixTargetLockSetup
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";
@@ -56,14 +55,13 @@ namespace Live2DAction.EditorTools
             movementSo.FindProperty("lockOnSource").objectReferenceValue = lockController;
             movementSo.ApplyModifiedPropertiesWithoutUndo();
 
-            ThirdPersonCameraController cameraController = mainCameraGo.GetComponent<ThirdPersonCameraController>();
-            var cameraSo = new SerializedObject(cameraController);
-            cameraSo.FindProperty("lockOnSource").objectReferenceValue = lockController;
-            cameraSo.ApplyModifiedPropertiesWithoutUndo();
+            // ThirdPersonCameraController itself no longer takes a lockOnSource (fixed
+            // world-axis camera - see class comment); only CharacterMovement's facing tracks
+            // the lock, wired above.
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log("Wired target lock-on: TargetLockController on Player, LockOnTarget on TrainingDummy, cross-wired to CharacterMovement/ThirdPersonCameraController.");
+            Debug.Log("Wired target lock-on: TargetLockController on Player, LockOnTarget on TrainingDummy, cross-wired to CharacterMovement.");
         }
     }
 }

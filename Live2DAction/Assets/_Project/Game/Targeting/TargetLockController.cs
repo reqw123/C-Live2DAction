@@ -57,5 +57,19 @@ namespace Live2DAction.Targeting
 
             return TargetLockUtility.FindBestTarget(transform.position, viewDirection, maxLockRange, maxLockAngleDegrees, aimPoints);
         }
+
+        // 2026-08-13, explicit user request ("能不能把 攻擊距離 警備距離 用不同顏色線條呈現嗎
+        // 角色1和4都要") - Player has no EnemyAI/detectionRange (it's player-controlled, not
+        // AI), so maxLockRange (how far it can spot/lock a target) is the closest analog to
+        // Player4's "警備距離"/detectionRange - both answer "how far can this character notice
+        // something". Cyan, deliberately distinct from PlayerCombat's own attack-range Gizmo
+        // (red/orange/yellow per combo step), so the two concepts read as separate at a glance.
+        // Only ever called by the Editor (see PlayerCombat.OnDrawGizmosSelected's own comment
+        // for why no #if UNITY_EDITOR guard is needed).
+        private void OnDrawGizmosSelected()
+        {
+            Gizmos.color = new Color(0.2f, 0.9f, 1f, 0.5f);
+            Gizmos.DrawWireSphere(transform.position, maxLockRange);
+        }
     }
 }

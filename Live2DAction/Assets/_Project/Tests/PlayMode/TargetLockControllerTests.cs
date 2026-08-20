@@ -2,6 +2,7 @@ using System.Collections;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Live2DAction.Input;
 using Live2DAction.Targeting;
@@ -17,6 +18,11 @@ public class TargetLockControllerTests
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
+        public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
+        public bool FlyPressed { get; set; }
+        public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private static void SetField(object target, string fieldName, object value)
@@ -34,6 +40,19 @@ public class TargetLockControllerTests
     [SetUp]
     public void SetUp()
     {
+        // TargetLockController.FindTarget() scans the whole loaded scene
+        // (FindObjectsByType<LockOnTarget>), so a previous test that left the real GreyboxTest
+        // scene loaded (e.g. anything using SceneManager.LoadScene("GreyboxTest") -
+        // WanderMovementTests, CharacterCollisionBlockingTests, MovementFrameTimingTests,
+        // CameraRelativeMovementRegressionTests) would leave extra LockOnTarget candidates
+        // (Mecha, TrainingDummy) lying around and break this fixture's "exactly one
+        // candidate" assumptions. Same rationale as CharacterMovementTests.SetUp - wipe every
+        // root object first so this fixture always starts from a truly blank scene.
+        foreach (GameObject root in SceneManager.GetActiveScene().GetRootGameObjects())
+        {
+            Object.DestroyImmediate(root);
+        }
+
         _playerGo = new GameObject("Player");
         _input = _playerGo.AddComponent<StubInputBehaviour>();
         _controller = _playerGo.AddComponent<TargetLockController>();
@@ -106,5 +125,29 @@ public class TargetLockControllerTests
         yield return null;
 
         Assert.IsFalse(_controller.IsLocked);
+    }
+
+    // 2026-08-13, explicit user request ("目前鎖定目標需要角色去面對敵人，能不能改為鼠標鏡頭面相
+    // 來判斷?") - acquisition should go by wherever viewOrigin (wired to Main Camera in the real
+    // scene, see LockOnViewSourceSetup.cs) is facing, not the character's own facing. Proves
+    // this with the two deliberately pointed in opposite directions: the character faces AWAY
+    // from the candidate (so this can't pass by the old default-to-transform.forward behavior
+    // by coincidence) while viewOrigin faces toward it, and the target still gets acquired.
+    [UnityTest]
+    public IEnumerator LockOnPressed_ViewOriginFacesCandidateButCharacterFacesAway_StillLocksOn()
+    {
+        _playerGo.transform.rotation = Quaternion.LookRotation(Vector3.back, Vector3.up); // character faces -Z, candidate is at +Z
+
+        var cameraGo = new GameObject("StubCamera");
+        cameraGo.transform.rotation = Quaternion.identity; // faces +Z, toward the candidate
+        SetField(_controller, "viewOrigin", cameraGo.transform);
+
+        _input.LockOnPressed = true;
+        yield return null;
+
+        Assert.IsTrue(_controller.IsLocked, "Should acquire the candidate the camera (viewOrigin) faces, even though the character itself faces away");
+        Assert.AreSame(_targetGo.transform, _controller.LockedTarget);
+
+        Object.DestroyImmediate(cameraGo);
     }
 }

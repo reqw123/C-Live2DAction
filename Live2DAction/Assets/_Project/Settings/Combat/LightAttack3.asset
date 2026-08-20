@@ -13,10 +13,12 @@ MonoBehaviour:
   m_Name: LightAttack3
   m_EditorClassIdentifier: 
   attackId: LightAttack3
-  damage: 16
-  range: 1.5
-  radius: 0.75
-  startupFrames: 10
+  damage: 25
+  range: 0.5
+  radius: 0.5
+  startupFrames: 18
   activeFrames: 5
-  recoveryFrames: 22
-  comboWindowFrames: 0
+  recoveryFrames: 11
+  comboWindowFrames: 8
+  hitEffectOverride: {fileID: 753442366657099694, guid: 585bdf7682e2d9e4ca92e7100ddbf7a1, type: 3}
+  alwaysSpawnHitEffect: 1

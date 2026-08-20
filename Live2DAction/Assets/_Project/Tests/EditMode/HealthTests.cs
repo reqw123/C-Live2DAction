@@ -88,4 +88,68 @@ public class HealthTests
 
         Assert.AreEqual(health.MaxHealth - 30f, health.CurrentHealth);
     }
+
+    [Test]
+    public void Heal_AfterDamage_IncreasesCurrentHealth()
+    {
+        var go = new GameObject("Dummy");
+        var health = go.AddComponent<Health>();
+        health.ApplyDamage(new DamageInfo(30f, Vector3.zero, Vector3.forward, null));
+
+        health.Heal(10f);
+
+        Assert.AreEqual(health.MaxHealth - 20f, health.CurrentHealth);
+    }
+
+    [Test]
+    public void Heal_CannotExceedMaxHealth()
+    {
+        var go = new GameObject("Dummy");
+        var health = go.AddComponent<Health>();
+        health.ApplyDamage(new DamageInfo(10f, Vector3.zero, Vector3.forward, null));
+
+        health.Heal(999f);
+
+        Assert.AreEqual(health.MaxHealth, health.CurrentHealth);
+    }
+
+    [Test]
+    public void Heal_WhileDead_IsIgnored()
+    {
+        var go = new GameObject("Dummy");
+        var health = go.AddComponent<Health>();
+        health.ApplyDamage(new DamageInfo(health.MaxHealth, Vector3.zero, Vector3.forward, null));
+
+        health.Heal(50f);
+
+        Assert.AreEqual(0f, health.CurrentHealth, "A dead character shouldn't be quietly revived by a still-ticking regen timer");
+        Assert.IsTrue(health.IsDead);
+    }
+
+    [Test]
+    public void ResetHealth_AfterLethalDamage_RestoresFullHealthAndClearsIsDead()
+    {
+        var go = new GameObject("Dummy");
+        var health = go.AddComponent<Health>();
+        health.ApplyDamage(new DamageInfo(health.MaxHealth, Vector3.zero, Vector3.forward, null));
+        Assert.IsTrue(health.IsDead, "Test setup expectation: should be dead before resetting");
+
+        health.ResetHealth();
+
+        Assert.AreEqual(health.MaxHealth, health.CurrentHealth);
+        Assert.IsFalse(health.IsDead);
+    }
+
+    [Test]
+    public void ResetHealth_AllowsDamageToApplyAgainAfterwards()
+    {
+        var go = new GameObject("Dummy");
+        var health = go.AddComponent<Health>();
+        health.ApplyDamage(new DamageInfo(health.MaxHealth, Vector3.zero, Vector3.forward, null));
+        health.ResetHealth();
+
+        health.ApplyDamage(new DamageInfo(30f, Vector3.zero, Vector3.forward, null));
+
+        Assert.AreEqual(health.MaxHealth - 30f, health.CurrentHealth, "ApplyDamage should work normally again after ResetHealth (IsDead guard cleared)");
+    }
 }

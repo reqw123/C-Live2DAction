@@ -30,3 +30,7 @@ crashlytics-build.properties
 
 # Batchmode scratch output from local test/build runs
 *.log
+
+# MCP for Unity screenshot captures
+Live2DAction/Assets/Screenshots/
+Live2DAction/Assets/Screenshots.meta

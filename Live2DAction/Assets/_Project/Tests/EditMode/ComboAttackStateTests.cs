@@ -173,4 +173,53 @@ public class ComboAttackStateTests
 
         Assert.IsNull(state.CurrentAttack);
     }
+
+    [Test]
+    public void PhaseProgress_IsZero_WhileIdle()
+    {
+        var combo = new[] { CreateAttackData(6, 4, 14, 10) };
+        var state = new ComboAttackState(combo);
+
+        Assert.AreEqual(0f, state.PhaseProgress);
+    }
+
+    [Test]
+    public void PhaseProgress_AdvancesWithinStartupPhase()
+    {
+        var combo = new[] { CreateAttackData(startupFrames: 4, activeFrames: 4, recoveryFrames: 4, comboWindowFrames: 2) };
+        var state = new ComboAttackState(combo);
+
+        state.Tick(FrameSeconds, true); // elapsed=0, Startup begins
+        Assert.AreEqual(0f, state.PhaseProgress, 0.01f);
+
+        state.Tick(FrameSeconds, false); // elapsed=1 of 4 startup frames
+        Assert.AreEqual(0.25f, state.PhaseProgress, 0.01f);
+    }
+
+    [Test]
+    public void PhaseProgress_IsRelativeToNewPhase_NotCumulativeAcrossWholeAttack()
+    {
+        var combo = new[] { CreateAttackData(startupFrames: 2, activeFrames: 4, recoveryFrames: 4, comboWindowFrames: 2) };
+        var state = new ComboAttackState(combo);
+
+        state.Tick(FrameSeconds, true); // elapsed=0, Startup
+        state.Tick(FrameSeconds, false); // elapsed=1 frame, still Startup
+        state.Tick(FrameSeconds, false); // elapsed=2 frames, Startup->Active transition
+
+        Assert.AreEqual(AttackPhase.Active, state.Phase);
+        Assert.AreEqual(0f, state.PhaseProgress, 0.01f, "Progress should reset relative to the new (Active) phase, not keep the cumulative attack elapsed time");
+    }
+
+    [Test]
+    public void PhaseProgress_IsOne_WhenPhaseHasZeroDuration()
+    {
+        var combo = new[] { CreateAttackData(startupFrames: 0, activeFrames: 0, recoveryFrames: 4, comboWindowFrames: 0) };
+        var state = new ComboAttackState(combo);
+
+        state.Tick(FrameSeconds, true); // Startup begins (0-frame duration)
+        state.Tick(FrameSeconds, false); // elapsed >= 0 -> transitions straight to Active
+
+        Assert.AreEqual(AttackPhase.Active, state.Phase);
+        Assert.AreEqual(1f, state.PhaseProgress, "A zero-duration phase should report fully progressed rather than dividing by zero");
+    }
 }

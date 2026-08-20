@@ -21,6 +21,11 @@ public class CharacterMovementTests
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
+        public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
+        public bool FlyPressed { get; set; }
+        public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private GameObject _player;
@@ -56,12 +61,19 @@ public class CharacterMovementTests
         _camera.transform.rotation = Quaternion.identity; // forward = world +Z, right = world +X
 
         _player = new GameObject("Player");
-        _player.AddComponent<CharacterController>();
+        CharacterController controller = _player.AddComponent<CharacterController>();
+        // CharacterController.minMoveDistance defaults to 0.001 and silently drops any Move()
+        // call smaller than that - headless batchmode can run Update() at several thousand
+        // fps (measured ~9000fps in this environment), which shrinks moveSpeed*deltaTime
+        // below that threshold on nearly every frame and makes movement barely register at
+        // all. Real gameplay on a fast/unthrottled machine could hit the same silent-drop
+        // bug, not just these tests - see the matching fix in GreyboxSceneBuilder.cs.
+        controller.minMoveDistance = 0f;
         _input = _player.AddComponent<StubInputBehaviour>();
         CharacterMovement movement = _player.AddComponent<CharacterMovement>();
         SetField(movement, "inputSource", _input);
         SetField(movement, "moveSpeed", 5f);
-        SetField(movement, "acceleration", 100f); // reach target velocity almost immediately
+        SetField(movement, "accelerationSmoothTime", 0.01f); // reach target velocity almost immediately
         SetField(movement, "gravity", 0f); // isolate horizontal movement from falling
     }
 
@@ -111,7 +123,7 @@ public class CharacterMovementTests
 
         Vector3 delta = _player.transform.position - start;
         Assert.Less(delta.z, -0.4f, "Back input should move the player in -Z");
-        Assert.Less(Mathf.Abs(delta.x), 0.1f, "Back input should not cause sideways drift");
+        Assert.Less(Mathf.Abs(delta.x), 0.1f, "Back input should not cause forward/back drift");
     }
 
     [UnityTest]
@@ -155,7 +167,7 @@ public class CharacterMovementTests
         // Start facing away from the movement direction so this can't trivially pass
         // just because the default rotation already happens to match world forward.
         _player.transform.rotation = Quaternion.LookRotation(Vector3.back, Vector3.up);
-        SetField(_player.GetComponent<CharacterMovement>(), "rotationSpeedDegrees", 100000f); // snap for the test
+        SetField(_player.GetComponent<CharacterMovement>(), "rotationSmoothTime", 0.01f); // converges well within the 1s window below
 
         yield return MoveForSeconds(new Vector2(0f, 1f), 1f);
 

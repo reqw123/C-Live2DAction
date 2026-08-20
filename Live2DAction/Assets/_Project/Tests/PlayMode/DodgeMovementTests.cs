@@ -19,6 +19,11 @@ public class DodgeMovementTests
         public bool AttackPressed { get; set; }
         public bool DodgePressed { get; set; }
         public bool LockOnPressed { get; set; }
+        public bool JumpPressed { get; set; }
+        public bool UltimatePressed { get; set; }
+        public bool FlyPressed { get; set; }
+        public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private GameObject _player;
@@ -57,7 +62,10 @@ public class DodgeMovementTests
         _camera.transform.rotation = Quaternion.identity; // forward = world +Z, right = world +X
 
         _player = new GameObject("Player");
-        _player.AddComponent<CharacterController>();
+        CharacterController controller = _player.AddComponent<CharacterController>();
+        // See CharacterMovementTests.SetUp for why this matters - default 0.001 silently
+        // drops sub-threshold Move() calls at the frame rates headless batchmode can hit.
+        controller.minMoveDistance = 0f;
         _input = _player.AddComponent<StubInputBehaviour>();
         CharacterMovement movement = _player.AddComponent<CharacterMovement>();
         SetField(movement, "inputSource", _input);
