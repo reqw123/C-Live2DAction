@@ -10,7 +10,7 @@ namespace Live2DAction.EditorTools
 {
     // 2026-08-18, explicit user request ("幫我製作架式條圖案，放在能量條下方，邏輯與能量條同理") -
     // adds an orange world-space stance/架式 bar stacked directly under the existing blue energy
-    // bar, for both Player and Player4 (both already carry StancePoise - see this session's own
+    // bar, for both Player and Enemy (both already carry StancePoise - see this session's own
     // "敵我雙方都套用架式條" follow-up). Orange rather than reusing red (health) or blue (energy) -
     // a third bar sharing either existing color would be easy to misread as "this is health" or
     // "this is energy" at a glance; orange/amber is the common "warning, about to stagger" color
@@ -23,55 +23,58 @@ namespace Live2DAction.EditorTools
         private static readonly Color BackgroundColor = new Color(0.1f, 0.1f, 0.1f, 0.8f);
         private static readonly Vector2 BarSize = new Vector2(0.5f, 0.06f);
 
-        [MenuItem("Tools/Live2DAction/Add Stance Bar To Player And Player4")]
+        [MenuItem("Tools/Live2DAction/Add Stance Bar To Player And Enemy")]
         public static void Apply()
         {
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
             GameObject player = GameObject.Find("Player");
-            GameObject player4 = GameObject.Find("Player4");
-            if (player == null || player4 == null)
+            GameObject enemy = GameObject.Find("Enemy");
+            if (player == null || enemy == null)
             {
-                Debug.LogError("Player or Player4 GameObject not found in " + ScenePath);
+                Debug.LogError("Player or Enemy GameObject not found in " + ScenePath);
                 return;
             }
 
             AddStanceBar(player);
-            AddStanceBar(player4);
+            AddStanceBar(enemy);
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log("Added orange world-space stance bars to Player and Player4, stacked under their energy bars.");
+            Debug.Log("Added orange world-space stance bars to Player and Enemy, stacked under their energy bars.");
         }
 
         // 2026-08-18, real bug report ("沒看到機甲的架式條顯示") - Player2 (the "機甲戰士") got a
         // StancePoise (see WanderMovement's own "stance" field comment) but never got a bar for
         // it, because AddStanceBar hard-required an existing WorldSpaceEnergyBar to stack under
-        // and Player2 has neither a health bar nor an energy bar at all (it was set up as a
+        // and Mecha has neither a health bar nor an energy bar at all (it was set up as a
         // passive wandering decoration, not a full HUD-tracked combatant, before this). Separate
         // menu item rather than folding into Apply() above - that one's scoped to the two
         // characters that already have the full bar stack, this one is specifically for
         // characters that don't.
-        [MenuItem("Tools/Live2DAction/Add Stance Bar To Player2 (No Energy Bar)")]
-        public static void ApplyToPlayer2()
+        [MenuItem("Tools/Live2DAction/Add Stance Bar To Mecha (No Energy Bar)")]
+        public static void ApplyToMecha()
         {
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
-            GameObject player2 = GameObject.Find("Player2");
-            if (player2 == null)
+            GameObject mecha = GameObject.Find("Mecha");
+            if (mecha == null)
             {
-                Debug.LogError("Player2 GameObject not found in " + ScenePath);
+                Debug.LogError("Mecha GameObject not found in " + ScenePath);
                 return;
             }
 
-            AddStanceBar(player2);
+            AddStanceBar(mecha);
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log("Added an orange world-space stance bar to Player2, positioned above its head (no energy/health bar to stack under).");
+            Debug.Log("Added an orange world-space stance bar to Mecha, positioned above its head (no energy/health bar to stack under).");
         }
 
-        private static void AddStanceBar(GameObject owner)
+        // internal (not private) - 2026-08-19, same reuse reasoning as HealthBarSetup.AddHealthBar/
+        // UltimateAbilitySetup.AddEnergyBar: UnityChanCompanionSetup.cs needs the exact same
+        // stance-bar construction for a third StancePoise-bearing character, not a duplicated copy.
+        internal static void AddStanceBar(GameObject owner)
         {
             StancePoise stance = owner.GetComponent<StancePoise>();
             if (stance == null)
@@ -116,9 +119,9 @@ namespace Live2DAction.EditorTools
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
-        // Prefers stacking under an existing energy bar (Player/Player4's usual case), falls
+        // Prefers stacking under an existing energy bar (Player/Enemy's usual case), falls
         // back to stacking under a health bar, and finally falls back to sitting directly above
-        // the character's own visual top (Player2's case - no bar stack at all yet) - same
+        // the character's own visual top (Mecha's case - no bar stack at all yet) - same
         // margin HealthBarSetup itself uses when IT has nothing to stack under.
         private static float ResolveStanceBarLocalY(GameObject owner)
         {

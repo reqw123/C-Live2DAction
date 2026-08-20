@@ -91,7 +91,7 @@ namespace Live2DAction.EditorTools
         // camera controller to the character's neck bone instead - see Docs/KNOWN_ISSUES.md)
         // and would otherwise render as a second, unwanted camera every frame regardless.
         // internal (not private) so any other tool instantiating this same Maya prefab (e.g.
-        // Player3TrainingDummySetup.cs) can reuse this cleanup instead of duplicating it - same
+        // TrainingDummySetup.cs) can reuse this cleanup instead of duplicating it - same
         // reasoning as HealthBarSetup.AddHealthBar being made internal for reuse.
         internal static void RemoveEmbeddedCameraRig(GameObject visual)
         {

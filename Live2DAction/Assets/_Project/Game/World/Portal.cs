@@ -278,7 +278,7 @@ namespace Live2DAction.World
             // its visual pivot - see EnemyAI's own scale-compensation comment). Placing the ROOT
             // directly at the arrival point ignored that offset entirely: 076's capsule ended up
             // roughly 1.5m below the sky island's floor and fell straight through, out of view,
-            // while Player4 (whose center is (0,0,0), no offset) landed correctly by coincidence.
+            // while Enemy (whose center is (0,0,0), no offset) landed correctly by coincidence.
             // Solving for root position from "the capsule's world center lands here" instead
             // works for both - a no-op for a normal character, correct for a rescaled one.
             Vector3 targetCapsuleCenter = destination.position + arrivalOffset;

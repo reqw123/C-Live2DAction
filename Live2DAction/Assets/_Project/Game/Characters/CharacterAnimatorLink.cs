@@ -2,10 +2,10 @@ using UnityEngine;
 
 namespace Live2DAction.Characters
 {
-    // Drives the Animator's "Speed" parameter from CharacterMovement's actual velocity,
-    // so Idle/Walk/Run blend correctly instead of the character standing still while
-    // moving. Kept separate from CharacterMovement so movement logic never needs to know
-    // an Animator exists (e.g. the training dummy has no visual and no Animator at all).
+    // Drives the Animator's "Speed" parameter from the character's actual velocity, so
+    // Idle/Walk/Run blend correctly instead of the character standing still while moving.
+    // Kept separate from the movement classes themselves so movement logic never needs to
+    // know an Animator exists (e.g. the training dummy has no visual and no Animator at all).
     //
     // Feeds the raw speed value (clamped, not rescaled) because Maya's Locomotion blend
     // tree's thresholds (0/0.4/0.8/2) are the convention used by these asset-store
@@ -15,7 +15,13 @@ namespace Live2DAction.Characters
     // the animation's authored pace against the character's actual translation speed and
     // produced visible foot sliding (the clips have no real root motion to cross-check
     // against - they're authored in-place - so this must be tuned by eye, not derived).
-    [RequireComponent(typeof(CharacterMovement))]
+    //
+    // 2026-08-20, explicit user request ("敵人的移動動作採用跟玩家一樣地踏步") - used to
+    // RequireComponent(CharacterMovement) directly and read from it by concrete type, which
+    // meant only Player could ever use this (Enemy has its own entirely separate movement
+    // implementation inside EnemyAI, deliberately not CharacterMovement). Generalized to
+    // ICharacterSpeedSource - resolved via GetComponent<T>() against an interface, which Unity
+    // supports the same as any concrete type, so this now works on either character unchanged.
     public class CharacterAnimatorLink : MonoBehaviour
     {
         [SerializeField] private Animator animator;
@@ -26,7 +32,7 @@ namespace Live2DAction.Characters
         // moveSpeed can't drive the parameter past what any blend state was designed for.
         [SerializeField] private float maxAnimatorSpeed = 2f;
 
-        private CharacterMovement _movement;
+        private ICharacterSpeedSource _speedSource;
         private int _speedParameterHash;
 
         // 2026-08-18, explicit user request (flight: "接下來我想做飛行功能") - the Animator
@@ -40,7 +46,7 @@ namespace Live2DAction.Characters
 
         private void Awake()
         {
-            _movement = GetComponent<CharacterMovement>();
+            _speedSource = GetComponent<ICharacterSpeedSource>();
             _speedParameterHash = Animator.StringToHash(speedParameterName);
         }
 
@@ -54,19 +60,21 @@ namespace Live2DAction.Characters
             // disabled Animator every frame during any first-person Play session - 26,000+
             // repeated warnings in one real session, expensive enough (each logs a full stack
             // trace) to be the likely cause of a reported Editor hang. See Docs/KNOWN_ISSUES.md.
-            if (animator == null || !animator.isActiveAndEnabled)
+            if (animator == null || !animator.isActiveAndEnabled || _speedSource == null)
             {
                 return;
             }
 
-            float parameterValue = ComputeSpeedParameter(_movement.CurrentHorizontalSpeed, maxAnimatorSpeed);
+            float parameterValue = ComputeSpeedParameter(_speedSource.CurrentHorizontalSpeed, maxAnimatorSpeed);
             animator.SetFloat(_speedParameterHash, parameterValue);
-            // 2026-08-18: also true while Gliding (see CharacterMovement.IsGliding's own
-            // comment) - both are "airborne under wing control", not a normal fall, so the body
-            // pose shouldn't suddenly read as a plain fall just because Flight Energy ran out.
-            // WingFlap deliberately does NOT follow this same OR - it keys off IsFlying alone so
-            // gliding still reads as a gentle idle-rate flap, not the energetic flying one.
-            animator.SetBool(FlyParameterHash, _movement.IsFlying || _movement.IsGliding);
+            // 2026-08-20, real playtested feedback ("體力條歸0時要快速掉落到地面 停止飛行") - used
+            // to also read true while Gliding, but that whole fallback state has been removed
+            // (see CharacterMovement.UpdateFlightState's own comment) - running out of energy
+            // now falls under normal gravity like any other fall, so the Fly pose should turn
+            // off right along with it, not linger through a soft-glide pose that no longer exists.
+            // Always false for Enemy (ICharacterSpeedSource.IsFlying) - harmless, Enemy's
+            // Animator Controller has the same unused "Fly" bool sitting on it as Player's.
+            animator.SetBool(FlyParameterHash, _speedSource.IsFlying);
         }
 
         public static float ComputeSpeedParameter(float currentSpeed, float maxAnimatorSpeed)

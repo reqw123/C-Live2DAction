@@ -14,9 +14,9 @@ namespace Live2DAction.Combat
     // component requires be set true on the same GameObject for its own deactivation to be the
     // one that actually happens).
     //
-    // Only wired onto characters with a compatible Humanoid rig (Player/Player3/Player4, sharing
+    // Only wired onto characters with a compatible Humanoid rig (Player/TrainingDummy/Enemy, sharing
     // Maya's/Arisa's Animator Controllers - see SpecialMoveAnimatorSetup's own "Dead" comment).
-    // Player2 (no Animator at all currently) and 076/077 (Live2D Cubism billboards, an entirely
+    // Mecha (no Animator at all currently) and 076/077 (Live2D Cubism billboards, an entirely
     // different animation system) keep Health's original immediate-deactivation behavior instead
     // - deferDeactivationToDeathAnimation stays false for them, so there's no risk of a
     // now-permanently-active corpse if this component is simply absent.

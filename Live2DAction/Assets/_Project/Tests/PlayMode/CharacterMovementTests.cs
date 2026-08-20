@@ -25,6 +25,7 @@ public class CharacterMovementTests
         public bool UltimatePressed { get; set; }
         public bool FlyPressed { get; set; }
         public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private GameObject _player;

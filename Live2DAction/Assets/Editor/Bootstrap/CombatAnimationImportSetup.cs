@@ -22,7 +22,7 @@ namespace Live2DAction.EditorTools
         // from Mixamo and dropped it in as "Mma Kick.fbx", renamed here to match this folder's
         // no-spaces convention.
         //
-        // 2026-08-17 follow-up (same session, three more): BreakdanceUltimate drives Player4's
+        // 2026-08-17 follow-up (same session, three more): BreakdanceUltimate drives Enemy's
         // new EnemyUltimateAbility (see that class's own comment), ZombiePunching is an
         // AnimatorOverrideController swap-in for Attack1 during the player's UltimateAbility
         // window (see UltimateAttackAnimationSwap), FlyingKick drives the player's new

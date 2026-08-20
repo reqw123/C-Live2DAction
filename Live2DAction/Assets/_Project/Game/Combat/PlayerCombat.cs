@@ -13,9 +13,9 @@ namespace Live2DAction.Combat
         [SerializeField] private Transform attackOrigin;
 
         // 2026-08-18, explicit user request (aerial combat grilling session, Q3/Q6). Optional
-        // (null-safe below) - on Player4 this is left unset and EnemyAI drives
+        // (null-safe below) - on Enemy this is left unset and EnemyAI drives
         // UseSphericalJudgment directly instead (see that class's own Aerial Combat comment),
-        // since Player4 has no lock-on concept of its own. On the player, wiring this to the
+        // since Enemy has no lock-on concept of its own. On the player, wiring this to the
         // same TargetLockController CharacterMovement already uses lets PlayerCombat
         // independently notice "my locked target is far above/below me" without either
         // component needing a reference to the other - matches this codebase's established
@@ -34,7 +34,7 @@ namespace Live2DAction.Combat
         // attacker's own pitch is aiming up/down at a vertically-offset target (a slightly-off
         // pitch angle would otherwise still whiff completely). True while EITHER this
         // character's own lock-on detects a vertically-far target (see lockOnSource above) OR -
-        // for Player4 - EnemyAI.IsAerialCombat says so directly. Settable so EnemyAI can drive it
+        // for Enemy - EnemyAI.IsAerialCombat says so directly. Settable so EnemyAI can drive it
         // for a character with no lock-on concept of its own.
         public bool UseSphericalJudgment { get; set; }
 
@@ -77,7 +77,7 @@ namespace Live2DAction.Combat
         // the real hit judgment (and this class's own Gizmo) uses, instead of a separately-
         // tuned attackRange float that has to be manually kept in sync (see EnemyAI's own
         // "combat" field comment for the full story). Enemies only ever have one combo step
-        // (comboAttacks.Length == 1, see GreyboxSceneBuilder.CreateEnemy/Player4EnemyAISetup),
+        // (comboAttacks.Length == 1, see GreyboxSceneBuilder.CreateEnemy/EnemyAISetup),
         // so "primary" unambiguously means "the attack this component will actually use".
         public AttackData PrimaryAttack => comboAttacks != null && comboAttacks.Length > 0 ? comboAttacks[0] : null;
 
@@ -113,7 +113,7 @@ namespace Live2DAction.Combat
             }
 
             // Auto-detect from lock-on, if wired (see lockOnSource's own comment - unset on
-            // Player4, which drives UseSphericalJudgment directly from EnemyAI instead).
+            // Enemy, which drives UseSphericalJudgment directly from EnemyAI instead).
             if (LockOnSource != null)
             {
                 Transform locked = LockOnSource.LockedTarget;
@@ -146,7 +146,7 @@ namespace Live2DAction.Combat
             // A single sphere at the far end of Range whiffs anything standing well short of
             // that distance (e.g. point-blank/overlapping, which is exactly what the two
             // combatants' CharacterControllers settle into once blocked - see
-            // CharacterCollisionBlockingTests.WalkingIntoPlayer4_DoesNotClimbOnTop's 2026-08-12
+            // CharacterCollisionBlockingTests.WalkingIntoEnemy_DoesNotClimbOnTop's 2026-08-12
             // bug report investigation) - a capsule spanning from the attacker out to Range
             // covers the whole reach instead of only a thin shell right at the tip.
             //
@@ -211,12 +211,12 @@ namespace Live2DAction.Combat
         // yellow palette, so which side an attack range belongs to is obvious at a glance
         // (also keeps both clear of the cyan used by TargetLockController/EnemyAI's own
         // "警備距離" Gizmo). "Enemy" is detected via GetComponent<EnemyAI>() - PlayerCombat
-        // itself has no player/enemy flag (Player4 reuses the exact same component driven by
+        // itself has no player/enemy flag (Enemy reuses the exact same component driven by
         // EnemyAI instead of real input, see EnemyAI's own class comment), and EnemyAI's
         // presence is already the reliable, existing signal for "this is an AI-driven attacker"
         // used nowhere else in the codebase, so no new field/wiring was needed. Only ever
         // called by the Editor (Gizmos methods are stripped from Player builds automatically,
-        // no #if UNITY_EDITOR needed) - visible in the Scene view whenever Player/Player4 is
+        // no #if UNITY_EDITOR needed) - visible in the Scene view whenever Player/Enemy is
         // selected, and in the Game view too if its Gizmos toggle is on, including during Play.
         private void OnDrawGizmosSelected()
         {

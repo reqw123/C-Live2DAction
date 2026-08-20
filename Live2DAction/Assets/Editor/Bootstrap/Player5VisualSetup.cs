@@ -159,7 +159,7 @@ namespace Live2DAction.EditorTools
         // successful Player5 swap: CharacterAttackAnimationLink's "animator" field (wired by
         // WireCharacterAttackAnimationLink) AND CharacterAnimatorLink's (wired by whatever
         // set Maya up originally) had both gone null - attacks/locomotion-blend still worked
-        // on Player4/the enemy (a different GameObject, untouched by this swap) but neither
+        // on Enemy/the enemy (a different GameObject, untouched by this swap) but neither
         // fired on Player itself. Re-points both at Player5's own Animator here instead of
         // requiring a separate manual re-run of those tools - same SerializedObject-based
         // wiring WireCharacterAttackAnimationLink.WireCharacter() uses. No new
@@ -301,7 +301,7 @@ namespace Live2DAction.EditorTools
             return height;
         }
 
-        // Same pattern as Player2MechaVisualSetup's own scale-to-target-height step (that
+        // Same pattern as MechaVisualSetup's own scale-to-target-height step (that
         // asset has the identical "raw import is some arbitrary size" problem).
         private static float ScaleToHeight(GameObject visual, float targetHeight)
         {

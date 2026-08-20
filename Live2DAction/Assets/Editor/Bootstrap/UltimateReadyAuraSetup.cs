@@ -9,7 +9,7 @@ namespace Live2DAction.EditorTools
 {
     // 2026-08-16, explicit user follow-up to the energy bar pulse ("不夠炫 加個閃電繞圈的特效") -
     // builds the LineRenderer UltimateReadyAura drives. Player-only, see that class's own
-    // comment for why this isn't also wired to Player4.
+    // comment for why this isn't also wired to Enemy.
     //
     // 2026-08-16 rewrite ("閃電改為只有一條，從角色底部任意往上環繞，循環，就像是動漫獵人x獵人的
     // 奇犽一樣") - was 8 (then 6) separate ring bolts, now a single coiling LineRenderer. This

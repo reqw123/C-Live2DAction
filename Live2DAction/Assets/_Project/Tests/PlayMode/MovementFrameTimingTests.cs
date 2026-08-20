@@ -8,7 +8,7 @@ using Live2DAction.Input;
 
 // Added after a real user report ("角色移動到一半畫面卡住" - the screen freezes partway
 // through moving the character). Loads the real GreyboxTest scene (Player, TrainingDummy
-// chasing, Player2, everything as shipped, not a synthetic fixture) and holds forward movement
+// chasing, Mecha, everything as shipped, not a synthetic fixture) and holds forward movement
 // input for several seconds while recording the wall-clock duration of every single Update
 // tick, to catch the multi-hundred-millisecond-or-worse stalls a human would perceive as a
 // freeze. At the time this was added, the worst observed frame was under 4ms - no stall was
@@ -27,6 +27,7 @@ public class MovementFrameTimingTests
         public bool UltimatePressed { get; set; }
         public bool FlyPressed { get; set; }
         public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private static void SetField(object target, string fieldName, object value)

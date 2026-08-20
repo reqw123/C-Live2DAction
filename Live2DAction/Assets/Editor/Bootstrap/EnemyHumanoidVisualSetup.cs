@@ -12,10 +12,18 @@ namespace Live2DAction.EditorTools
     // asset itself is already imported and set to a Humanoid rig from that earlier work, so
     // this only needs to instantiate it under the Enemy and reuse the existing material.
     //
-    // Keeps the child named "Visual" (same convention as Player/Player2/the old capsule) so
+    // Keeps the child named "Visual" (same convention as Player/Mecha/the old capsule) so
     // AttackPoseVisualizer's existing swingTransform reference (enemy.transform.Find("Visual"))
     // and CharacterAnimatorLink-style lookups keep working unchanged - this is a pure visual
     // swap, no combat/AI wiring is touched.
+    //
+    // SUPERSEDED - do not re-run: EnemyAnimeVisualSetup.cs later replaced this capsule/Humanoid
+    // placeholder with Arisa's actual anime visual, so Enemy no longer has the "plain capsule"
+    // this script expects to find. Re-running it today is doubly unsafe after the 2026-08-19
+    // character-renaming pass specifically: "TrainingDummy" is no longer a stale, unmatched
+    // name - it now belongs to a live, unrelated character (Player3, a stationary punching bag -
+    // see TrainingDummySetup.cs), so GameObject.Find("TrainingDummy") below would silently grab
+    // and mutate THAT object instead of failing with a clean "not found" error.
     internal static class EnemyHumanoidVisualSetup
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";

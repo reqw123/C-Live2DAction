@@ -32,7 +32,7 @@ namespace Live2DAction.EditorTools
     // down to the OLD 6-10 frame startup), and LightAttack1/2/3 + EnemyAttack's startupFrames
     // were raised to match wherever the now-chosen speed actually puts that impact frame (see
     // each asset's own updated values) - the two were solved together, not speed-only. Also
-    // finally applies the same treatment to Arisa (Player4's attack animation, driven by
+    // finally applies the same treatment to Arisa (Enemy's attack animation, driven by
     // EnemyAttack/CrossPunch/Attack1) - the enemy's swing had exactly the same mismatch and had
     // never been touched at all (still 1x, i.e. CrossPunch's already-late impact frame landing
     // even later in real time).

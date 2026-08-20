@@ -8,13 +8,13 @@ using Live2DAction.UI;
 
 namespace Live2DAction.EditorTools
 {
-    // Adds a red world-space health bar above Player (character 1) and Player4's heads
+    // Adds a red world-space health bar above Player (character 1) and Enemy's heads
     // (2026-08-12, explicit user request: 100 HP, -10 per hit). Health.MaxHealth is already
     // 100 by default (Health.cs) - not touched here. Attack damage values are normalized to
-    // 10 by Player4EnemyAISetup-adjacent tuning, see FixAttackDamageToTen.cs.
+    // 10 by EnemyAISetup-adjacent tuning, see FixAttackDamageToTen.cs.
     //
     // 2026-08-12 revision: the first version positioned the bar from
-    // CharacterController.center.y + height/2 (0.5 local units, since both Player and Player4
+    // CharacterController.center.y + height/2 (0.5 local units, since both Player and Enemy
     // use height=1) - that's the CONTROLLER's capsule top, not the visual model's actual head
     // height. Both Maya and Arisa's rendered meshes are noticeably taller than the 1-unit
     // collision capsule (the capsule is sized for gameplay collision, not 1:1 with the
@@ -34,30 +34,30 @@ namespace Live2DAction.EditorTools
         // "no existing bar to stack under" fallback - see MeasureVisualTopLocalY's own comment.
         internal const float MarginAboveHead = 0.15f;
 
-        [MenuItem("Tools/Live2DAction/Add Health Bars To Player And Player4")]
+        [MenuItem("Tools/Live2DAction/Add Health Bars To Player And Enemy")]
         public static void Apply()
         {
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
             GameObject player = GameObject.Find("Player");
-            GameObject player4 = GameObject.Find("Player4");
-            if (player == null || player4 == null)
+            GameObject enemy = GameObject.Find("Enemy");
+            if (player == null || enemy == null)
             {
-                Debug.LogError("Player or Player4 GameObject not found in " + ScenePath);
+                Debug.LogError("Player or Enemy GameObject not found in " + ScenePath);
                 return;
             }
 
             AddHealthBar(player);
-            AddHealthBar(player4);
+            AddHealthBar(enemy);
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log("Added red world-space health bars to Player and Player4.");
+            Debug.Log("Added red world-space health bars to Player and Enemy.");
         }
 
-        // internal (not private) so Player2DamageableSetup.cs can reuse the exact same bar
-        // construction for Player2 rather than duplicating it - see that class's comment for
-        // why Player2 needs one too (2026-08-13, explicit user request).
+        // internal (not private) so MechaDamageableSetup.cs can reuse the exact same bar
+        // construction for Mecha rather than duplicating it - see that class's comment for
+        // why Mecha needs one too (2026-08-13, explicit user request).
         internal static void AddHealthBar(GameObject owner)
         {
             Health health = owner.GetComponent<Health>();
@@ -111,7 +111,7 @@ namespace Live2DAction.EditorTools
         // pre-revision behavior, so this still degrades gracefully for a hypothetical
         // characterless test double.
         // internal (not private) so StanceBarSetup can reuse this for a character that has
-        // neither a health bar nor an energy bar to stack under (e.g. Player2 - see that
+        // neither a health bar nor an energy bar to stack under (e.g. Mecha - see that
         // class's own comment).
         internal static float MeasureVisualTopLocalY(GameObject owner)
         {

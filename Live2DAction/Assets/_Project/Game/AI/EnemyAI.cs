@@ -13,7 +13,7 @@ namespace Live2DAction.AI
     // satisfying the project rule that player and AI share one input interface without
     // forcing AI through player-specific movement code.
     [RequireComponent(typeof(CharacterController))]
-    public class EnemyAI : MonoBehaviour, IInputCommand
+    public class EnemyAI : MonoBehaviour, IInputCommand, Live2DAction.Characters.ICharacterSpeedSource
     {
         [SerializeField] private Transform target;
         [SerializeField] private float detectionRange = 8f;
@@ -32,7 +32,7 @@ namespace Live2DAction.AI
         // gravity handling had the identical gap - isGrounded reads true the moment this AI
         // ends up resting on another character's CharacterController's rounded top (however it
         // got there - a brief overlap-recovery push while chasing is enough, no jump needed),
-        // and nothing here ever pushed it back off. Player4 (the other user of this class) was
+        // and nothing here ever pushed it back off. Enemy (the other user of this class) was
         // presumably equally exposed, just not yet reported.
         [SerializeField] private float slideSpeed = 4f;
 
@@ -49,7 +49,7 @@ namespace Live2DAction.AI
         // block below runs every frame regardless of CurrentState (including Idle/out-of-range)
         // instead of only while Chasing/Attacking - "統一面對玩家" (uniformly/always face the
         // player), a full replacement for what CubismBillboard used to do unconditionally every
-        // frame. Left false for ordinary enemies (e.g. Player4), which should keep only turning
+        // frame. Left false for ordinary enemies (e.g. Enemy), which should keep only turning
         // to face the player once actually aware of them.
         [SerializeField] private bool alwaysFaceTarget;
 
@@ -115,7 +115,7 @@ namespace Live2DAction.AI
         // than picked arbitrarily, so "1.5x/1.2x the player" stays literally true:
         //   - aerialCombatChaseCeiling: 1.5x the player's own max CONTINUOUS climb distance in
         //     one full Flight burst (flightAscendSpeed * maxEnergy / flightEnergyDrainPerSecond
-        //     = 6 * 100/20 = 30m at this project's current player tuning) - 45m, so Player4 can
+        //     = 6 * 100/20 = 30m at this project's current player tuning) - 45m, so Enemy can
         //     always out-climb the highest the player alone could reach in a single ascent,
         //     never gives up the chase for merely matching the player's own ceiling.
         //   - aerialVerticalSpeed: 1.2x the player's flightAscendSpeed (6 * 1.2 = 7.2) - lets it
@@ -128,12 +128,23 @@ namespace Live2DAction.AI
         [SerializeField] private float aerialVerticalSpeed = 7.2f;
 
         // Aerial-only horizontal chase/attack speed (2026-08-18, same request as above) - kept
-        // SEPARATE from the ground `moveSpeed` above deliberately, so boosting Player4's flight
+        // SEPARATE from the ground `moveSpeed` above deliberately, so boosting Enemy's flight
         // speed doesn't also make it faster on the ground (the user asked for flight speed
         // specifically). 1.2x the player's own ground moveSpeed (2 * 1.2 = 2.4) - the player's
         // Flight doesn't have its own distinct horizontal speed, it reuses moveSpeed while
         // airborne, so that's the correct "player's flight speed" baseline to scale from.
         [SerializeField] private float aerialHorizontalSpeed = 2.4f;
+
+        // 2026-08-20, real playtested bug ("在敵人正上方直線往天空飛行 敵人大概率會卡在我腳底下
+        // 請解決這個問題 讓他繞開腳下直接到我正面進行攻擊") - see the horizontal chase direction's
+        // own comment in Update() for the full root cause (chasing the player's raw XZ position
+        // degenerates to a zero vector when the player is directly overhead). This is how far in
+        // front of the player the Aerial Combat approach point sits - not tied to
+        // effectiveAttackRange (which varies with whatever attack is currently equipped) since
+        // this only needs to be "clearly in front, not at the player's own feet", not an exact
+        // strike distance - the vertical/attack-range judgment that actually decides when to
+        // swing is untouched and still measures the real player position.
+        [SerializeField] private float aerialApproachDistance = 2f;
 
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
@@ -145,21 +156,21 @@ namespace Live2DAction.AI
         // earlier version pitched this to aim at aerial targets, which didn't just turn the body,
         // it physically tipped the collision capsule over (visibly flickered between standing and
         // lying flat, and the tilted capsule's collision response fought vertical climb enough
-        // that Player4 could never gain net altitude on the player). A LATER version moved that
+        // that Enemy could never gain net altitude on the player). A LATER version moved that
         // same pitch onto a separate "Visual" child instead (Animator only, no CharacterController)
         // to sidestep the capsule problem - but once Aerial Combat started staying active for an
         // entire engagement (see the hover-stability fix above), that became a near-constant tilt
-        // instead of a brief look-up flourish, and the user explicitly wants Player4 upright the
+        // instead of a brief look-up flourish, and the user explicitly wants Enemy upright the
         // whole time ("敵人仍然斜斜的 要像玩家一樣站直才行"). Removed entirely now - this
         // transform stays yaw-only always, with no pitch applied anywhere, on either it or a
         // visual child.
 
         public EnemyState CurrentState { get; private set; } = EnemyState.Idle;
 
-        // Exposed for anything that wants to react to Player4 specifically being in Aerial
+        // Exposed for anything that wants to react to Enemy specifically being in Aerial
         // Combat (currently nothing external needs to - PlayerCombat.UseSphericalJudgment is
         // set directly from here each frame instead - but this mirrors CharacterMovement's own
-        // IsFlying/IsGliding public exposure for consistency and future use).
+        // IsFlying public exposure for consistency and future use).
         public bool IsAerialCombat => _isAerialCombat;
 
         // 2026-08-18, explicit user request ("上升氣流，任何人碰到...會快速飛向空中") - see
@@ -181,6 +192,16 @@ namespace Live2DAction.AI
         public bool UltimatePressed => false; // AI never triggers the player-only ultimate
         public bool FlyPressed => false; // AI never triggers the player-only flight
         public bool FlyDescendPressed => false;
+        public bool BoostPressed => false; // AI never triggers the player-only flight boost
+
+        // 2026-08-20, explicit user request ("敵人的移動動作採用跟玩家一樣地踏步") -
+        // ICharacterSpeedSource, so CharacterAnimatorLink can drive Enemy's Locomotion blend tree
+        // from this class's own _horizontalVelocity the same way it already does for Player from
+        // CharacterMovement.CurrentHorizontalSpeed - mirrors that property exactly (magnitude of
+        // the same-named private field). IsFlying is always false - Enemy never flies (an
+        // already-settled scope decision, see CharacterMovement.IsFlying's own history).
+        public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
+        public bool IsFlying => false;
 
         private void Awake()
         {
@@ -256,7 +277,7 @@ namespace Live2DAction.AI
             // gap): the exit condition only ever checked VERTICAL distance (ceiling) and grounded
             // state - nothing here re-checked HORIZONTAL distance once already engaged, even
             // though entry itself requires distance <= detectionRange. A player who flies far away
-            // horizontally while staying elevated would leave Player4 with CurrentState==Idle
+            // horizontally while staying elevated would leave Enemy with CurrentState==Idle
             // (distance > detectionRange, so EnemyBehaviorUtility.DetermineState gives up on it -
             // horizontal chase already freezes via the Chasing-only gate below) but STILL
             // _isAerialCombat==true, so vertical tracking keeps running forever - an idle enemy
@@ -299,6 +320,37 @@ namespace Live2DAction.AI
 
             Vector3 direction = toTarget.sqrMagnitude > 0.0001f ? toTarget.normalized : Vector3.zero;
 
+            // 2026-08-20, real playtested bug ("在敵人正上方直線往天空飛行 敵人大概率會卡在我腳底
+            // 下") - `direction` above aims straight at the player's own XZ position, which is
+            // exactly what "stuck directly underneath" looks like: the moment the player is
+            // (near enough) directly overhead, toTarget's horizontal component shrinks toward
+            // zero, `direction` degenerates to Vector3.zero, and Enemy's horizontal chase
+            // velocity below goes to zero right along with it - it just climbs straight up with
+            // no horizontal correction at all, arriving directly beneath the player instead of
+            // actually approaching. Aerial Combat's horizontal chase now targets a point offset
+            // aerialApproachDistance in FRONT of the player (target.forward - the player's root
+            // only ever yaws, see CharacterMovement's own facing block, so this is already purely
+            // horizontal with no pitch/roll to flatten out) instead of the player's own position
+            // - that point is never coincident with "directly below the player" the way the raw
+            // position is, so this can't degenerate the same way, and it directly satisfies what
+            // was actually asked for beyond just fixing the degenerate case ("直接到我正面進行攻
+            // 擊" - approach from the front generally, not merely "wherever isn't straight down").
+            // Facing/MoveInput below still track the player's own raw `direction` - only the
+            // MOVEMENT target changes; Enemy should still visually look at the player it's
+            // attacking, not the point it's walking toward. Ground-combat chasing is untouched
+            // (this whole block only runs the aerial branch while _isAerialCombat is true).
+            Vector3 aerialChaseDirection = direction;
+            if (_isAerialCombat)
+            {
+                Vector3 approachPoint = target.position + target.forward * aerialApproachDistance;
+                Vector3 toApproachPoint = approachPoint - transform.position;
+                toApproachPoint.y = 0f;
+                if (toApproachPoint.sqrMagnitude > 0.0001f)
+                {
+                    aerialChaseDirection = toApproachPoint.normalized;
+                }
+            }
+
             // Same bug/fix as the aerial exit condition above - ground melee freezes horizontal
             // movement while Attacking (the target isn't going anywhere mid-swing), but Aerial
             // Combat's target very much can, so it keeps chasing horizontally through its own
@@ -308,7 +360,8 @@ namespace Live2DAction.AI
             // aerialHorizontalSpeed (not the ground moveSpeed) while genuinely in Aerial Combat -
             // see that field's own comment for the 1.2x-the-player's-flight-speed reasoning.
             float horizontalSpeed = _isAerialCombat ? aerialHorizontalSpeed : moveSpeed;
-            _horizontalVelocity = shouldChaseHorizontally ? direction * horizontalSpeed : Vector3.zero;
+            Vector3 chaseDirection = _isAerialCombat ? aerialChaseDirection : direction;
+            _horizontalVelocity = shouldChaseHorizontally ? chaseDirection * horizontalSpeed : Vector3.zero;
             MoveInput = new Vector2(direction.x, direction.z);
 
             // Attacking horizontally-in-range isn't enough while Aerial Combat is active - the
@@ -327,7 +380,7 @@ namespace Live2DAction.AI
                 // stagger window being "stand frozen and open, waiting to be punished". Vertical
                 // velocity had no such freeze - it fell straight to the gravity branch below
                 // regardless of staggered, which was invisible back when Aerial Combat only ever
-                // left an enemy briefly airborne, but now that it keeps Player4 genuinely
+                // left an enemy briefly airborne, but now that it keeps Enemy genuinely
                 // hovering for most of an engagement (see the hover-stability fix above), getting
                 // staggered mid-air would drop it into freefall mid-kneel instead of actually
                 // holding still - the opposite of what a punishable opening is supposed to look
@@ -335,7 +388,7 @@ namespace Live2DAction.AI
                 // staggered, airborne or not.
                 //
                 // 2026-08-18 follow-up (death animation) - `frozen` (staggered OR dead), not just
-                // `staggered`, for the same reason: an airborne Player4 dying mid-hover should
+                // `staggered`, for the same reason: an airborne Enemy dying mid-hover should
                 // stay suspended playing its Dying animation, not plummet while "dead".
                 _verticalVelocity = 0f;
             }
@@ -347,7 +400,7 @@ namespace Live2DAction.AI
                 // roughly a 1-second time constant: it slows down the closer it gets, which
                 // reads fine against a STATIONARY target but means the LAST stretch of distance
                 // never actually finishes closing against a target that keeps repositioning -
-                // Player4 would sit at a small-but-nonzero residual gap indefinitely (often just
+                // Enemy would sit at a small-but-nonzero residual gap indefinitely (often just
                 // outside effectiveAttackRange) instead of properly arriving. Switched to a
                 // constant-rate pursuit via MoveTowards instead - moves at the FULL
                 // aerialVerticalSpeed every frame until the remaining gap is smaller than one
@@ -412,10 +465,10 @@ namespace Live2DAction.AI
             // to stay active for (briefly, only while closing the gap) - but the hover-stability
             // fix right above (exit only once _controller.isGrounded) means _isAerialCombat now
             // stays true for almost an entire engagement, so this pitch became a near-constant
-            // tilt instead of a brief look-up flourish, and the user explicitly wants Player4
+            // tilt instead of a brief look-up flourish, and the user explicitly wants Enemy
             // upright the whole time, same as the player's own body reads (the player only
             // pitches while actively locked onto a vertically-offset target, a deliberate rare
-            // action - Player4 has no equivalent "deliberate" gate, it was just tied to the whole
+            // action - Enemy has no equivalent "deliberate" gate, it was just tied to the whole
             // aerial state). _visual is left at its default identity local rotation - always
             // upright, matching this transform's own always-yaw-only facing exactly.
         }
@@ -444,7 +497,7 @@ namespace Live2DAction.AI
         // answer "how far can this character notice something", just from opposite sides).
         // attackRange isn't drawn here - the user only asked for these two, and
         // PlayerCombat.OnDrawGizmosSelected already covers the actual attack-judged capsule
-        // (AttackData.Range/Radius) both Player and Player4 share via the same component.
+        // (AttackData.Range/Radius) both Player and Enemy share via the same component.
         private void OnDrawGizmosSelected()
         {
             Gizmos.color = new Color(0.2f, 0.9f, 1f, 0.5f);

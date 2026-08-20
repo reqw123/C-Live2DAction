@@ -13,6 +13,7 @@ namespace Live2DAction.Input
         public bool UltimatePressed { get; private set; }
         public bool FlyPressed { get; private set; }
         public bool FlyDescendPressed { get; private set; }
+        public bool BoostPressed { get; private set; }
 
         private void Update()
         {
@@ -27,6 +28,7 @@ namespace Live2DAction.Input
                 UltimatePressed = false;
                 FlyPressed = false;
                 FlyDescendPressed = false;
+                BoostPressed = false;
                 return;
             }
 
@@ -60,6 +62,12 @@ namespace Live2DAction.Input
             // over the same control, they're just two different questions asked of it.
             FlyPressed = keyboard.leftCtrlKey.isPressed;
             FlyDescendPressed = keyboard.leftShiftKey.isPressed;
+
+            // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 3.4) - Q was
+            // completely unused before this (checked the rest of this method) - held, not
+            // wasPressedThisFrame, same reasoning as FlyPressed above (boost needs to keep
+            // responding for the whole hold, not just the instant it's pressed).
+            BoostPressed = keyboard.qKey.isPressed;
         }
     }
 }

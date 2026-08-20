@@ -10,5 +10,12 @@ namespace Live2DAction.CameraSystem
     public interface ICameraYawSource
     {
         float YawDegrees { get; }
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md) - lets
+        // CharacterMovement read how far down the camera is currently looking, for the
+        // dive-speed-boost condition (needs both "holding descend" AND "looking down past a
+        // threshold" - see that doc's own 2.4). Positive = looking down, same sign convention
+        // ThirdPersonCameraController's own _pitch already uses.
+        float PitchDegrees { get; }
     }
 }

@@ -14,7 +14,7 @@ using Live2DAction.Core;
 // the old names became orphaned, and the new field names had never been serialized before).
 // PlayerRespawnSetup.Apply() was re-run to fix Player's instance, but nothing caught that it
 // had gone stale in the first place - every other test either builds a fresh RespawnController
-// (PlayerRespawnControllerTests/Player2RespawnControllerTests) or wires fields directly via
+// (PlayerRespawnControllerTests/MechaRespawnControllerTests) or wires fields directly via
 // reflection, neither of which touches the actual persisted scene data. This test loads the
 // real GreyboxTest scene and checks the actual wiring, the same way WorldSpaceHealthBarTests
 // does for health bars - so a future field rename that forgets to re-run the setup tool for an
@@ -22,30 +22,30 @@ using Live2DAction.Core;
 public class RespawnControllerSceneWiringTests
 {
     [UnityTest]
-    public IEnumerator Player_Player2_And_Player4_HaveCorrectlyWiredRespawnControllersInRealScene()
+    public IEnumerator Player_Mecha_And_Enemy_HaveCorrectlyWiredRespawnControllersInRealScene()
     {
         SceneManager.LoadScene("GreyboxTest");
         yield return null;
         yield return null;
 
         GameObject player = GameObject.Find("Player");
-        GameObject player2 = GameObject.Find("Player2");
-        GameObject player4 = GameObject.Find("Player4");
+        GameObject mecha = GameObject.Find("Mecha");
+        GameObject enemy = GameObject.Find("Enemy");
         GameObject manager = GameObject.Find("GameManager");
         Assert.IsNotNull(player, "Player not found in GreyboxTest scene");
-        Assert.IsNotNull(player2, "Player2 not found in GreyboxTest scene");
-        Assert.IsNotNull(player4, "Player4 not found in GreyboxTest scene");
+        Assert.IsNotNull(mecha, "Mecha not found in GreyboxTest scene");
+        Assert.IsNotNull(enemy, "Enemy not found in GreyboxTest scene");
         Assert.IsNotNull(manager, "GameManager not found in GreyboxTest scene");
 
         RespawnController[] controllers = manager.GetComponents<RespawnController>();
         // 2026-08-13: Player4 added alongside Player/Player2 after the user noticed "發現敵人
         // 死了不會復活" and asked for consistency (previously a deliberate choice to leave
-        // Player4 without respawn - see KNOWN_ISSUES.md's history on this).
-        Assert.AreEqual(3, controllers.Length, "GameManager should have exactly 3 RespawnControllers (Player + Player2 + Player4)");
+        // Enemy without respawn - see KNOWN_ISSUES.md's history on this).
+        Assert.AreEqual(3, controllers.Length, "GameManager should have exactly 3 RespawnControllers (Player + Mecha + Enemy)");
 
         AssertWiredTo(controllers, player, "Player");
-        AssertWiredTo(controllers, player2, "Player2");
-        AssertWiredTo(controllers, player4, "Player4");
+        AssertWiredTo(controllers, mecha, "Mecha");
+        AssertWiredTo(controllers, enemy, "Enemy");
     }
 
     private static void AssertWiredTo(RespawnController[] controllers, GameObject expectedTarget, string label)

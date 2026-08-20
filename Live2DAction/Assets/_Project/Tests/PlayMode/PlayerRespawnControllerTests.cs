@@ -12,8 +12,8 @@ using Object = UnityEngine.Object;
 // Player's Health hitting zero deactivated the whole GameObject with no way back, which read
 // as the game freezing (every one of Player's own scripts, including input reading, lives on
 // that GameObject and stops ticking the instant it's deactivated). RespawnController (renamed
-// 2026-08-13 from Player-only PlayerRespawnController so Player2 could reuse the same
-// component - see Player2RespawnControllerTests for its own coverage) fixes this by respawning
+// 2026-08-13 from Player-only PlayerRespawnController so Mecha could reuse the same
+// component - see MechaRespawnControllerTests for its own coverage) fixes this by respawning
 // in place with full health after a short delay.
 public class PlayerRespawnControllerTests
 {

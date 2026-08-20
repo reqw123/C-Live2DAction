@@ -6,10 +6,10 @@ using Live2DAction.Characters;
 
 namespace Live2DAction.EditorTools
 {
-    // Wires CharacterAttackAnimationLink onto Player and Player4 (see that class's own
+    // Wires CharacterAttackAnimationLink onto Player and Enemy (see that class's own
     // comment) and removes the old AttackPoseVisualizer it replaces (2026-08-12, explicit
     // user request - the two would otherwise fight over the same arm bone every frame).
-    // Player4 never had an AttackPoseVisualizer in the first place (it was only ever wired
+    // Enemy never had an AttackPoseVisualizer in the first place (it was only ever wired
     // onto Player/TrainingDummy - see WireAttackPoseVisualizers.cs - and TrainingDummy is
     // gone), so there's nothing to remove there.
     internal static class WireCharacterAttackAnimationLink
@@ -22,15 +22,15 @@ namespace Live2DAction.EditorTools
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
             GameObject player = GameObject.Find("Player");
-            GameObject player4 = GameObject.Find("Player4");
-            if (player == null || player4 == null)
+            GameObject enemy = GameObject.Find("Enemy");
+            if (player == null || enemy == null)
             {
-                Debug.LogError("Player or Player4 GameObject not found in " + ScenePath);
+                Debug.LogError("Player or Enemy GameObject not found in " + ScenePath);
                 return;
             }
 
             WireCharacter(player);
-            WireCharacter(player4);
+            WireCharacter(enemy);
 
             AttackPoseVisualizer oldVisualizer = player.GetComponent<AttackPoseVisualizer>();
             if (oldVisualizer != null)
@@ -41,7 +41,7 @@ namespace Live2DAction.EditorTools
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log("Wired CharacterAttackAnimationLink on Player and Player4.");
+            Debug.Log("Wired CharacterAttackAnimationLink on Player and Enemy.");
         }
 
         private static void WireCharacter(GameObject owner)

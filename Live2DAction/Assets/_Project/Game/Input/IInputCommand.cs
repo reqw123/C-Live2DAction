@@ -22,5 +22,10 @@ namespace Live2DAction.Input
         // ascending/descending for as long as it's held, not just the instant it was pressed.
         bool FlyPressed { get; }
         bool FlyDescendPressed { get; }
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.3/3.4) - flight
+        // boost, same HELD-signal reasoning as FlyPressed/FlyDescendPressed above (needs to keep
+        // boosting for as long as it's down, not just the instant it was pressed).
+        bool BoostPressed { get; }
     }
 }

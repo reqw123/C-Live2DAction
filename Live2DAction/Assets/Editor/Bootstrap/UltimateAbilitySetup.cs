@@ -21,7 +21,7 @@ namespace Live2DAction.EditorTools
     // see that method's own comment for the bug this replaces (a stale copy of the margin left
     // the bar floating well above the health bar again, reported as "太高了" a second time).
     // AddEnergyBar is internal (not private) so EnemyEnergyBarSetup.cs can reuse the exact same
-    // bar construction for Player4, matching HealthBarSetup.AddHealthBar's own reuse pattern.
+    // bar construction for Enemy, matching HealthBarSetup.AddHealthBar's own reuse pattern.
     internal static class UltimateAbilitySetup
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";

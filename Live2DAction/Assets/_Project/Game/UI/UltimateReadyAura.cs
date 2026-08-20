@@ -4,8 +4,8 @@ using Live2DAction.Core;
 namespace Live2DAction.UI
 {
     // 2026-08-16, explicit user follow-up to the energy bar pulse ("不夠炫 加個閃電繞圈的特效") -
-    // visible only while UltimateEnergy.IsFull. Player-only (not wired to Player4 the way
-    // HealthRegeneration/the energy bar itself are) - Player4 has no UltimateAbility and
+    // visible only while UltimateEnergy.IsFull. Player-only (not wired to Enemy the way
+    // HealthRegeneration/the energy bar itself are) - Enemy has no UltimateAbility and
     // EnemyAI never presses the ultimate key (see EnemyAI.UltimatePressed's own comment), so a
     // circling "ready" aura on an enemy that can never act on it would read as a UI bug, not a
     // hint.

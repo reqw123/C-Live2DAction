@@ -9,7 +9,7 @@ namespace Live2DAction.EditorTools
     // Builds a small procedural hit-spark particle prefab (2026-08-12, explicit user request:
     // "攻擊特效" -> clarified as hit effects specifically - a burst of sparks/flash at the
     // impact point, not a swing trail or hit-stop/screen-shake) and wires it to both Player's
-    // and Player4's PlayerCombat (both can land hits on each other). No external art asset
+    // and Enemy's PlayerCombat (both can land hits on each other). No external art asset
     // needed - built entirely from a ParticleSystem using URP's built-in
     // "Universal Render Pipeline/Particles/Unlit" shader with additive blending for a bright
     // flash-like look, matching this project's established pattern of building placeholder
@@ -30,11 +30,11 @@ namespace Live2DAction.EditorTools
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
             WireHitEffect("Player", prefab);
-            WireHitEffect("Player4", prefab);
+            WireHitEffect("Enemy", prefab);
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log("Wired hit-spark particle effect into Player and Player4's PlayerCombat.");
+            Debug.Log("Wired hit-spark particle effect into Player and Enemy's PlayerCombat.");
         }
 
         private static void WireHitEffect(string name, GameObject prefab)

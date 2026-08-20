@@ -32,11 +32,19 @@ namespace Live2DAction.EditorTools
 
             WirePlayer(player);
 
-            // TrainingDummy is legitimately optional (deliberately removed from the scene by
-            // the user as of 2026-08-12, see Docs/KNOWN_ISSUES.md) - it used to be a hard
-            // requirement here, which meant re-running this after any Player-only visual
-            // swap (e.g. PlayerMayaVisualSetup) silently skipped WirePlayer too, since both
-            // checks gated both wire calls. Wire whichever of the two actually exists.
+            // TrainingDummy is legitimately optional - it used to be a hard requirement here,
+            // which meant re-running this after any Player-only visual swap (e.g.
+            // PlayerMayaVisualSetup) silently skipped WirePlayer too, since both checks gated
+            // both wire calls. Wire whichever of the two actually exists.
+            //
+            // 2026-08-19 naming note: "TrainingDummy" is now Player3 (see
+            // TrainingDummySetup.cs, from the character-renaming pass) - a DIFFERENT, unrelated
+            // object from whatever was called "TrainingDummy" when this comment was first
+            // written (that one predated Player3 entirely and no longer exists). The optional-
+            // find logic below still behaves correctly either way since it only checks whether
+            // SOME object named "TrainingDummy" exists and has the right components
+            // (PlayerCombat/Animator, both of which Player3 also has) - just be aware the local
+            // variable name "enemy" here is now a misnomer for what it actually finds.
             GameObject enemy = GameObject.Find("TrainingDummy");
             if (enemy != null)
             {

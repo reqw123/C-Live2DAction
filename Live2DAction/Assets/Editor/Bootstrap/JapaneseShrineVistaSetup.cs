@@ -321,7 +321,7 @@ namespace Live2DAction.EditorTools
         }
 
         // See PlayerClimbSlopeLimitDegrees's own comment for why this needs raising at all.
-        // Applied to the live scene's Player only (not Player4/TrainingDummy) - this is a
+        // Applied to the live scene's Player only (not Enemy/TrainingDummy) - this is a
         // player-traversal feature, not a general AI-navigation change, and EnemyAI's own
         // pathing never needs to climb the pagoda.
         private static void ConfigurePlayerClimbSlopeLimit()

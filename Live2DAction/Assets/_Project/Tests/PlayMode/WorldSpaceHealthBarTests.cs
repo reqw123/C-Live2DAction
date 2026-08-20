@@ -55,97 +55,97 @@ public class WorldSpaceHealthBarTests
     }
 
     [UnityTest]
-    public IEnumerator Player_And_Player4_HaveWorldSpaceHealthBarsInRealScene()
+    public IEnumerator Player_And_Enemy_HaveWorldSpaceHealthBarsInRealScene()
     {
         SceneManager.LoadScene("GreyboxTest");
         yield return null;
         yield return null;
 
         GameObject player = GameObject.Find("Player");
-        GameObject player4 = GameObject.Find("Player4");
+        GameObject enemy = GameObject.Find("Enemy");
         Assert.IsNotNull(player, "Player not found in GreyboxTest scene");
-        Assert.IsNotNull(player4, "Player4 not found in GreyboxTest scene");
+        Assert.IsNotNull(enemy, "Enemy not found in GreyboxTest scene");
 
         AssertHasWiredHealthBar(player, "Player");
-        AssertHasWiredHealthBar(player4, "Player4");
+        AssertHasWiredHealthBar(enemy, "Enemy");
     }
 
     // 2026-08-13, explicit user request ("幫我讓player2也有血條 也能受擊，但是他不會自主攻擊") -
-    // Player2 gets the same bar and can take damage, but deliberately has no PlayerCombat/
+    // Mecha gets the same bar and can take damage, but deliberately has no PlayerCombat/
     // EnemyAI wired to it (it never attacks back).
     [UnityTest]
-    public IEnumerator Player2_HasHealthBarAndCanBeDamaged_ButHasNoAttackCapability()
+    public IEnumerator Mecha_HasHealthBarAndCanBeDamaged_ButHasNoAttackCapability()
     {
         SceneManager.LoadScene("GreyboxTest");
         yield return null;
         yield return null;
 
-        GameObject player2 = GameObject.Find("Player2");
-        Assert.IsNotNull(player2, "Player2 not found in GreyboxTest scene");
+        GameObject mecha = GameObject.Find("Mecha");
+        Assert.IsNotNull(mecha, "Mecha not found in GreyboxTest scene");
 
-        AssertHasWiredHealthBar(player2, "Player2");
+        AssertHasWiredHealthBar(mecha, "Mecha");
 
-        Assert.IsNull(player2.GetComponent<Live2DAction.Combat.PlayerCombat>(), "Player2 should not have PlayerCombat - it must never attack");
-        Assert.IsNull(player2.GetComponent<Live2DAction.AI.EnemyAI>(), "Player2 should not have EnemyAI - it must never attack");
+        Assert.IsNull(mecha.GetComponent<Live2DAction.Combat.PlayerCombat>(), "Mecha should not have PlayerCombat - it must never attack");
+        Assert.IsNull(mecha.GetComponent<Live2DAction.AI.EnemyAI>(), "Mecha should not have EnemyAI - it must never attack");
 
-        Health health = player2.GetComponent<Health>();
+        Health health = mecha.GetComponent<Health>();
         float before = health.CurrentHealth;
         health.ApplyDamage(new DamageInfo(10f, Vector3.zero, Vector3.forward, null));
-        Assert.AreEqual(before - 10f, health.CurrentHealth, "Player2 should actually take damage when hit");
+        Assert.AreEqual(before - 10f, health.CurrentHealth, "Mecha should actually take damage when hit");
     }
 
     // 2026-08-13, explicit user request ("引入 Cross Punch.fbx，攻擊、動作判定、機制完全與p1一
     // 致，差別只在於他完全不會動，也不會攻擊") - Player3 shares Player's exact combat data
     // (same LightAttack1/2/3 asset references, not copies) and Maya visual, but has no input
     // source/AI (never attacks) and no CharacterController/movement component (never moves) -
-    // same "damageable but passive" contract as Player2.
+    // same "damageable but passive" contract as Mecha.
     [UnityTest]
-    public IEnumerator Player3_SharesPlayersExactCombatData_ButNeverMovesOrAttacks()
+    public IEnumerator TrainingDummy_SharesPlayersExactCombatData_ButNeverMovesOrAttacks()
     {
         SceneManager.LoadScene("GreyboxTest");
         yield return null;
         yield return null;
 
         GameObject player = GameObject.Find("Player");
-        GameObject player3 = GameObject.Find("Player3");
-        Assert.IsNotNull(player3, "Player3 not found in GreyboxTest scene");
+        GameObject trainingDummy = GameObject.Find("TrainingDummy");
+        Assert.IsNotNull(trainingDummy, "TrainingDummy not found in GreyboxTest scene");
 
-        AssertHasWiredHealthBar(player3, "Player3");
+        AssertHasWiredHealthBar(trainingDummy, "TrainingDummy");
 
         Live2DAction.Combat.PlayerCombat playerCombat = player.GetComponent<Live2DAction.Combat.PlayerCombat>();
-        Live2DAction.Combat.PlayerCombat player3Combat = player3.GetComponent<Live2DAction.Combat.PlayerCombat>();
-        Assert.IsNotNull(player3Combat, "Player3 should have PlayerCombat - same attack mechanism as Player");
+        Live2DAction.Combat.PlayerCombat trainingDummyCombat = trainingDummy.GetComponent<Live2DAction.Combat.PlayerCombat>();
+        Assert.IsNotNull(trainingDummyCombat, "TrainingDummy should have PlayerCombat - same attack mechanism as Player");
 
         var comboAttacksField = typeof(Live2DAction.Combat.PlayerCombat).GetField("comboAttacks", BindingFlags.Instance | BindingFlags.NonPublic);
         var playerCombos = (Live2DAction.Combat.AttackData[])comboAttacksField.GetValue(playerCombat);
-        var player3Combos = (Live2DAction.Combat.AttackData[])comboAttacksField.GetValue(player3Combat);
-        Assert.AreEqual(playerCombos.Length, player3Combos.Length, "Player3 should have the same number of combo steps as Player");
+        var trainingDummyCombos = (Live2DAction.Combat.AttackData[])comboAttacksField.GetValue(trainingDummyCombat);
+        Assert.AreEqual(playerCombos.Length, trainingDummyCombos.Length, "TrainingDummy should have the same number of combo steps as Player");
         for (int i = 0; i < playerCombos.Length; i++)
         {
-            Assert.AreSame(playerCombos[i], player3Combos[i], $"Player3's combo step {i} should reference the exact same AttackData asset as Player's, not a copy");
+            Assert.AreSame(playerCombos[i], trainingDummyCombos[i], $"TrainingDummy's combo step {i} should reference the exact same AttackData asset as Player's, not a copy");
         }
 
-        Assert.IsNull(player3.GetComponent<CharacterController>(), "Player3 should have no CharacterController - it never moves");
-        Assert.IsNull(player3.GetComponent<Live2DAction.Input.PlayerInputProvider>(), "Player3 should have no PlayerInputProvider - it never attacks");
-        Assert.IsNull(player3.GetComponent<Live2DAction.AI.EnemyAI>(), "Player3 should have no EnemyAI - it never attacks");
+        Assert.IsNull(trainingDummy.GetComponent<CharacterController>(), "TrainingDummy should have no CharacterController - it never moves");
+        Assert.IsNull(trainingDummy.GetComponent<Live2DAction.Input.PlayerInputProvider>(), "TrainingDummy should have no PlayerInputProvider - it never attacks");
+        Assert.IsNull(trainingDummy.GetComponent<Live2DAction.AI.EnemyAI>(), "TrainingDummy should have no EnemyAI - it never attacks");
 
-        Vector3 startPosition = player3.transform.position;
-        Health player3Health = player3.GetComponent<Health>();
-        float before = player3Health.CurrentHealth;
+        Vector3 startPosition = trainingDummy.transform.position;
+        Health trainingDummyHealth = trainingDummy.GetComponent<Health>();
+        float before = trainingDummyHealth.CurrentHealth;
 
         yield return null;
         yield return null;
 
-        Assert.AreEqual(startPosition, player3.transform.position, "Player3 should never move on its own");
-        Assert.AreEqual(-1, player3Combat.ComboIndex, "Player3 should never enter an attack (ComboIndex stays -1 with no input driving it)");
+        Assert.AreEqual(startPosition, trainingDummy.transform.position, "TrainingDummy should never move on its own");
+        Assert.AreEqual(-1, trainingDummyCombat.ComboIndex, "TrainingDummy should never enter an attack (ComboIndex stays -1 with no input driving it)");
 
-        player3Health.ApplyDamage(new DamageInfo(10f, Vector3.zero, Vector3.forward, null));
-        Assert.AreEqual(before - 10f, player3Health.CurrentHealth, "Player3 should actually take damage when hit, same as Player2");
+        trainingDummyHealth.ApplyDamage(new DamageInfo(10f, Vector3.zero, Vector3.forward, null));
+        Assert.AreEqual(before - 10f, trainingDummyHealth.CurrentHealth, "TrainingDummy should actually take damage when hit, same as Mecha");
     }
 
     // Regression test for a real user report (2026-08-12, "被攻擊時血量條貼圖不會扣...血條滿
     // 格的狀態敵人直接消失了") - the isolated test above proves fillAmount the *property*
-    // updates correctly, and the scene-wiring test proves Player/Player4 each have a
+    // updates correctly, and the scene-wiring test proves Player/Enemy each have a
     // correctly-wired bar, but neither one screenshots the actual rendered pixels. Real root
     // cause (found by screenshotting the bar during actual Play mode at 50% HP and seeing an
     // unchanged full-width bar): Image.Type.Filled has NO visual effect at all without an
@@ -155,21 +155,21 @@ public class WorldSpaceHealthBarTests
     // either, but AssertHasWiredHealthBar below now checks fillImage.sprite != null, which is
     // the actual condition that was silently broken.
     [UnityTest]
-    public IEnumerator PlayerBar_UpdatesWhenPlayer4DamagesPlayer_InRealScene()
+    public IEnumerator PlayerBar_UpdatesWhenEnemyDamagesPlayer_InRealScene()
     {
         SceneManager.LoadScene("GreyboxTest");
         yield return null;
         yield return null;
 
         GameObject player = GameObject.Find("Player");
-        GameObject player4 = GameObject.Find("Player4");
+        GameObject enemy = GameObject.Find("Enemy");
         Health playerHealth = player.GetComponent<Health>();
         WorldSpaceHealthBar bar = player.GetComponentInChildren<WorldSpaceHealthBar>(true);
         var fillImage = (Image)typeof(WorldSpaceHealthBar)
             .GetField("fillImage", BindingFlags.Instance | BindingFlags.NonPublic)
             .GetValue(bar);
 
-        player.transform.position = player4.transform.position + new Vector3(1.5f, 0f, 0f);
+        player.transform.position = enemy.transform.position + new Vector3(1.5f, 0f, 0f);
 
         float start = Time.realtimeSinceStartup;
         while (Time.realtimeSinceStartup - start < 3f && playerHealth.CurrentHealth >= playerHealth.MaxHealth)
@@ -182,9 +182,9 @@ public class WorldSpaceHealthBarTests
         // frame without it being a real bug (see class comment).
         yield return null;
 
-        Assert.Less(playerHealth.CurrentHealth, playerHealth.MaxHealth, "Player should have taken damage from Player4 within 3s");
+        Assert.Less(playerHealth.CurrentHealth, playerHealth.MaxHealth, "Player should have taken damage from Enemy within 3s");
         Assert.AreEqual(HealthBarUtility.ComputeFillAmount(playerHealth.CurrentHealth, playerHealth.MaxHealth), fillImage.fillAmount, 0.001f,
-            "Player's own health bar should reflect the damage Player4 dealt");
+            "Player's own health bar should reflect the damage Enemy dealt");
     }
 
     private static void AssertHasWiredHealthBar(GameObject owner, string label)

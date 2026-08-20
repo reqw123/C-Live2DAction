@@ -9,12 +9,12 @@ namespace Live2DAction.EditorTools
 {
     // Wires a RespawnController into the existing GreyboxTest scene, targeting Player
     // (2026-08-12, real bug report - see RespawnController's own class comment for the full
-    // story: Player dying to Player4's attacks left the whole GameObject deactivated with no
+    // story: Player dying to Enemy's attacks left the whole GameObject deactivated with no
     // way back, which read as "the character vanished and the game froze"). Adds a small
     // always-active "GameManager" GameObject to hold this and any future cross-cutting
     // game-state logic, rather than piling it onto Main Camera - the controller can't live on
     // Player itself (see its class comment for why). RespawnController itself was generalized
-    // from Player-only (PlayerRespawnController) on 2026-08-13 so Player2RespawnSetup could
+    // from Player-only (PlayerRespawnController) on 2026-08-13 so MechaRespawnSetup could
     // reuse it without duplicating the component - this tool's own name/menu item stayed
     // Player-specific since it still only ever wires Player.
     internal static class PlayerRespawnSetup
@@ -48,7 +48,7 @@ namespace Live2DAction.EditorTools
 
             // Player's RespawnController specifically: GetComponents (plural) + a search for
             // one already targeting Player, since GameManager can now host a second instance
-            // targeting Player2 (see Player2RespawnSetup) - a plain GetComponent<T>() would
+            // targeting Mecha (see MechaRespawnSetup) - a plain GetComponent<T>() would
             // find whichever one happens to be added first, not necessarily Player's own.
             // Also reclaims an orphaned component whose target is null (real 2026-08-13 bug:
             // renaming RespawnController's fields left Player's already-serialized instance

@@ -10,7 +10,7 @@ namespace Live2DAction.UI
     // than a generalized "world space bar" base, matching this codebase's established
     // preference for small duplicated components over a shared abstraction until a third
     // user actually needs one (see CLAUDE.md-level precedent: HealthBarSetup.AddHealthBar
-    // itself stayed a plain static method reused by Player2/Player3 instead of being
+    // itself stayed a plain static method reused by Mecha/TrainingDummy instead of being
     // generalized further than that).
     public class WorldSpaceEnergyBar : MonoBehaviour
     {

@@ -3,7 +3,7 @@ using UnityEngine;
 namespace Live2DAction.Characters
 {
     // 2026-08-18, explicit user request (aerial combat grilling session, Q3/Q5) - both the
-    // player (CharacterMovement) and Player4 (EnemyAI) need to aim up/down at a vertically-
+    // player (CharacterMovement) and Enemy (EnemyAI) need to aim up/down at a vertically-
     // offset target, clamped to a maximum pitch so a character directly below/above its target
     // doesn't contort toward straight up/down. Pure static utility (no MonoBehaviour state)
     // shared by both, matching this codebase's established pattern for cross-character math

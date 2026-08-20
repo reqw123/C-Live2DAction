@@ -11,12 +11,12 @@ namespace Live2DAction.EditorTools
     // give Player4 a long-reach attack, then reported "我沒有被敵人隔空打到" (never actually got
     // hit from range). Root cause: EnemyAI.attackRange (the AI's own "am I close enough to
     // start attacking" threshold, decoupled from AttackData.Range) was still at its class
-    // default of 2 - Player4 kept walking to within melee distance before ever entering
+    // default of 2 - Enemy kept walking to within melee distance before ever entering
     // EnemyState.Attacking, so the extra reach in the hit capsule never got exercised; the AI
     // simply never fired from further away. AttackData.Range and EnemyAI.attackRange are two
     // independent fields that happen to need to stay roughly in sync for a ranged-feeling
     // attack to actually read as ranged - this tool reads EnemyAttack.asset's current Range
-    // and pushes Player4's attackRange to just under it (a small skin so the AI is standing
+    // and pushes Enemy's attackRange to just under it (a small skin so the AI is standing
     // fully within the hit capsule's reach when it commits to attacking, not right at the
     // edge), rather than hardcoding a number here that would silently drift out of sync the
     // next time someone tunes Range again.
@@ -30,7 +30,7 @@ namespace Live2DAction.EditorTools
         // timing/movement could leave it a hair short.
         private const float ReachSkin = 0.5f;
 
-        [MenuItem("Tools/Live2DAction/Sync Player4 Attack Range To EnemyAttack Data")]
+        [MenuItem("Tools/Live2DAction/Sync Enemy Attack Range To EnemyAttack Data")]
         public static void Apply()
         {
             AttackData enemyAttack = AssetDatabase.LoadAssetAtPath<AttackData>(EnemyAttackPath);
@@ -42,17 +42,17 @@ namespace Live2DAction.EditorTools
 
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
-            GameObject player4 = GameObject.Find("Player4");
-            if (player4 == null)
+            GameObject enemy = GameObject.Find("Enemy");
+            if (enemy == null)
             {
-                Debug.LogError("Player4 GameObject not found in " + ScenePath);
+                Debug.LogError("Enemy GameObject not found in " + ScenePath);
                 return;
             }
 
-            EnemyAI ai = player4.GetComponent<EnemyAI>();
+            EnemyAI ai = enemy.GetComponent<EnemyAI>();
             if (ai == null)
             {
-                Debug.LogError("Player4 has no EnemyAI in " + ScenePath);
+                Debug.LogError("Enemy has no EnemyAI in " + ScenePath);
                 return;
             }
 
@@ -67,14 +67,14 @@ namespace Live2DAction.EditorTools
                 // state machine (EnemyBehaviorUtility.DetermineState) to reach Attacking at
                 // all. Raise it to match rather than silently producing a broken enemy.
                 aiSo.FindProperty("detectionRange").floatValue = newAttackRange;
-                Debug.LogWarning($"Raised Player4's detectionRange to {newAttackRange} to stay >= the new attackRange (was {detectionRange}).");
+                Debug.LogWarning($"Raised Enemy's detectionRange to {newAttackRange} to stay >= the new attackRange (was {detectionRange}).");
             }
             aiSo.FindProperty("attackRange").floatValue = newAttackRange;
             aiSo.ApplyModifiedPropertiesWithoutUndo();
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log($"Player4's EnemyAI.attackRange synced to {newAttackRange} (EnemyAttack.Range={enemyAttack.Range}, skin={ReachSkin}) - it will now commit to attacking from range instead of walking to melee distance first.");
+            Debug.Log($"Enemy's EnemyAI.attackRange synced to {newAttackRange} (EnemyAttack.Range={enemyAttack.Range}, skin={ReachSkin}) - it will now commit to attacking from range instead of walking to melee distance first.");
         }
     }
 }

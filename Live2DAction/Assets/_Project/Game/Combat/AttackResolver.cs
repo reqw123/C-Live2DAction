@@ -16,9 +16,9 @@ namespace Live2DAction.Combat
         // damageMultiplier (2026-08-13, explicit user request - ultimate skill: "attack1傷害
         // 乘10倍") defaults to 1 (no effect) so every existing caller/test is unaffected.
         // Deliberately scales the damage HERE rather than having callers mutate
-        // AttackData.Damage itself - AttackData is a shared ScriptableObject asset (Player3/
-        // Player4 reference the exact same LightAttack1 asset object, see
-        // Player3TrainingDummySetup's own comment on why that sharing is intentional), so
+        // AttackData.Damage itself - AttackData is a shared ScriptableObject asset (TrainingDummy/
+        // Enemy reference the exact same LightAttack1 asset object, see
+        // TrainingDummySetup's own comment on why that sharing is intentional), so
         // writing a temporary buffed value into the asset would leak into every other user of
         // it and - worse - persist into the asset file after Play mode ends, since Unity
         // doesn't auto-revert ScriptableObject field edits made in Play mode the way it does

@@ -54,21 +54,21 @@ public class WanderMovementTests
     }
 
     [UnityTest]
-    public IEnumerator Player2InRealScene_HasWanderMovementAndStaysInsideBoundaryWalls()
+    public IEnumerator MechaInRealScene_HasWanderMovementAndStaysInsideBoundaryWalls()
     {
         SceneManager.LoadScene("GreyboxTest");
         yield return null;
         yield return null;
 
-        GameObject player2 = GameObject.Find("Player2");
-        Assert.IsNotNull(player2, "Player2 not found in GreyboxTest scene");
+        GameObject mecha = GameObject.Find("Mecha");
+        Assert.IsNotNull(mecha, "Mecha not found in GreyboxTest scene");
 
-        WanderMovement wander = player2.GetComponent<WanderMovement>();
-        Assert.IsNotNull(wander, "Player2 has no WanderMovement component.");
+        WanderMovement wander = mecha.GetComponent<WanderMovement>();
+        Assert.IsNotNull(wander, "Mecha has no WanderMovement component.");
 
         yield return RunForSeconds(1f);
 
-        Assert.Less(Mathf.Abs(player2.transform.position.x), 15f, "Player2 wandered past the +/-X boundary wall.");
-        Assert.Less(Mathf.Abs(player2.transform.position.z), 15f, "Player2 wandered past the +/-Z boundary wall.");
+        Assert.Less(Mathf.Abs(mecha.transform.position.x), 15f, "Mecha wandered past the +/-X boundary wall.");
+        Assert.Less(Mathf.Abs(mecha.transform.position.z), 15f, "Mecha wandered past the +/-Z boundary wall.");
     }
 }

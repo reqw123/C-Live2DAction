@@ -7,14 +7,14 @@ namespace Live2DAction.EditorTools
     // Wires one-off special-move Animator states that, unlike CombatAnimatorSetup's Attack1-4,
     // don't automatically belong to both characters.
     //
-    // "AttackUltimate" (Arisa/Player4 only, 2026-08-17) - EnemyUltimateAbility's Breakdance
-    // finisher. Player4-exclusive mechanic (this session's own scoping decision), so wiring it
+    // "AttackUltimate" (Arisa/Enemy only, 2026-08-17) - EnemyUltimateAbility's Breakdance
+    // finisher. Enemy-exclusive mechanic (this session's own scoping decision), so wiring it
     // into Maya's controller too would just be permanently unused dead weight.
     //
     // "Execute" (2026-08-17, originally Maya/player only for ExecutionAbility's Flying Kick
     // deathblow; 2026-08-17 follow-up explicit user request "敵我雙方都套用...處刑" made the
     // stagger/execution mechanic symmetric - EnemyExecutionAbility reuses this same trigger/clip
-    // on Player4 too, so this now wires into BOTH controllers, same "one clip, both rigs" reuse
+    // on Enemy too, so this now wires into BOTH controllers, same "one clip, both rigs" reuse
     // CombatAnimatorSetup's Attack1-4 already established).
     //
     // "Staggered" (2026-08-17, explicit user request "陷入僵直時採用蹲下動作", now on both

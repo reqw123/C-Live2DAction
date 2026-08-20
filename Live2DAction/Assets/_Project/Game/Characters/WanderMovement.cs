@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace Live2DAction.Characters
 {
-    // Simple decorative wandering for static-standee characters like Player2's mecha - not a
+    // Simple decorative wandering for static-standee characters like Mecha's mecha - not a
     // full character controller (no gravity/input/combat, just Transform.position += velocity
     // each frame), so it works on objects that only have a plain Collider, not a
     // CharacterController. Picks a new random horizontal direction every few seconds via

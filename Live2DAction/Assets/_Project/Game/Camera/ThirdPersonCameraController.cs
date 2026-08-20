@@ -40,7 +40,7 @@ namespace Live2DAction.CameraSystem
         [SerializeField] private Transform target;
 
         // distance=2 is the user's own explicit request (2026-08-12, alongside troubleshooting
-        // the "character disappears near Player4" report - see enableCameraCollision below)
+        // the "character disappears near Enemy" report - see enableCameraCollision below)
         // - raised from the previous 0.8 for more breathing room. targetOffset.y=0.5 is
         // separate hands-on tuning from 2026-08-11/12, unchanged. 0 distance would be true
         // first-person (camera at the eye point, no offset) - SetOwnVisualHidden below still
@@ -61,7 +61,7 @@ namespace Live2DAction.CameraSystem
         // after fixing the CharacterController-climbing root cause and raising distance to 2 -
         // this project genuinely never had any camera collision avoidance (documented as a
         // known gap since 2026-08-12's earlier greybox pass), and a naive orbit camera with no
-        // obstruction check WILL end up positioned inside nearby geometry (Player4's own mesh,
+        // obstruction check WILL end up positioned inside nearby geometry (Enemy's own mesh,
         // a cover block, a boundary wall) whenever the player stands close enough to something
         // - from inside a mesh, backface culling typically shows nothing/the skybox behind it,
         // which reads exactly like "the character disappeared and the screen froze" even
@@ -111,6 +111,26 @@ namespace Live2DAction.CameraSystem
         // with TargetLockController's own facing logic).
         [SerializeField] private MonoBehaviour lockOnSource;
 
+        // 2026-08-20, explicit user request ("玩家飛行下降的視角也要跟隨壓低") - same
+        // gated-easing idiom as enableAutoCenter above (cedes control the instant real mouse
+        // input arrives, same isLooking check), but for PITCH instead of yaw, and gated on
+        // CharacterMovement.IsDescending instead of "walking forward/back". Complements the
+        // existing dive-speed-boost (CharacterMovement 2.4, which reads THIS camera's pitch to
+        // decide how much to accelerate a dive) - that one reacts to the player already looking
+        // down while descending; this one is the other half, nudging the camera to actually look
+        // down in the first place once you start descending, so the two reinforce each other
+        // (hold descend -> camera eases down -> now looking down while still descending -> dive
+        // bonus kicks in) instead of requiring the player to manually aim down first.
+        [SerializeField] private bool enableDescendAutoPitch = true;
+
+        // How far down the camera eases toward while descending - short of maxPitch(70) so it
+        // reads as "leaning to look at what's below", not slammed to the same steep angle the
+        // dive bonus's own top end uses.
+        [SerializeField] private float descendAutoPitchTargetDegrees = 45f;
+
+        // Same Lerp-per-frame idiom as autoCenterSpeed, not a literal degrees/second rate.
+        [SerializeField] private float descendAutoPitchSpeed = 2.5f;
+
         // Degrees of rotation per pixel of mouse movement. Mouse.delta is already a per-frame
         // pixel delta (not a per-second rate), so this must NOT also be scaled by
         // Time.deltaTime - an earlier version did that by mistake, which silently divided the
@@ -147,6 +167,11 @@ namespace Live2DAction.CameraSystem
         private ILockOnSource LockOnSource => lockOnSource as ILockOnSource;
 
         public float YawDegrees => _yaw;
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 3.1/3.2) - lets
+        // CharacterMovement read how far down the camera is currently looking (dive-speed-boost
+        // condition needs both "holding descend" AND "looking down past a threshold").
+        public float PitchDegrees => _pitch;
 
         // Without confining the cursor, Mouse.delta keeps reporting real physical mouse
         // movement regardless of where the OS cursor visually is - any mouse use that isn't
@@ -185,6 +210,11 @@ namespace Live2DAction.CameraSystem
                 _initialized = true;
             }
 
+            // Resolved here (rather than down where roll consumes it below) so the descend
+            // auto-pitch block inside the isPlaying check right below can also read
+            // targetMovement.IsDescending without a second lookup.
+            CharacterMovement targetMovement = ResolveTargetMovement();
+
             if (Application.isPlaying)
             {
                 // OnEnable only locks the cursor once, at Play start. Losing that lock later
@@ -216,12 +246,58 @@ namespace Live2DAction.CameraSystem
                 {
                     _yaw = ComputeAutoCenterYaw(_yaw, target.eulerAngles.y, autoCenterSpeed, Time.deltaTime);
                 }
+
+                // 2026-08-20, explicit user request ("玩家飛行下降的視角也要跟隨壓低") - same
+                // isLooking gate as auto-center above (manual mouse input always wins instantly),
+                // but no delay before it engages - holding descend is already a deliberate,
+                // explicit action (unlike "walking forward" which auto-center deliberately waits
+                // out in case it's incidental), so there's no need to wait out a quiet period
+                // first. Not gated on lock-on either - auto-center defers to lock-on because a
+                // locked camera has its own facing logic entirely, but pitch during a lock-on is
+                // still whatever the lock-on aim leaves it at, nothing here conflicts with that.
+                //
+                // 2026-08-20, real playtested bug ("我打鏡頭抬到最上方 為何SHIFT還會往下") - this
+                // used to fire purely off IsDescending (just "is Shift held"), with no regard for
+                // which way the player had just manually pitched the camera. The instant the
+                // mouse stopped moving (isLooking goes false the very next frame, even right
+                // after deliberately pitching all the way up to minPitch) while still holding
+                // Shift, this yanked the camera straight back down toward
+                // descendAutoPitchTargetDegrees - completely overriding a just-made deliberate
+                // look-up, and once it crossed CharacterMovement's own dive threshold, real
+                // descend kicked in right along with it. Since camera angle now GATES whether
+                // Shift descends at ALL (not just a speed bonus - see
+                // CharacterMovement.divePitchThresholdDegrees' own history), silently dragging
+                // the camera down against the player's own explicit choice defeats the entire
+                // point of that gate. `_pitch >= 0f` added: only ever assists FROM level or
+                // already-somewhat-down, never fights a genuine look-up - if the player has
+                // pitched up at all, this auto-assist backs off entirely and leaves the camera
+                // exactly where they put it.
+                if (enableDescendAutoPitch && !isLooking && _pitch >= 0f && targetMovement != null && targetMovement.IsDescending)
+                {
+                    _pitch = Mathf.Lerp(_pitch, descendAutoPitchTargetDegrees, descendAutoPitchSpeed * Time.deltaTime);
+                }
             }
 
-            Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0f);
+            // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.5/3.2) - the
+            // camera banks by the SAME angle as the character's own visual roll rather than
+            // computing its own independent lean, so the two can never drift out of sync -
+            // CharacterMovement is the single source of truth for "how banked are we right now"
+            // (it already owns the strafe input this is derived from). Negated: rolling the
+            // CAMERA the same direction the character visually tips reads as "the horizon
+            // tilting the opposite way", the same convention a banked-turn cockpit view uses.
+            // Roll only affects the camera's own up-vector, not rotation*Vector3.forward (a
+            // roll around the forward axis leaves that axis fixed), so it's safe to fold into
+            // this same `rotation` used below for both the SphereCast obstruction check and the
+            // position math - no separate roll-free rotation needed for either.
+            float roll = targetMovement != null ? -targetMovement.CurrentBankRollDegrees : 0f;
+            Quaternion rotation = Quaternion.Euler(_pitch, _yaw, roll);
 
-            CharacterMovement targetMovement = ResolveTargetMovement();
-            bool targetAirborneUnderControl = targetMovement != null && (targetMovement.IsFlying || targetMovement.IsGliding);
+            // 2026-08-20, real playtested feedback ("體力條歸0時要快速掉落到地面 停止飛行") - Glide
+            // (the soft fixed-rate fallback state) has been removed entirely from
+            // CharacterMovement (see that class's own UpdateFlightState comment) - running out
+            // of energy now just falls under normal gravity, so this only needs to check
+            // IsFlying any more.
+            bool targetAirborneUnderControl = targetMovement != null && targetMovement.IsFlying;
             float desiredDistance = targetAirborneUnderControl ? distance * flightDistanceMultiplier : distance;
             float usedDistance = desiredDistance;
 

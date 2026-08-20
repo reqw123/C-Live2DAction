@@ -12,7 +12,7 @@ namespace Live2DAction.EditorTools
     // Unity serializes fields by name). Re-running PlayerRespawnSetup.Apply() at the time
     // didn't reclaim that orphan (it only matched by exact target, so it just added ANOTHER
     // component), leaving 3 RespawnControllers on GameManager: 1 permanently-dead orphan +
-    // 2 correctly wired ones. PlayerRespawnSetup/Player2RespawnSetup were fixed the same day
+    // 2 correctly wired ones. PlayerRespawnSetup/MechaRespawnSetup were fixed the same day
     // to reclaim an orphan instead of always adding a new one, so this shouldn't recur - this
     // tool just removes whatever orphan(s) are already sitting in the scene from before that
     // fix existed.

@@ -85,7 +85,7 @@ namespace Live2DAction.EditorTools
         // Player dying otherwise leaves the whole GameObject deactivated with no way back -
         // see RespawnController's class comment for the full 2026-08-12 bug report this fixes
         // (component generalized from Player-only PlayerRespawnController on 2026-08-13 so
-        // Player2 could reuse it too). Lives on a separate always-active "GameManager"
+        // Mecha could reuse it too). Lives on a separate always-active "GameManager"
         // GameObject, not Player itself (that class comment explains why it can't).
         private static void CreatePlayerRespawnController(GameObject player)
         {
@@ -291,6 +291,13 @@ namespace Live2DAction.EditorTools
             wall.transform.position = position;
             BoxCollider collider = wall.AddComponent<BoxCollider>();
             collider.size = size;
+
+            // 2026-08-20, explicit user request ("本地周圍有一道看不到的牆碰撞體...能不能在任何角色
+            // 碰撞此牆時設計一個被阻擋的特效") - kept in sync with the live-scene fix
+            // (BoundaryWallBlockEffectSetup) so a full scene rebuild reproduces it too, instead of
+            // only existing until the next time this method regenerates the walls from scratch.
+            BoundaryWallBlockEffectSetup.EnsureHud();
+            BoundaryWallBlockEffectSetup.AddBlockEffectToWall(wall);
         }
 
         private static void CreateCoverBlocks()
@@ -332,7 +339,7 @@ namespace Live2DAction.EditorTools
             // Default (0.3) lets this CharacterController auto-climb up to that height onto
             // whatever it's pushed against - including another character's own rounded
             // capsule top. Real 2026-08-12 bug report ("很靠近敵人時角色1突然消失，畫面定格"):
-            // walking straight into Player4 (also a CharacterController) let Player climb up
+            // walking straight into Enemy (also a CharacterController) let Player climb up
             // its shoulder/head over a few seconds of continued forward input, launching from
             // Y=0.58 to Y=1.66 and then getting stuck oscillating back and forth at the top
             // (confirmed by a diagnostic PlayMode test that reproduced it, then confirmed
@@ -344,7 +351,7 @@ namespace Live2DAction.EditorTools
             // Derived from Ground's actual collider bounds rather than a hardcoded Y so this
             // can't quietly drift into a floating-capsule bug if height/radius are tuned
             // later (see FixPlayerGroundedSpawn.cs for the bug this caused once already).
-            // X/Z spawn beside TrainingDummy (at world origin) rather than in front of it -
+            // X/Z spawn beside Enemy (at world origin) rather than in front of it -
             // reported as "I spawn on top of the pillar and fall off" (the two were 2 units
             // apart, not actually overlapping, but the very close default camera distance made
             // it read that way; spawning to the side removes the ambiguity entirely).
@@ -461,16 +468,26 @@ namespace Live2DAction.EditorTools
             return data;
         }
 
-        // TrainingDummy is now an AI-driven enemy rather than a static target - it reuses
-        // PlayerCombat for its attack (see EnemyAI: it implements IInputCommand purely so the
-        // same frame-data combo pipeline the player uses can be shared, per the project rule
-        // that player and AI input share one interface). Built here with a plain capsule
-        // "Visual" child (function before art); EnemyHumanoidVisualSetup.cs swaps that for
-        // the Quaternius Humanoid placeholder afterward, same two-step pattern as Player's
-        // various visual swaps - not folded into this method for the same reason those aren't.
+        // This spawns an AI-driven enemy (not a static target) - it reuses PlayerCombat for its
+        // attack (see EnemyAI: it implements IInputCommand purely so the same frame-data combo
+        // pipeline the player uses can be shared, per the project rule that player and AI input
+        // share one interface). Built here with a plain capsule "Visual" child (function before
+        // art); EnemyHumanoidVisualSetup.cs swaps that for the Quaternius Humanoid placeholder
+        // afterward, same two-step pattern as Player's various visual swaps - not folded into
+        // this method for the same reason those aren't.
+        //
+        // 2026-08-19, follow-up to the Player/Mecha/TrainingDummy/Enemy renaming pass - this
+        // object used to be created here as "TrainingDummy" (its own original, pre-rename name,
+        // back when it was the ONLY other character in the scene) and never got renamed to
+        // "Enemy" anywhere in this file, even after later one-off tools/the live scene moved on
+        // to calling it "Player4" and now "Enemy" - a staleness this disaster-recovery rebuild
+        // path could have quietly reintroduced (a *different*, unrelated character is now named
+        // "TrainingDummy" - see TrainingDummySetup.cs's rename - so reusing that name here
+        // would collide two very different characters under the same name on a from-scratch
+        // rebuild). Renamed to match what this object actually IS today.
         private static GameObject CreateEnemy(Transform playerTarget)
         {
-            var enemy = new GameObject("TrainingDummy");
+            var enemy = new GameObject("Enemy");
 
             CapsuleCollider capsuleReference = enemy.AddComponent<CapsuleCollider>();
             float height = capsuleReference.height;
@@ -543,7 +560,7 @@ namespace Live2DAction.EditorTools
             Camera camera = cameraGo.AddComponent<Camera>();
             // Wider than a typical 50-60 degree default: at the close eye-level distance this
             // camera sits at, a narrow FOV's vertical slice crops the legs/feet off of any
-            // nearby subject (reported for both Player and Player2). See
+            // nearby subject (reported for both Player and Mecha). See
             // ThirdPersonCameraController's class comment.
             camera.fieldOfView = 65f;
 

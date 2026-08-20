@@ -10,9 +10,9 @@ namespace Live2DAction.EditorTools
     // Female FBX (Quaternius, see Docs/ASSET_LICENSES.md) - already sitting unused in the
     // project since Phase 1's wholesale asset-pack copy (only the Male variant was ever
     // wired to a GameObject; see PlayerHumanoidVisualSetup.cs/EnemyHumanoidVisualSetup.cs).
-    // Mirrors their material/import-setup logic. Not attached to Player/Enemy/Player2 or any
+    // Mirrors their material/import-setup logic. Not attached to Player/Enemy/Mecha or any
     // AI/movement - purely a static "cast" placeholder standing alongside the Live2D
-    // standees (see Live2DStandeeSetup.cs), same spirit as Player2's static mecha standee
+    // standees (see Live2DStandeeSetup.cs), same spirit as Mecha's static mecha standee
     // minus the wander behaviour, since nothing asked for this one to move yet.
     internal static class FemaleStandeeSetup
     {

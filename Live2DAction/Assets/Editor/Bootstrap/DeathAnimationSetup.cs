@@ -8,8 +8,8 @@ using Live2DAction.Combat;
 namespace Live2DAction.EditorTools
 {
     // 2026-08-18, explicit user request ("將這個動作作為所有角色死亡時的共同動作") - wires
-    // DeathAnimationLink onto every character with a compatible Humanoid rig (Player/Player3/
-    // Player4, all sharing Maya's or Arisa's Animator Controller - see
+    // DeathAnimationLink onto every character with a compatible Humanoid rig (Player/TrainingDummy/
+    // Enemy, all sharing Maya's or Arisa's Animator Controller - see
     // SpecialMoveAnimatorSetup.cs's own "Dead" wiring) and flips Health.
     // deferDeactivationToDeathAnimation on for each, so their death is played out via the Dying
     // clip instead of Health's original synchronous SetActive(false).
@@ -22,7 +22,15 @@ namespace Live2DAction.EditorTools
     internal static class DeathAnimationSetup
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";
-        private static readonly string[] TargetNames = { "Player", "Player3", "Player4" };
+        // 2026-08-19: "UnityChan" added (same Humanoid-rig/Animator-Controller-sharing precedent
+        // as the other three, see UnityChanCompanionSetup.cs), then renamed to "中立者1" the same
+        // day when NeutralCharacterSetup.cs unified her with the two newer neutral characters
+        // under one naming scheme - updated here to match, otherwise this list would silently
+        // stop finding her. 中立者2/中立者3 are NOT listed here on purpose - NeutralCharacterSetup
+        // already wires their DeathAnimationLink directly (their Animator only exists as a child
+        // of "Visual", not on it, so this class's own `visual.GetComponent<Animator>()` -
+        // deliberately self-only, not GetComponentInChildren - wouldn't find it anyway).
+        private static readonly string[] TargetNames = { "Player", "TrainingDummy", "Enemy", "中立者1" };
 
         [MenuItem("Tools/Live2DAction/Add Death Animation To Humanoid Characters")]
         public static void Apply()

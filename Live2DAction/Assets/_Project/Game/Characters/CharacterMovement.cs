@@ -7,7 +7,7 @@ using Live2DAction.Targeting;
 namespace Live2DAction.Characters
 {
     [RequireComponent(typeof(CharacterController))]
-    public class CharacterMovement : MonoBehaviour
+    public class CharacterMovement : MonoBehaviour, ICharacterSpeedSource
     {
         [SerializeField] private MonoBehaviour inputSource;
 
@@ -90,27 +90,155 @@ namespace Live2DAction.Characters
         // skill's own energy, wired independently. Optional (null-safe below) - flight simply
         // never activates without one wired.
         [SerializeField] private UltimateEnergy flightEnergy;
+
+        // 2026-08-20, explicit user request ("請讓泉水點也支援回復體力條") - Player carries TWO
+        // UltimateEnergy instances (this one, and the ultimate skill's own, wired completely
+        // independently - see flightEnergy's own comment), so a plain
+        // GetComponentInParent<UltimateEnergy>() from an external system like HealingSpring can't
+        // tell them apart and just grabs whichever happens to resolve first. Exposing this
+        // specific reference directly (same "expose the internal state something external needs"
+        // idiom as IsFlying/CurrentBankRollDegrees below) lets HealingSpring target the flight
+        // instance unambiguously instead of guessing.
+        public UltimateEnergy FlightEnergy => flightEnergy;
+
         [SerializeField] private float flightAscendSpeed = 6f;
-        [SerializeField] private float flightDescendSpeed = 4f;
-        [SerializeField] private float flightEnergyDrainPerSecond = 20f;
 
-        // 2026-08-18, explicit user request (flight system grilling session - see CONTEXT.md's
-        // own "Glide" entry) - the fallback state when Flight Energy runs out mid-air. A soft,
-        // fixed-rate descent instead of Flight just handing control back to normal gravity (which
-        // at that point would usually mean falling from a serious height) - echoes Wuthering
-        // Waves' "drop back to glider, not a hard fall" behavior. Costs no energy (flightEnergy
-        // regenerates normally while gliding, same passive regen it already has), and horizontal
-        // movement stays fully controllable - only the vertical rate changes from Flight's.
-        [SerializeField] private float glideDescendSpeed = 2f;
+        // 2026-08-20, real playtested feedback ("俯視飛行似乎沒辦法做到真的低或直直落下") -
+        // measured the actual achieved descend speed directly rather than guessing: even with the
+        // dive bonus fully maxed out (camera pitched to 70°, holding descend), steady-state
+        // vertical velocity only reached the OLD flightDescendSpeed(4) * diveMaxSpeedMultiplier
+        // (1.4) = -5.6/sec - slower than plain ascend (6) and far slower than horizontal cruise
+        // (flightMoveSpeed=9, let alone boosted). Descending never had any mechanism actually
+        // BLOCKING it from reaching the ground or going low (a direct straight-down descent test
+        // confirmed it reaches ground level and lands cleanly) - the complaint was real, just
+        // about FEEL: nothing about "diving" read as fast or committed next to every other flight
+        // speed in the kit. Raised to match flightAscendSpeed exactly (6) as the new plain-
+        // descend baseline - diving is no longer weirdly slower than climbing by default.
+        [SerializeField] private float flightDescendSpeed = 6f;
 
-        // 2026-08-18, real playtested bug ("飛行有能耗 非一半就停下來導致飛行軌跡奇異") - Glide
-        // originally resumed Flight the instant CurrentEnergy > 0f while the key was still held.
-        // With this project's actual tuning (drain 20/sec, regen only 10/sec) that meant once
-        // energy hit zero, holding the key produced a rapid stutter instead of a clean Glide:
-        // regen ticks 10 energy back in, Flight instantly resumes, drains it back to 0 in just
-        // 0.5s, drops back to Glide, repeat - a visible up/down "hop-glide-hop-glide" sawtooth
-        // rather than a real recovery. Requiring a real reserve (not just >0) before Flight can
-        // resume gives Glide enough uninterrupted time to actually read as its own state.
+        // 2026-08-20, explicit user request ("玩家飛行時的耐力條很快就沒了") - Drain fires every
+        // frame the whole time _isFlying is true (ascending, descending, OR just hovering - see
+        // the Update() block below, it's unconditional on the vertical direction).
+        //
+        // 2026-08-20 follow-up, explicit user request ("設計為飛行體力500 只有在閒置3秒沒有消耗體力
+        // 後才會逐漸恢復體力 恢復速度提高") - the flightEnergy instance's regen no longer nets
+        // against this drain in real time at all (see UltimateEnergy.regenIdleDelaySeconds) -
+        // every Drain() call while flying pushes regen back out by a further 3 seconds, so this
+        // value is now the FULL, un-netted cost of sustained flight: at the current 500 max (see
+        // that instance's own maxEnergy), that's ~33 seconds of continuous flight before running
+        // dry, with regen only actually starting 3s after landing/stopping rather than
+        // continuously fighting the drain mid-flight.
+        [SerializeField] private float flightEnergyDrainPerSecond = 15f;
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.2) - ascend/descend
+        // used to snap _verticalVelocity to its target instantly every frame (no easing at all),
+        // unlike every other velocity in this class (all SmoothDamp'd). Short on purpose - this
+        // is meant to remove the jarring instant-flip when toggling hover/ascend/descend, not to
+        // make flight feel heavy or sluggish (compare to horizontal's 0.05-0.08s - this is
+        // deliberately a bit longer than that, but still short). Only used while ACTIVELY holding
+        // ascend or descend now - see flightVerticalStopSmoothTime below for releasing both.
+        [SerializeField] private float flightVerticalSmoothTime = 0.18f;
+
+        // 2026-08-20, real playtested bug ("現在我明明直直地面對前方還會下墜") - releasing descend
+        // after the dive-speed tuning above (flightDescendSpeed/diveMaxSpeedMultiplier both
+        // raised) left a MUCH bigger residual velocity to bleed off through the single shared
+        // flightVerticalSmoothTime(0.18s) - a full dive's -15/sec took ~0.3-0.4s (measured
+        // directly, not guessed) to actually settle back near 0 after letting go of everything,
+        // which reads exactly like "I'm looking straight ahead, holding nothing, and still
+        // falling" even though nothing is actually broken - it's genuine momentum, just not
+        // shed fast enough to feel intentional. Mirrors the horizontal velocity's own existing
+        // accel/decel split (accelerationSmoothTime vs decelerationSmoothTime) - a separate,
+        // much shorter smooth time specifically for "returning to hover" (neither ascend nor
+        // descend held), so committing to a fast dive still feels deliberate to enter but stops
+        // almost immediately once you actually let go, instead of coasting for a third of a
+        // second. Diving/ascending themselves are UNCHANGED (still ease in via
+        // flightVerticalSmoothTime above) - only the "stopping" case got faster.
+        [SerializeField] private float flightVerticalStopSmoothTime = 0.08f;
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.3) - flight's own
+        // horizontal cruise speed, decoupled from moveSpeed (which is tuned to match the
+        // ground Locomotion animation, not remotely fast enough to read as "free flight").
+        // Only applies while _isFlying - moveSpeed still governs ground movement (and, since
+        // Glide's removal, plain falling too) unchanged.
+        [SerializeField] private float flightMoveSpeed = 9f;
+
+        // 2026-08-20, flight system design, explicit user request ("按鍵衝刺") - a SEPARATE
+        // mechanic from the dive-speed-boost below (see that field's own comment for why they're
+        // not the same thing), triggered by a dedicated held key (BoostPressed, see
+        // IInputCommand) rather than any movement/camera state. Multiplies flightMoveSpeed
+        // (works in whatever direction the player is already flying, not a fixed forward dash),
+        // and only while genuinely Flying - see IsBoosting's own comment for why Glide is
+        // excluded.
+        [SerializeField] private float boostSpeedMultiplier = 1.8f;
+
+        // Stacks ON TOP OF flightEnergyDrainPerSecond while boosting (not a replacement) - see
+        // the design doc's own 2.3 for why this is a real, meaningfully faster drain rather than
+        // a token cost, so boosting reads as "spend a burst of my reserve to go fast right now",
+        // not something to just hold permanently.
+        [SerializeField] private float boostEnergyDrainPerSecond = 25f;
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.4) - "diving" is
+        // deliberately BOTH conditions at once (camera pitched down past this threshold AND
+        // actually holding descend) - either alone was rejected: camera-angle-only lets the
+        // player free-ride the bonus just by looking down while flying level, and
+        // descend-only drops the "look where you're diving" feel the whole feature was about.
+        //
+        // 2026-08-20 follow-up, real playtested feedback ("視角往下+shift時才會往下飛行") - this
+        // threshold now gates whether descend happens AT ALL, not just how much of a speed bonus
+        // it gets - see `diving`'s own usage further down (holding descend with the camera level
+        // or looking up no longer moves the character down at all any more).
+        //
+        // 2026-08-20, real playtested feedback ("門檻太低 太容易觸發下淺") - doubled from 15 to
+        // 30 - the gate itself was working (level camera genuinely didn't descend), but 15° is a
+        // very slight tilt to already trigger a real dive off of, so it kept firing sooner than
+        // felt intentional. 30° requires committing to a genuinely downward look before descend
+        // engages at all, while still leaving real headroom under maxPitch(70°) for the
+        // diveMultiplier to keep scaling up as you look further down, and under the existing
+        // descend-auto-pitch's own 45° target (still clears this new threshold on its own).
+        [SerializeField] private float divePitchThresholdDegrees = 30f;
+
+        // Multiplier at the top of the dive range (camera pitched all the way to
+        // ThirdPersonCameraController's own maxPitch, 70°) - scales in smoothly from 1x at the
+        // threshold above, not a hard on/off switch, so "how hard you're looking down" reads as
+        // "how much faster you're diving".
+        // 2026-08-20, real playtested feedback ("俯視飛行似乎沒辦法做到真的低或直直落下") - raised
+        // from 1.4 (only 5.6/sec max descend at the OLD flightDescendSpeed(4), barely different
+        // from a level descend) so committing to a real look-straight-down dive (camera pitched
+        // to maxPitch, holding descend) actually reads as dramatically faster than a plain
+        // descend, not a marginal tweak - at the new flightDescendSpeed(6), full dive now reaches
+        // 15/sec, close to boosted horizontal cruise, which is the intended "you chose to
+        // commit to a real dive, it should feel powerful" payoff. The existing
+        // descend-auto-pitch (eases toward 45°, not the full 70° a manual look-down reaches)
+        // still gets a meaningfully fast partial dive (~11/sec) without the player needing to
+        // manually aim the camera all the way down.
+        [SerializeField] private float diveMaxSpeedMultiplier = 2.5f;
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.5) - banking tilt,
+        // driven directly by strafe input STRENGTH (moveInput.x), not actual turn rate - this
+        // class's own facing/yaw is itself SmoothDampAngle'd (see the facingDirection block
+        // below), so deriving bank from the turn rate would be a lagged signal on top of an
+        // already-lagged signal and read as sluggish. Reading raw input directly keeps banking
+        // exactly as responsive as every other flight control here.
+        // 2026-08-20, real playtested feedback ("A/D搖晃角度過大") - halved from the original 20,
+        // the first-pass number read as excessive once actually flown.
+        [SerializeField] private float maxBankRollDegrees = 10f;
+        [SerializeField] private float bankRollSmoothTime = 0.12f;
+
+        // 2026-08-20, real playtested feedback ("體力條歸0時要快速掉落到地面 停止飛行") - Glide (a
+        // soft fixed-rate fallback descent, echoing Wuthering Waves' "drop back to glider, not a
+        // hard fall") existed here from 2026-08-18 through this same day, but direct play testing
+        // asked for the opposite: running out of energy should drop you fast and end flight
+        // outright, not ease into a second lingering airborne state. Removed entirely -
+        // UpdateFlightState now just ends _isFlying on empty energy (same as landing) and lets
+        // the normal gravity branch below take over immediately, same as walking off any other
+        // ledge.
+        //
+        // Still gates (re-)entering Flight at all, not just resuming after a Glide that no longer
+        // exists - see the original bug this prevents in UpdateFlightState's own comment
+        // ("飛行有能耗 非一半就停下來導致飛行軌跡奇異": entering the instant CurrentEnergy > 0f
+        // let a single regen tick immediately restart Flight, drain back to 0 in a fraction of a
+        // second, and repeat - a visible stutter rather than a clean state change). Requiring a
+        // real reserve applies to every entry now, not just a Glide-specific resume case.
         [SerializeField] private float flightResumeEnergyThreshold = 30f;
 
         // 2026-08-18, explicit user request (aerial combat grilling session, Q3/Q5) - until now
@@ -120,14 +248,13 @@ namespace Live2DAction.Characters
         // to face it, or its attack capsule (which extends along attackOrigin.forward) would
         // still only ever reach horizontally. Clamped to +/-maxPitchDegrees so a target directly
         // overhead doesn't contort the character toward looking straight up - see AimUtility's
-        // own comment for the shared clamping math (EnemyAI uses the same utility for Player4's
+        // own comment for the shared clamping math (EnemyAI uses the same utility for Enemy's
         // side of the same problem).
         [SerializeField] private float maxPitchDegrees = 60f;
 
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private bool _isFlying;
-        private bool _isGliding;
         private float _pitch;
         private float _pitchAngularVelocity;
         private float _desiredPitchDegrees;
@@ -152,6 +279,15 @@ namespace Live2DAction.Characters
         private float _yawAngularVelocity;
         private DodgeState _dodgeState;
 
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 3.3) - SmoothDamp
+        // state for flightVerticalSmoothTime, kept separate from _horizontalVelocitySmoothDampRef
+        // (different SmoothDamp call, own independent "current rate of change").
+        private float _verticalVelocitySmoothDampRef;
+
+        // SmoothDampAngle state for the banking-roll visual (maxBankRollDegrees/bankRollSmoothTime).
+        private float _bankRollDegrees;
+        private float _bankRollAngularVelocity;
+
         // Resolved on every use rather than cached in Awake(), so assigning inputSource
         // after the component has already Awoken (e.g. from a test) still takes effect.
         private IInputCommand InputCommand => inputSource as IInputCommand;
@@ -164,14 +300,29 @@ namespace Live2DAction.Characters
         public bool IsDodgeInvulnerable => _dodgeState != null && _dodgeState.IsInvulnerable;
 
         // Exposed for CharacterAnimatorLink (drives the Animator's existing but previously-
-        // unused "Fly" bool) and for a wing visual to toggle itself on/off. Deliberately NOT
-        // true while Gliding - WingFlap's own idle/flying two-tier flap rate treats Gliding as
-        // "not flying" on purpose (see glideDescendSpeed's own comment: gliding should read as a
-        // gentle flap, matching the idle rate, not the energetic flying one).
+        // unused "Fly" bool) and for a wing visual to toggle itself on/off.
         public bool IsFlying => _isFlying;
 
-        // See glideDescendSpeed's own comment for what Glide is and why it exists.
-        public bool IsGliding => _isGliding;
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.5) - single source
+        // of truth for the current banking-tilt angle, read by both this class's own Visual
+        // child (see the pitch/roll application near the bottom of Update()) and
+        // ThirdPersonCameraController (so the camera banks in sync with the character instead of
+        // computing its own independent lean that could drift out of sync).
+        public float CurrentBankRollDegrees => _bankRollDegrees;
+
+        // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.3) - true only while
+        // actively spending the boost's extra energy drain (Flying + BoostPressed held), not
+        // during Glide (see boostSpeedMultiplier's own comment for why boosting is excluded
+        // there). Exposed publicly for any future visual/audio reacting to boost specifically,
+        // same idiom as IsFlying already being exposed for WingFlap.
+        public bool IsBoosting { get; private set; }
+
+        // 2026-08-20, explicit user request ("玩家飛行下降的視角也要跟隨壓低") - true only while
+        // actively holding descend during real Flight (not Glide, which no longer exists - see
+        // UpdateFlightState's own comment). ThirdPersonCameraController reads this to auto-pitch
+        // the camera down while descending, same "exposed for the camera to react to" idiom as
+        // IsFlying/CurrentBankRollDegrees above.
+        public bool IsDescending { get; private set; }
 
         // 2026-08-18, explicit user request ("上升氣流，任何人碰到...會快速飛向空中") - lets an
         // external trigger volume (Updraft) push this character upward without fighting its own
@@ -185,6 +336,43 @@ namespace Live2DAction.Characters
         public void ApplyUpwardLaunch(float speed)
         {
             _verticalVelocity = Mathf.Max(_verticalVelocity, speed);
+        }
+
+        // 2026-08-19, explicit user request ("光環碰到時玩家會短暫被加速") - a CheckpointGate
+        // boost pad calls this the instant the player flies through it.
+        //
+        // 2026-08-19 follow-up, explicit user request ("經過光環時需要有向前短距離衝刺的作用") -
+        // the original design multiplied moveSpeed into desiredDirection*moveSpeed, which only did
+        // anything while the player was ALREADY holding a move direction - flying through a gate
+        // while gliding/hovering with no input held (the common case right after an updraft
+        // launch) produced literally no speed change. Replaced with a genuine one-shot forward
+        // dash: ApplyDash sets an ADDITIVE world-space velocity, independent of player input, that
+        // Update() sums into `motion` alongside the normal input-driven _horizontalVelocity and
+        // linearly decays to zero over DashDecaySeconds - so it always visibly shoves the
+        // character forward the instant it's applied, matching "短距離衝刺" (a short burst, not a
+        // sustained buff) far better than the old multi-second multiplier ever did.
+        private const float DashDecaySeconds = 0.5f;
+        private Vector3 _dashVelocity;
+        private float _dashDecayTimer;
+
+        // 2026-08-19 follow-up, explicit user request ("穿過光圈需有短位移向前衝刺") - the pure
+        // velocity-decay version above apparently didn't read as an actual "位移" (displacement/
+        // dash) since it only ever built up gradually through the normal eased motion pipeline.
+        // instantDisplacement adds a guaranteed, immediate CharacterController.Move() snap the
+        // instant this is called - safe to call outside Update() (CharacterController.Move() is
+        // designed to be callable anytime), so a fast-moving flying player gets an unmistakable
+        // "shoved forward right now" pop regardless of frame timing, with the decaying velocity
+        // below providing a few more frames of lingering follow-through afterward.
+        public void ApplyDash(Vector3 direction, float speed, float instantDisplacement)
+        {
+            if (direction.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+            Vector3 dir = direction.normalized;
+            _controller.Move(dir * instantDisplacement);
+            _dashVelocity = dir * speed;
+            _dashDecayTimer = DashDecaySeconds;
         }
 
         // Raw camera-relative input axes this frame (y = W/S, x = A/D), not the resulting
@@ -227,6 +415,57 @@ namespace Live2DAction.Characters
             CurrentMoveInput = moveInput;
             bool dodgePressed = !staggered && inputCommand != null && inputCommand.DodgePressed;
             bool jumpPressed = !staggered && inputCommand != null && inputCommand.JumpPressed;
+
+            // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 3.3) - moved ahead
+            // of the horizontal-velocity block below (it used to live right before the vertical-
+            // velocity block, much further down) specifically so _isFlying is
+            // already CURRENT for this frame by the time desiredVelocity picks flightMoveSpeed
+            // vs moveSpeed - computing it in its old position meant horizontal speed used LAST
+            // frame's flight state, a one-frame-stale read that only mattered once flight speed
+            // diverged from ground speed (which it didn't, before this design). Moving the call
+            // doesn't change UpdateFlightState's own behavior at all - it only reads
+            // _controller.isGrounded and flightEnergy, neither affected by this file's ordering.
+            bool flyHeld = !staggered && inputCommand != null && inputCommand.FlyPressed;
+            bool flyDescendHeld = !staggered && inputCommand != null && inputCommand.FlyDescendPressed;
+            UpdateFlightState(flyHeld);
+
+            // Boost (Docs/FLIGHT_SYSTEM_DESIGN.md 2.3) - a dedicated held key, only while
+            // genuinely Flying (not Glide - see boostSpeedMultiplier's own field comment).
+            bool boostHeld = !staggered && inputCommand != null && inputCommand.BoostPressed;
+            IsBoosting = _isFlying && boostHeld;
+            if (IsBoosting && flightEnergy != null)
+            {
+                // Stacks on top of the base flightEnergyDrainPerSecond drain below (that one
+                // fires unconditionally while _isFlying, this is purely additive on top of it).
+                flightEnergy.Drain(boostEnergyDrainPerSecond * Time.deltaTime);
+            }
+            float boostMultiplier = IsBoosting ? boostSpeedMultiplier : 1f;
+
+            // 2026-08-20, explicit user request ("玩家飛行下降的視角也要跟隨壓低") - exposed so
+            // ThirdPersonCameraController can auto-pitch the camera down while actively
+            // HOLDING descend in flight (not while actually falling - see `diving` right below
+            // for that, this is deliberately the raw held-key signal instead), the same way it
+            // already auto-centers yaw while walking forward/back (see enableDescendAutoPitch's
+            // own comment on that camera class). Has to stay keyed off the raw key, not `diving`
+            // below - its whole job is easing the camera down PAST `diving`'s own threshold in
+            // the first place, so gating it on `diving` would create a deadlock (camera can never
+            // start moving toward the very state that's supposed to unlock it).
+            IsDescending = _isFlying && flyDescendHeld;
+
+            // Dive (Docs/FLIGHT_SYSTEM_DESIGN.md 2.4, tightened 2026-08-20 - "視角往下+shift時才
+            // 會往下飛行") - BOTH camera pitched down past the threshold AND actually holding
+            // descend, not either alone (see divePitchThresholdDegrees' own field comment for
+            // why). This is no longer just a speed-bonus condition - `diving` itself now GATES
+            // whether descend happens at all (see targetVertical's own comment down in the
+            // vertical-velocity block) - holding descend with a level or upward camera does
+            // nothing any more, only holding it while genuinely looking down actually descends.
+            float cameraPitch = CameraYawSource?.PitchDegrees ?? 0f;
+            bool diving = _isFlying && flyDescendHeld && cameraPitch > divePitchThresholdDegrees;
+            // 70f = ThirdPersonCameraController's own maxPitch - the top of the camera's real
+            // look-down range, not a separate tunable copy of that number.
+            float diveT = diving ? Mathf.InverseLerp(divePitchThresholdDegrees, 70f, cameraPitch) : 0f;
+            float diveMultiplier = Mathf.Lerp(1f, diveMaxSpeedMultiplier, diveT);
+
             Vector3 desiredDirection = CameraRelativeDirection(moveInput, CurrentCameraYawDegrees());
 
             // Dodge backward (relative to current facing) if there's no move input held,
@@ -252,7 +491,16 @@ namespace Live2DAction.Characters
             }
             else
             {
-                Vector3 desiredVelocity = desiredDirection * moveSpeed;
+                // Docs/FLIGHT_SYSTEM_DESIGN.md 2.3/2.4/3.3-d - flightMoveSpeed (not moveSpeed)
+                // while actively Flying, then boost/dive stack multiplicatively on top - both
+                // naturally settle to 1x whenever their own conditions aren't met (grounded,
+                // falling, not boosting, not diving), so this line needs no extra branching for
+                // those cases. Real playtested feedback ("只有在飛行時視角才能跟隨a/d") narrowed
+                // this from "Flying or Gliding" to Flying alone - Glide itself has since been
+                // removed entirely (see UpdateFlightState's own comment), so a plain fall now
+                // correctly uses ground moveSpeed for horizontal control, not flight speed.
+                float baseSpeed = _isFlying ? flightMoveSpeed : moveSpeed;
+                Vector3 desiredVelocity = desiredDirection * (baseSpeed * boostMultiplier * diveMultiplier);
                 float smoothTime = desiredVelocity.sqrMagnitude > 0.0001f ? accelerationSmoothTime : decelerationSmoothTime;
                 _horizontalVelocity = Vector3.SmoothDamp(_horizontalVelocity, desiredVelocity, ref _horizontalVelocitySmoothDampRef, smoothTime);
 
@@ -275,7 +523,19 @@ namespace Live2DAction.Characters
                 }
             }
 
-            if (_controller.isGrounded && _verticalVelocity < 0f)
+            // 2026-08-20, real playtested bug ("地面上按ctrl會有bug") - this reset used to run
+            // completely unconditionally, including while _isFlying. Ascend now SmoothDamps up
+            // from whatever _verticalVelocity currently is (see the flight block below) rather
+            // than snapping straight to a positive target - starting from the ground, that eased
+            // ramp spends its first several frames still technically negative while climbing
+            // toward flightAscendSpeed. Without this !_isFlying guard, THIS reset kept slamming
+            // it back to exactly -1 every single one of those frames (still grounded, still
+            // negative), fighting the SmoothDamp so hard the character could never actually
+            // accumulate enough upward velocity to leave the ground at all - holding Ctrl while
+            // grounded just sat there vibrating instead of taking off. The old instant-assignment
+            // version never hit this because it jumped straight to a positive value in one frame,
+            // never re-entering this reset's `< 0f` condition again.
+            if (_controller.isGrounded && _verticalVelocity < 0f && !_isFlying)
             {
                 _verticalVelocity = -1f;
             }
@@ -287,33 +547,46 @@ namespace Live2DAction.Characters
                 _verticalVelocity = jumpSpeed;
             }
 
-            bool flyHeld = !staggered && inputCommand != null && inputCommand.FlyPressed;
-            bool flyDescendHeld = !staggered && inputCommand != null && inputCommand.FlyDescendPressed;
-            UpdateFlightState(flyHeld);
-
             if (_isFlying)
             {
-                // Gravity is fully overridden while flying - ascend/descend/hover are all
-                // direct vertical speeds rather than forces, so flight feels immediately
-                // responsive instead of fighting the normal fall acceleration every frame.
-                // Holding descend takes priority over ascend if somehow both are held; holding
-                // neither hovers in place (see UpdateFlightState's own comment for why release
-                // doesn't end flight outright).
-                _verticalVelocity = flyDescendHeld ? -flightDescendSpeed : (flyHeld ? flightAscendSpeed : 0f);
+                // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md 2.2/2.4/3.3-a/e)
+                // - ascend/descend/hover now SmoothDamp toward their target instead of snapping
+                // instantly, and the descend target additionally scales by diveMultiplier.
+                // Gravity is still fully overridden while flying either way - these are direct
+                // target speeds being eased toward, not forces.
+                //
+                // 2026-08-20, real playtested feedback ("視角往下+shift時才會往下飛行") - descend
+                // now requires `diving` (camera actually pitched down past
+                // divePitchThresholdDegrees, not just flyDescendHeld alone) - holding Shift with
+                // a level or upward-looking camera no longer does anything at all (falls through
+                // to the flyHeld/hover branch), where it used to descend regardless of where the
+                // camera was pointed. This supersedes the earlier "still falling while looking
+                // straight ahead" fix (a faster momentum-decay smooth time) - that fix addressed
+                // residual velocity bleeding off after RELEASING descend, but the user was
+                // holding Shift the whole time with a level camera, which the OLD design
+                // correctly (by its own old rules) read as "keep descending" - not a bug under
+                // that design, just not the behavior actually wanted. The auto-pitch below still
+                // gates on plain `flyDescendHeld` (not `diving`) deliberately - it has to, since
+                // its whole job is easing the camera down PAST this same threshold in the first
+                // place; gating it on `diving` would mean it could never start.
+                float targetVertical = diving ? -flightDescendSpeed * diveMultiplier : (flyHeld ? flightAscendSpeed : 0f);
+                // See flightVerticalStopSmoothTime's own comment - releasing both keys (or
+                // holding descend without looking down, which no longer actually descends either)
+                // sheds whatever vertical momentum existed much faster than actively climbing or
+                // diving builds it up.
+                float verticalSmoothTime = (flyHeld || diving) ? flightVerticalSmoothTime : flightVerticalStopSmoothTime;
+                _verticalVelocity = Mathf.SmoothDamp(_verticalVelocity, targetVertical, ref _verticalVelocitySmoothDampRef, verticalSmoothTime);
                 if (flightEnergy != null)
                 {
                     flightEnergy.Drain(flightEnergyDrainPerSecond * Time.deltaTime);
                 }
             }
-            else if (_isGliding)
-            {
-                // Fixed gentle sink, no energy cost, horizontal movement untouched (the
-                // _horizontalVelocity computed above already applies regardless of state) - see
-                // glideDescendSpeed's own comment.
-                _verticalVelocity = -glideDescendSpeed;
-            }
             else
             {
+                // 2026-08-20, real playtested feedback ("體力條歸0時要快速掉落到地面 停止飛行") -
+                // Glide (a separate soft-descent fallback state) used to live here as its own
+                // branch; removed entirely, so running out of energy mid-flight now falls straight
+                // into this same plain-gravity branch immediately, same as any other fall.
                 _verticalVelocity += gravity * Time.deltaTime;
             }
 
@@ -324,11 +597,11 @@ namespace Live2DAction.Characters
             //
             // 2026-08-16 correction: originally gated purely on IsTooSteepToStandOn against
             // _controller.slopeLimit (45° default) - but a jump landing near the center of a
-            // small-radius capsule's dome (e.g. Player4's radius 0.4) contacts it at well
+            // small-radius capsule's dome (e.g. Enemy's radius 0.4) contacts it at well
             // under 45° from vertical, the same as any normal walkable slope, even though
             // standing on a character's own collision capsule was never meant to be valid
             // footing regardless of the exact angle (confirmed against the real regression:
-            // LandingOnTopOfPlayer4_SlidesOffWithoutAnyInput still failed with a mild ~16°
+            // LandingOnTopOfEnemy_SlidesOffWithoutAnyInput still failed with a mild ~16°
             // contact normal). Now also unconditionally slides whenever the ground hit belongs
             // to another character's CharacterController, on top of the original slope check
             // (which still covers genuinely steep terrain, if any is ever added).
@@ -349,7 +622,18 @@ namespace Live2DAction.Characters
                 }
             }
 
-            Vector3 motion = _horizontalVelocity + slideVelocity;
+            // Linear ease-out to zero over DashDecaySeconds - see ApplyDash's own comment. Kept
+            // as a separate additive term rather than folded into _horizontalVelocity itself so
+            // it survives regardless of dodge state/input and never gets clobbered by the
+            // SmoothDamp above re-targeting toward whatever the player's own input wants.
+            Vector3 dashContribution = Vector3.zero;
+            if (_dashDecayTimer > 0f)
+            {
+                dashContribution = _dashVelocity * (_dashDecayTimer / DashDecaySeconds);
+                _dashDecayTimer -= Time.deltaTime;
+            }
+
+            Vector3 motion = _horizontalVelocity + slideVelocity + dashContribution;
             motion.y = _verticalVelocity;
             _controller.Move(motion * Time.deltaTime);
 
@@ -360,6 +644,17 @@ namespace Live2DAction.Characters
             // only, never to this transform - see _visual's own field comment for why (the
             // CharacterController capsule must stay upright).
             _pitch = Mathf.SmoothDampAngle(_pitch, _desiredPitchDegrees, ref _pitchAngularVelocity, rotationSmoothTime);
+
+            // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md 2.5/3.3-f), scope
+            // narrowed by real playtested feedback ("只有在飛行時視角才能跟隨a/d") - banking tilt
+            // only while actively Flying, driven directly by strafe input strength (moveInput.x),
+            // not turn rate (see maxBankRollDegrees' own field comment for why). Decays back to 0
+            // the instant Flying ends (landing, falling, dodging - moveInput.x still reads
+            // normally there, but targetBankRoll is forced to 0 so the character never banks on
+            // the ground or during a plain fall).
+            float targetBankRoll = _isFlying ? -moveInput.x * maxBankRollDegrees : 0f;
+            _bankRollDegrees = Mathf.SmoothDampAngle(_bankRollDegrees, targetBankRoll, ref _bankRollAngularVelocity, bankRollSmoothTime);
+
             if (_visual != null)
             {
                 // Negated: Unity's Euler X convention is inverted from AimUtility's
@@ -368,7 +663,7 @@ namespace Live2DAction.Characters
                 // (pre-Visual-child) version of this line - never actually caught before because
                 // only _desiredPitchDegrees's raw value was reflection-tested, not the resulting
                 // forward vector.
-                _visual.localRotation = Quaternion.Euler(-_pitch, 0f, 0f);
+                _visual.localRotation = Quaternion.Euler(-_pitch, 0f, _bankRollDegrees);
             }
 
             if (facingDirection.sqrMagnitude > 0.0001f)
@@ -384,57 +679,61 @@ namespace Live2DAction.Characters
             // else: no yaw change this frame - transform.rotation already yaw-only, nothing to do.
         }
 
-        // Entering flight requires holding the key with energy available (grounded or airborne
-        // - lifting straight off the ground is intentional, "自由飛行" reads as more than just
-        // an air-only ability). Once active, flight PERSISTS regardless of whether the key is
-        // still held - see Update()'s own flight block: releasing simply hovers instead of
-        // falling - and only actually ends on landing (isGrounded true again, which physically
-        // can't happen mid-ascent) or running out of energy. This asymmetry (easy entry
-        // condition, sticky exit condition) is deliberate: "按住鍵自由飛行" describes holding
-        // the key to CONTROL flight, not to merely stay airborne.
+        // Entering flight requires holding the key with a real energy reserve available
+        // (grounded or airborne - lifting straight off the ground is intentional, "自由飛行"
+        // reads as more than just an air-only ability). Once active, flight PERSISTS regardless
+        // of whether the key is still held - see Update()'s own flight block: releasing simply
+        // hovers instead of falling - and only actually ends on landing or running out of
+        // energy. This asymmetry (easy entry condition, sticky exit condition) is deliberate:
+        // "按住鍵自由飛行" describes holding the key to CONTROL flight, not to merely stay
+        // airborne.
         //
-        // 2026-08-18 extended with Glide (see glideDescendSpeed's own comment): running out of
-        // energy mid-air now drops into Glide instead of straight back to normal gravity/falling.
-        // Glide itself ends on landing, or resumes real Flight the moment the key is held again
-        // AND energy has regenerated past zero - same entry condition as the empty-handed case
-        // below, just checked from the Glide branch too.
+        // 2026-08-20, real playtested feedback ("體力條歸0時要快速掉落到地面 停止飛行") - a Glide
+        // fallback state used to live here (2026-08-18 through this same day): running out of
+        // energy dropped into a soft fixed-rate descent instead of ending flight outright. Real
+        // play testing asked for the opposite - removed entirely, so running out of energy now
+        // just ends _isFlying immediately, same as landing, and the normal gravity branch in
+        // Update() takes over right away (a real, accelerating fall, not a lingering glide).
+        //
+        // Re-entry requires flightResumeEnergyThreshold (not just > 0f) even on a completely
+        // fresh first-ever entry now, not only when recovering from a just-emptied tank - a real
+        // playtested bug this avoids (previously only guarded on the Glide-resume path):
+        // requiring just > 0f let a single passive regen tick immediately restart Flight the
+        // instant it ran dry, drain back to 0 in a fraction of a second, and repeat - a visible
+        // stutter rather than a clean state change. Applying the same threshold universally
+        // means that bug can't resurface now that Glide (its own dedicated guard) is gone.
         private void UpdateFlightState(bool flyHeld)
         {
             if (_isFlying)
             {
-                if (_controller.isGrounded)
+                // 2026-08-20, real playtested bug ("地面上按ctrl會有bug") - this used to be plain
+                // `_controller.isGrounded` alone, which was fine when ascend snapped the vertical
+                // velocity straight to its target in one frame (see flightVerticalSmoothTime's
+                // own comment) - a single frame of +flightAscendSpeed was already enough real
+                // displacement to clear the ground before the NEXT frame's check ever ran. Once
+                // ascend became a SmoothDamp ramp instead, liftoff from a standstill takes several
+                // frames to build real upward speed - isGrounded can still legitimately read true
+                // for those first few frames purely because the character genuinely hasn't moved
+                // far enough yet, NOT because flight ended. Checking isGrounded alone killed
+                // _isFlying on literally the first of those frames, which reset the vertical
+                // SmoothDamp's target back toward gravity/off, which kept it grounded, which
+                // killed flight again next frame too - holding Ctrl on the ground just sat there
+                // vibrating, never actually taking off. `!flyHeld` excludes exactly that window:
+                // as long as the key commanding ascend is still held, a transient "still touching
+                // the ground mid-liftoff" reading doesn't count as landing. Releasing Ctrl while
+                // still genuinely airborne (isGrounded false) still correctly keeps hovering
+                // rather than ending flight either - only BOTH being true (actually on the ground
+                // AND not currently trying to ascend) reads as a real landing.
+                bool landed = _controller.isGrounded && !flyHeld;
+                if (landed || flightEnergy == null || flightEnergy.CurrentEnergy <= 0f)
                 {
                     _isFlying = false;
-                }
-                else if (flightEnergy == null || flightEnergy.CurrentEnergy <= 0f)
-                {
-                    _isFlying = false;
-                    _isGliding = true;
                 }
 
                 return;
             }
 
-            if (_isGliding)
-            {
-                if (_controller.isGrounded)
-                {
-                    _isGliding = false;
-                    return;
-                }
-
-                // flightResumeEnergyThreshold, not just > 0f - see that field's own comment for
-                // the stutter bug this avoids.
-                if (flyHeld && flightEnergy != null && flightEnergy.CurrentEnergy >= flightResumeEnergyThreshold)
-                {
-                    _isGliding = false;
-                    _isFlying = true;
-                }
-
-                return;
-            }
-
-            if (flyHeld && flightEnergy != null && flightEnergy.CurrentEnergy > 0f)
+            if (flyHeld && flightEnergy != null && flightEnergy.CurrentEnergy >= flightResumeEnergyThreshold)
             {
                 _isFlying = true;
             }
@@ -454,7 +753,7 @@ namespace Live2DAction.Characters
         // (e.g. local Y=0.05 for height=1/radius=0.4, nowhere near the actual bottom surface)
         // instead of at the bottom hemisphere. The cast still technically ran, but from a
         // point already deep inside solid geometry - confirmed via a failing regression test
-        // (LandingOnTopOfPlayer4_SlidesOffWithoutAnyInput) that the slide never actually
+        // (LandingOnTopOfEnemy_SlidesOffWithoutAnyInput) that the slide never actually
         // triggered. capsuleBottomLocalY + radius alone is the correct bottom-hemisphere-
         // center reference point.
         // otherCharacterController is non-null when the closest hit's collider belongs to

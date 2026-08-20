@@ -18,6 +18,13 @@ namespace Live2DAction.EditorTools
     // Spawn Y is derived from Ground's actual world bounds and the CharacterController's
     // current height/center, same formula as FixPlayerGroundedSpawn.cs, so this can't
     // silently break again if either is tuned later.
+    //
+    // ALREADY APPLIED - do not re-run: this was a one-off fix for a specific past bug on the
+    // object that eventually became Enemy. Its GameObject.Find("TrainingDummy") below used
+    // that object's name AT THE TIME this was written; after the 2026-08-19 character-renaming
+    // pass, "TrainingDummy" belongs to a different, unrelated character (Player3 - see
+    // TrainingDummySetup.cs), so re-running this today would silently reground THAT object
+    // instead of failing with a clean "not found" error.
     internal static class FixEnemyGroundedSpawn
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";

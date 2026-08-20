@@ -22,6 +22,7 @@ public class TargetLockControllerTests
         public bool UltimatePressed { get; set; }
         public bool FlyPressed { get; set; }
         public bool FlyDescendPressed { get; set; }
+        public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
     }
 
     private static void SetField(object target, string fieldName, object value)
@@ -44,7 +45,7 @@ public class TargetLockControllerTests
         // scene loaded (e.g. anything using SceneManager.LoadScene("GreyboxTest") -
         // WanderMovementTests, CharacterCollisionBlockingTests, MovementFrameTimingTests,
         // CameraRelativeMovementRegressionTests) would leave extra LockOnTarget candidates
-        // (Player2, TrainingDummy) lying around and break this fixture's "exactly one
+        // (Mecha, TrainingDummy) lying around and break this fixture's "exactly one
         // candidate" assumptions. Same rationale as CharacterMovementTests.SetUp - wipe every
         // root object first so this fixture always starts from a truly blank scene.
         foreach (GameObject root in SceneManager.GetActiveScene().GetRootGameObjects())
