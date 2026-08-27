@@ -1,0 +1,56 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: PW2_Attack_RisingFlyingKick
+  m_EditorClassIdentifier: 
+  attackId: RisingFlyingKick
+  clipName: PW2_RisingFlyingKick
+  minDistance: 0
+  maxDistance: 3
+  maxAngleDegrees: 90
+  cooldownSeconds: 0
+  selectionWeightPhase1: 0
+  selectionWeightPhase2: 0
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0
+  recoverySeconds: 1
+  startupTracking: 1
+  lateTracking: 0
+  trackingDropNormalizedTime: 0
+  baseHealthDamage: 300
+  basePoiseDamage: 32
+  knockbackForce: 14
+  launchesTarget: 1
+  interruptible: 0
+  superArmorDuringActiveWindows: 1
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 2
+    startNormalized: 0.6
+    endNormalized: 0.9
+    damageMultiplier: 1
+    measured: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  designNotes: "Ultimate - measured via SampleAnimation (2026-08-25). Left foot:
+    real forward reach 2.4-2.9m at consistently low height (~0.68-0.70m world Y)
+    during t=0.60-0.90 - matches the spec's 2-5m ultimate range without root motion.
+    superArmorDuringActiveWindows=true (airborne strike, spec: \u8D77\u8DF3\u5F8C\u9032\u5165\u9738\u9AD4)."

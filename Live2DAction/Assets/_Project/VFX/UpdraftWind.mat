@@ -25,13 +25,16 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
+    - _ActiveBlend: 0
     - _BandFrequency: 7
     - _CoreAlpha: 0.22
+    - _FillHeight01: 1
     - _FresnelPower: 2.5
     - _RimAlpha: 0.95
     - _ScrollSpeed: 1.6
     - _TopFadeStart: 0.55
     m_Colors:
+    - _ActiveColor: {r: 1, g: 0.08, b: 0.08, a: 1}
     - _Color: {r: 0.85, g: 0.95, b: 1, a: 0.5}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

@@ -1,0 +1,98 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_LeapSlam
+  m_EditorClassIdentifier:
+  attackId: LeapSlam
+  clipName: Wushi_LeapSlam
+  minDistance: 0
+  maxDistance: 999
+  maxAngleDegrees: 360
+  cooldownSeconds: 0
+  selectionWeightPhase1: 0
+  selectionWeightPhase2: 0
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.3
+  recoverySeconds: 0.5
+  startupTracking: 0
+  lateTracking: 0
+  trackingDropNormalizedTime: 0
+  baseHealthDamage: 500
+  basePoiseDamage: 60
+  knockbackForce: 5
+  launchesTarget: 0
+  interruptible: 0
+  superArmorDuringActiveWindows: 1
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 5
+    startNormalized: 0.32
+    endNormalized: 0.56
+    damageMultiplier: 1
+    measured: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 1
+  designNotes: "2026-08-27, explicit user request (導入 Meshy_AI_Parkside_Portrait_biped\
+    \ (9).zip 作為定時小技能，戰鬥每經\
+    過20秒就觸發，先飛升到空中，\
+    然後落地劇砍，落地時鎖定玩\
+    家，落下期間全程有攻擊幀、\
+    範圍大) - measured via AnimationMode.SampleAnimationClip against the\
+    \ live Wushi character (whole 3.03s clip, tracking Hips-bone world Y and BladeHitbox\
+    \ speed relative to root every ~0.017s). Confirmed the clip's rise-and-fall is\
+    \ ENTIRELY baked into the Hips bone's own local animation - root Transform position\
+    \ never moves at all during the whole clip (measured 0.000 drift throughout) -\
+    \ so \"landing on the player\" is achieved by teleporting Wushi's root to the\
+    \ player's current XZ position (own grounded Y kept) and committing facing ONCE\
+    \ in TryEnterLeapSlam right before this state starts, not by tracking mid-air.\
+    \ Motion profile: crouch/wind-up t=0-0.13, RISE t=0.13-0.32 (Hips climbs from ~2\
+    \ up to a peak of ~11 units, i.e. real airborne height given Wushi's 4x scale),\
+    \ FALL t=0.32-0.53 (Hips drops from 11 back to ~1.8, blade speed peaks at a\
+    \ violent 108.3 units/s at t=0.533 - the actual slam impact, faster than any\
+    \ other measured attack in this project), held landing pose t=0.55-0.80, stand\
+    \ back up t=0.80-1.0. Hit window (0.32-0.56) deliberately covers the WHOLE fall\
+    \ through to just after impact settles, not just the landing instant, per the\
+    \ explicit \"全程具有攻擊幀\" request. Uses the existing LandingAOE hitbox slot\
+    \ (part 5) - a purpose-built large SphereCollider (world radius 3.0, several\
+    \ times any normal attack's reach) newly wired to Wushi specifically for this\
+    \ move, matching the explicit \"範圍大\" request; that slot/field already existed\
+    \ in the architecture for the (currently-disabled) Vanish/DiveAttack cycle but\
+    \ was never actually used by Wushi until now. Never part of normalAttackPool -\
+    \ selectionWeight/maxDistance/maxAngle/cooldown are all irrelevant leftovers from\
+    \ the shared BossAttackDefinition schema (queued purely by\
+    \ BossTuning.LeapSlamTriggerSeconds combat-time timer instead, see\
+    \ TryEnterLeapSlam) - maxDistance/maxAngle set to effectively unlimited and\
+    \ cooldownSeconds to 0 so they can never accidentally gate anything if this ever\
+    \ gets referenced from a distance/angle-aware path by mistake. interruptible=0 +\
+    \ superArmorDuringActiveWindows=1 since a boss committed to an aerial slam\
+    \ shouldn't be punch-stopped mid-leap.\n\n2026-08-27 follow-up, explicit user\
+    \ request (\"不能跳很高嗎 至少讓玩家看不到的高度 從上而下劈砍 傷害500\") -\
+    \ the clip's own baked ~11-unit rise wasn't remotely \"off-screen\", so\
+    \ BossStateMachine.UpdateLeapSlam now layers an EXTRA script-driven height arc\
+    \ on top of it via BossTuning.LeapSlamExtraHeight (default 30 world units,\
+    \ ~41 combined with the clip's own motion) - driven through _verticalVelocity\
+    \ every frame, not the animation itself, so it's tunable without re-editing the\
+    \ clip. Damage raised to 500 (poise to 60 to match the escalated severity) -\
+    \ at the player's established 500 max HP this is a genuine one-shot-if-you-\
+    \ don't-move punish, which is the intended trade for how dramatically\
+    \ telegraphed (character vanishes upward) and wide (3.0 world-unit radius) the\
+    \ warning is."

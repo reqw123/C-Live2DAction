@@ -1,6 +1,8 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using Live2DAction.Characters;
+using Live2DAction.Combat;
+using Live2DAction.Input;
 using Live2DAction.Targeting;
 
 namespace Live2DAction.CameraSystem
@@ -48,6 +50,89 @@ namespace Live2DAction.CameraSystem
         [SerializeField] private float distance = 2f;
         [SerializeField] private Vector3 targetOffset = new Vector3(0f, 0.5f, 0f);
 
+        // 2026-08-23, explicit user request ("接下來我要調整第一視角 有辦法讓我自己調整到滿意位置
+        // 再給你微調嗎") - split out from targetOffset above specifically so live-tweaking the
+        // first-person eye position in Play Mode can never disturb the already-hand-tuned
+        // third-person targetOffset/distance (see that field's own comment - user-owned data,
+        // not to be touched incidentally). Defaults to whatever targetOffset's current live value
+        // was at the moment this field was added, so first-person starts from the exact same eye
+        // position it already used before this split - a pure refactor, no visual change on its
+        // own.
+        [SerializeField] private Vector3 firstPersonEyeOffset = new Vector3(0.5f, 0.5f, 0f);
+
+        // 2026-08-23, explicit user request ("第一視角下要盡量讓敵人能夠全身進入到畫面正中間") - at
+        // typical melee range (~1.2m) an enemy roughly the player's own height doesn't fit
+        // head-to-toe within the base Camera component's third-person FOV (65°, tuned for the
+        // over-the-shoulder view, never meant for anything this close) - the bottom of their
+        // model gets cropped off-screen. Independent first-person-only FOV, same "split so tuning
+        // one view can't disturb the other" convention as firstPersonEyeOffset - third person
+        // keeps whatever FOV is set on the Camera component itself.
+        [SerializeField] private float firstPersonFieldOfView = 78f;
+
+        // Captured from the Camera component the first time it's needed, so third person always
+        // reverts to whatever FOV was actually authored on the component (not a hardcoded
+        // default) once aiming ends.
+        private Camera _camera;
+        private float? _thirdPersonFieldOfView;
+
+        // 2026-08-23, explicit user request ("新增只有在瞄準時作用鍵盤按鍵 :a 視角持續放大 e 視角持續
+        // 變小") - a scope-style zoom layered ON TOP of firstPersonFieldOfView while actually
+        // aiming: holding A narrows the FOV (magnifies, "放大") toward minZoomFieldOfView, holding
+        // E widens it back out (de-magnifies, "變小") no further than firstPersonFieldOfView
+        // itself - E backs off an existing zoom-in, it was never meant to zoom OUT past the
+        // normal aim view into something wider. Resets to firstPersonFieldOfView every time
+        // aiming freshly starts (same off->on edge as the yaw-snap-to-facing block below) so a
+        // leftover zoom level from a previous aim never silently carries into the next one.
+        [SerializeField] private float minZoomFieldOfView = 20f;
+        [SerializeField] private float zoomSpeedDegreesPerSecond = 40f;
+        private float _currentZoomFieldOfView = -1f;
+
+        // 2026-08-23, explicit user request ("第一人稱視角不能360度環繞 只能是正面下水平與垂直控制
+        // 視角") - how far (degrees) the player can look away from the facing/lock-on direction
+        // while in first person, each side. Third person is untouched (still full 360 free orbit) -
+        // see the yaw-clamp block in LateUpdate for where this is applied and why.
+        [SerializeField] private float firstPersonMaxYawDeviation = 80f;
+
+        // 2026-08-23, real playtested bug ("第一人稱下看不到r技能整個特效過程") - the R ultimate's
+        // sword-throw sequence (spin/rise/fly-to-target/embed/return) plays out well away from the
+        // player's own head, which a first-person camera glued to the back of that head simply
+        // isn't pointed at for most of it. Forces third person for the ultimate's whole active
+        // window regardless of held aim/V-toggle, same "player's own choice gets overridden for a
+        // specific scripted window" precedent as aiming itself overriding the flight-distance
+        // multiplier. Optional or null-safe (see the aiming computation in LateUpdate) so a
+        // character/test setup without an UltimateAbility wired in behaves exactly as before.
+        [SerializeField] private UltimateAbility ultimateAbility;
+
+        // 2026-08-23, explicit user request ("我在調整First Person Eye Offset時為何從game畫面看不到
+        // 玩家的角色外觀") - first-person always hides the body (SetOwnVisualHidden below) so you
+        // don't see the inside of your own head, which is correct for normal play but makes it
+        // hard to SEE the head/eye position you're trying to line firstPersonEyeOffset up with
+        // while tuning it live. Checking this box keeps the body visible even while
+        // aiming/toggled into first-person, purely so the Scene/Game view still shows where the
+        // head actually is as a reference point - leave unchecked for normal play.
+        [SerializeField] private bool debugKeepVisualVisibleInFirstPerson;
+
+        // 2026-08-23, explicit user request ("第一人稱通常都會看的到自己的攻擊部位 不然不知道自己
+        // 甚麼時候出招") - SetOwnVisualHidden below hides EVERY renderer under Visual so you don't
+        // see the inside of your own head, but that includes the equipped weapon too, which is
+        // exactly what a player needs to see swing to tell an attack actually happened. Optional
+        // reference to the weapon's own root Transform (e.g. Player's WolfsGravestone) - anything
+        // under it is excluded from the hide, same "everything else hidden, this one thing stays"
+        // convention a first-person view-model uses. Left null is safe (falls back to hiding
+        // everything, today's behavior) for any character that doesn't wire one in.
+        [SerializeField] private Transform firstPersonVisibleWeapon;
+
+        // 2026-08-23, explicit user request ("我調整了大劍到想要位置 但是第一人稱下會遮擋視線") - the
+        // sword (WolfsGravestone) is a detached back accessory parented directly under Player, NOT
+        // under "Visual", so SetOwnVisualHidden below never touches it - it stays rendered at full
+        // opacity regardless of first/third person. That's fine in third person (it's the whole
+        // point of the accessory), but once the eye camera sits at firstPersonEyeOffset near the
+        // character's own head/back, the sword ends up right in front of the lens and blocks the
+        // view. Opposite convention from firstPersonVisibleWeapon above: this one gets hidden
+        // WHILE aiming/first-person and shown otherwise, independent of the Visual-hide policy.
+        // Left null is safe (no-op) for setups without a back accessory.
+        [SerializeField] private Transform firstPersonHiddenAccessory;
+
         // 2026-08-18, explicit user request (flight system grilling session, Q5 - "飛行時鏡頭
         //通常會拉遠一點") - multiplies `distance` (never overwrites it - see that field's own
         // comment on why it's user-owned tuning) while the target is Flying/Gliding, so more of
@@ -74,6 +159,26 @@ namespace Live2DAction.CameraSystem
         // its surface (which would still clip at the near clip plane).
         [SerializeField] private float cameraCollisionRadius = 0.2f;
         [SerializeField] private float cameraCollisionSkin = 0.15f;
+
+        // 2026-08-23, real playtested bug ("第三人稱與enemy近距離打鬥時 視角會突然靠得很近 甚至穿模
+        // 到enemy頭部") - ClampDistanceForObstruction's old floor was a bare 0f: nothing stopped an
+        // obstruction detected right up close (an Enemy's own body standing near the camera's
+        // orbit path during melee range - exactly the "avoid clipping into Enemy" case this whole
+        // system exists for, see enableCameraCollision's own history above) from collapsing
+        // usedDistance down toward zero, landing the camera almost AT the look-at point - inside
+        // whatever's nearby, including Enemy's own head. This floor keeps the camera at least
+        // this far out even when something is detected closer than that, so avoidance can still
+        // pull the camera in but never all the way into point-blank/inside-the-mesh range.
+        [SerializeField] private float minCollisionDistance = 0.8f;
+
+        // Same bug's other half: the clamp used to apply instantly every frame with no damping,
+        // so a transient obstruction (Enemy's own body briefly crossing the SphereCast path while
+        // circling during a fight) read as the camera literally teleporting close then snapping
+        // back out the instant it cleared - "突然靠得很近". Smoothed via MoveTowards in LateUpdate
+        // below (see _smoothedCollisionDistance) at this many units/second - fast enough to still
+        // catch a player running straight at a wall before it's visibly clipped, slow enough that
+        // a passing Enemy reads as the camera easing in and out rather than cutting.
+        [SerializeField] private float collisionDistanceSmoothSpeed = 12f;
 
         [SerializeField] private float initialYaw;
         [SerializeField] private float initialPitch;
@@ -111,6 +216,16 @@ namespace Live2DAction.CameraSystem
         // with TargetLockController's own facing logic).
         [SerializeField] private MonoBehaviour lockOnSource;
 
+        // 2026-08-23, explicit user request ("瞄準時瞬間變成第一視角") - reuses this class's own
+        // pre-existing distance=0 true-first-person mode (see `distance` field's own comment:
+        // "0 distance would be true first-person... SetOwnVisualHidden below still handles that
+        // case") rather than building a second camera/visual-hiding path - aiming just becomes
+        // another source that can drive the EFFECTIVE distance to 0 for as long as it's held,
+        // same as flightDistanceMultiplier is another source that scales it up. "瞬間" (instant)
+        // is satisfied by simply not lerping this at all - the assignment in LateUpdate below is
+        // a hard cut every frame, on or off, no transition.
+        [SerializeField] private MonoBehaviour inputSource;
+
         // 2026-08-20, explicit user request ("玩家飛行下降的視角也要跟隨壓低") - same
         // gated-easing idiom as enableAutoCenter above (cedes control the instant real mouse
         // input arrives, same isLooking check), but for PITCH instead of yaw, and gated on
@@ -146,6 +261,23 @@ namespace Live2DAction.CameraSystem
         private float _yaw;
         private float _pitch;
 
+        // 2026-08-23, explicit user request ("V鍵切換成第一視角(機制與右鍵瞄準同理)") - a persistent
+        // toggle (not a held state like AimPressed itself): pressing V flips this, and it stays
+        // flipped until pressed again. Combined with `aiming` in LateUpdate below via OR, so
+        // either holding right-click OR having toggled this on drives the exact same distance=0
+        // true-first-person path - whichever is active, releasing/toggling off the OTHER one
+        // still leaves you in first-person until BOTH are off.
+        private bool _viewToggledFirstPerson;
+
+        // 2026-08-23, real playtested bug ("我現在的play mode視角跑到了側面(第一人稱模式)") - _yaw is
+        // free-look and only auto-centers behind the player while walking forward/back (see
+        // enableAutoCenter's gate below), so standing still or strafing after looking around
+        // leaves _yaw wherever the mouse last put it. Entering first person (aim or V-toggle)
+        // used to reuse that stale _yaw as-is, so the eye camera could end up staring off to the
+        // side of the character's own facing instead of straight ahead. Tracked here purely to
+        // detect the off->on edge below and snap _yaw to the character's facing at that instant.
+        private bool _wasAimingLastFrame;
+
         // Built lazily on first LateUpdate rather than in Awake/OnEnable, same reasoning as
         // CharacterMovement/PlayerCombat's lazy-init fields: tests assign initialYaw/
         // initialPitch via reflection right after AddComponent, which already runs
@@ -157,6 +289,13 @@ namespace Live2DAction.CameraSystem
         // doesn't need to "wait out" the delay from zero.
         private float _timeSinceLookInput = 999f;
 
+        // See collisionDistanceSmoothSpeed's own comment - the actual applied camera distance
+        // eases toward the collision-clamped target rather than snapping to it every frame.
+        // Negative sentinel so LateUpdate's first frame initializes it to that frame's own
+        // desiredDistance instead of easing FROM zero (which would read as the camera starting
+        // buried at the look-at point and rushing outward on the very first frame).
+        private float _smoothedCollisionDistance = -1f;
+
         // Resolved lazily (like CharacterMovement/TargetLockController's own
         // reflection-friendly properties) rather than in Awake, and re-resolved if target
         // changes - only used for the optional auto-center's "is the player actually moving"
@@ -165,6 +304,7 @@ namespace Live2DAction.CameraSystem
         private Transform _targetMovementFor;
 
         private ILockOnSource LockOnSource => lockOnSource as ILockOnSource;
+        private IInputCommand InputCommand => inputSource as IInputCommand;
 
         public float YawDegrees => _yaw;
 
@@ -217,6 +357,44 @@ namespace Live2DAction.CameraSystem
 
             if (Application.isPlaying)
             {
+                // 2026-08-23, explicit user request ("V鍵切換成第一視角") - flips the persistent
+                // toggle exactly once per press (ViewTogglePressed is already an edge trigger from
+                // PlayerInputProvider, not a held signal, so this can't double-flip within a
+                // single held frame).
+                if (InputCommand != null && InputCommand.ViewTogglePressed)
+                {
+                    _viewToggledFirstPerson = !_viewToggledFirstPerson;
+                }
+
+                // 2026-08-23, explicit user request ("進入第一人稱時自動對齊角色朝向") - the instant
+                // aim/V-toggle turns first person ON (off->on edge only, not held), snap yaw to
+                // the character's current facing so first person always starts looking straight
+                // ahead instead of wherever free-look last left the camera. Only yaw - pitch is
+                // left untouched since "facing" has no up/down component and the player's last
+                // deliberate up/down look is still worth keeping.
+                bool aimingNow = InputCommand != null && (InputCommand.AimPressed || _viewToggledFirstPerson);
+                if (aimingNow && !_wasAimingLastFrame)
+                {
+                    _yaw = target.eulerAngles.y;
+                    _currentZoomFieldOfView = firstPersonFieldOfView;
+                }
+
+                // See minZoomFieldOfView/zoomSpeedDegreesPerSecond's own comment - only adjusts
+                // while actually aiming, held keys otherwise have no effect (checked separately
+                // from aimingNow above so this can't run stale on the frame aiming just ended).
+                if (aimingNow && InputCommand != null)
+                {
+                    if (InputCommand.ZoomInPressed)
+                    {
+                        _currentZoomFieldOfView = Mathf.MoveTowards(_currentZoomFieldOfView, minZoomFieldOfView, zoomSpeedDegreesPerSecond * Time.deltaTime);
+                    }
+                    if (InputCommand.ZoomOutPressed)
+                    {
+                        _currentZoomFieldOfView = Mathf.MoveTowards(_currentZoomFieldOfView, firstPersonFieldOfView, zoomSpeedDegreesPerSecond * Time.deltaTime);
+                    }
+                }
+                _wasAimingLastFrame = aimingNow;
+
                 // OnEnable only locks the cursor once, at Play start. Losing that lock later
                 // (pressing Escape, the Game view losing OS focus after Alt-Tab, or Play
                 // starting before the Game view ever had focus in the first place - all
@@ -276,21 +454,45 @@ namespace Live2DAction.CameraSystem
                 {
                     _pitch = Mathf.Lerp(_pitch, descendAutoPitchTargetDegrees, descendAutoPitchSpeed * Time.deltaTime);
                 }
+
+                // 2026-08-23, explicit user request ("改成第一人稱一樣可以360環繞 但滾輪鎖定時則限制
+                // 視角") - supersedes the last two revisions of this block (see git history for the
+                // "always clamp to own facing" and "always clamp to enemy direction" attempts this
+                // replaced). First person with NO lock-on is now full free 360 orbit, exactly like
+                // third person - the restriction only exists at all while a lock-on (mouse-wheel,
+                // TargetLockController) is actually active, same Sekiro locked-duel feel as before
+                // but now opt-in via the player's own choice to lock on, rather than a blanket
+                // restriction on first person itself. Third person is untouched either way (still
+                // full free orbit, lock-on or not - see the auto-center gate above, still keyed off
+                // LockOnSource, for third person's own separate lock-on behavior).
+                bool aimingForYawClamp = InputCommand != null
+                    && (InputCommand.AimPressed || _viewToggledFirstPerson)
+                    && (ultimateAbility == null || !ultimateAbility.IsActive);
+                Transform lockedTargetForYawClamp = LockOnSource?.LockedTarget;
+                if (aimingForYawClamp && lockedTargetForYawClamp != null)
+                {
+                    Vector3 toLockedTarget = lockedTargetForYawClamp.position - target.position;
+                    toLockedTarget.y = 0f;
+                    float centerYaw = toLockedTarget.sqrMagnitude > 0.0001f
+                        ? Mathf.Atan2(toLockedTarget.x, toLockedTarget.z) * Mathf.Rad2Deg
+                        : target.eulerAngles.y;
+
+                    _yaw = ClampYawToFacingCone(_yaw, centerYaw, firstPersonMaxYawDeviation);
+                }
             }
 
             // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.5/3.2) - the
-            // camera banks by the SAME angle as the character's own visual roll rather than
-            // computing its own independent lean, so the two can never drift out of sync -
-            // CharacterMovement is the single source of truth for "how banked are we right now"
-            // (it already owns the strafe input this is derived from). Negated: rolling the
-            // CAMERA the same direction the character visually tips reads as "the horizon
-            // tilting the opposite way", the same convention a banked-turn cockpit view uses.
-            // Roll only affects the camera's own up-vector, not rotation*Vector3.forward (a
-            // roll around the forward axis leaves that axis fixed), so it's safe to fold into
-            // this same `rotation` used below for both the SphereCast obstruction check and the
-            // position math - no separate roll-free rotation needed for either.
-            float roll = targetMovement != null ? -targetMovement.CurrentBankRollDegrees : 0f;
-            Quaternion rotation = Quaternion.Euler(_pitch, _yaw, roll);
+            // camera USED TO bank by the same angle as the character's own visual roll during
+            // flight strafing. CharacterMovement.CurrentBankRollDegrees itself is untouched (the
+            // character's own visual lean during flight still happens, and anything else that
+            // wants to read it still can) - only the CAMERA's own consumption of it is removed.
+            //
+            // 2026-08-25, user feedback ("鎖定目標後無論距離多少都保持直線站立", confirmed with a
+            // screenshot and restated unconditionally as "角色應該相對螢幕來說是直立的而非傾斜") -
+            // first tried zeroing roll only while locked on; the user then clarified the
+            // requirement is unconditional, not lock-on-specific - the character should read as
+            // upright on screen at all times, full stop. Camera roll is now always 0.
+            Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0f);
 
             // 2026-08-20, real playtested feedback ("體力條歸0時要快速掉落到地面 停止飛行") - Glide
             // (the soft fixed-rate fallback state) has been removed entirely from
@@ -299,7 +501,93 @@ namespace Live2DAction.CameraSystem
             // IsFlying any more.
             bool targetAirborneUnderControl = targetMovement != null && targetMovement.IsFlying;
             float desiredDistance = targetAirborneUnderControl ? distance * flightDistanceMultiplier : distance;
+
+            // 2026-08-26, explicit user request ("隻狼那種3d動作中,玩家小體積面對boss大體積的視角") -
+            // see LockOnTarget.CameraDistanceMultiplier's own comment. Multiplies on top of
+            // whatever desiredDistance already is (flight multiplier included) rather than
+            // overwriting - `distance` itself (the user's own hands-on-tuned base value) is never
+            // touched, same non-destructive precedent as flightDistanceMultiplier.
+            Transform lockedAimPoint = LockOnSource?.LockedTarget;
+            if (lockedAimPoint != null)
+            {
+                var lockOnTargetComp = lockedAimPoint.GetComponentInParent<LockOnTarget>();
+                if (lockOnTargetComp != null)
+                {
+                    desiredDistance *= lockOnTargetComp.CameraDistanceMultiplier;
+                }
+            }
+
+            // Aiming overrides everything else about distance (flight multiplier included) -
+            // an instant hard cut to true first-person for as long as the button is held, not a
+            // blend, per "瞬間變成第一視角" above. 2026-08-23: ORed with the V-key toggle (see
+            // _viewToggledFirstPerson's own comment) - "機制與右鍵瞄準同理" (same mechanism as
+            // right-click aim) means both drive the identical first-person path, not a second
+            // parallel one.
+            bool aiming = Application.isPlaying
+                && InputCommand != null
+                && (InputCommand.AimPressed || _viewToggledFirstPerson)
+                && (ultimateAbility == null || !ultimateAbility.IsActive);
+            if (aiming)
+            {
+                desiredDistance = 0f;
+            }
+
+            // See firstPersonFieldOfView's own comment - swaps the Camera component's FOV for
+            // first person only, restoring whatever third-person FOV was there before.
+            if (_camera == null)
+            {
+                _camera = GetComponent<Camera>();
+            }
+            if (_camera != null)
+            {
+                if (!_thirdPersonFieldOfView.HasValue)
+                {
+                    _thirdPersonFieldOfView = _camera.fieldOfView;
+                }
+                float aimFieldOfView = _currentZoomFieldOfView >= 0f ? _currentZoomFieldOfView : firstPersonFieldOfView;
+                _camera.fieldOfView = aiming ? aimFieldOfView : _thirdPersonFieldOfView.Value;
+            }
+
             float usedDistance = desiredDistance;
+
+            // 2026-08-23 - first-person uses its own independent offset (see
+            // firstPersonEyeOffset's own comment for why this was split out of targetOffset),
+            // third-person keeps using targetOffset exactly as before.
+            //
+            // 2026-08-23, explicit user request ("第一人稱的部分能不能讓攝影機起始位置與玩家並列
+            // (在玩家右手邊) 去拍向前方視角") - ComputeCameraPosition below adds this offset to
+            // target.position as a PLAIN WORLD-SPACE vector, unrotated. That's fine for
+            // targetOffset (third person already orbits on the camera's own free-look yaw, so a
+            // small non-rotating world nudge to the look-at point is imperceptible), but it means
+            // firstPersonEyeOffset was never actually "beside the character" at all - it was only
+            // correct at whatever single world orientation happened to be current when it was
+            // tuned, and would silently drift to the wrong side/depth (even back INSIDE the body,
+            // undoing the Z-depth fix from earlier this session) the moment the character turned
+            // to face any other direction. Rotating by target.rotation here makes
+            // firstPersonEyeOffset a proper body-local (right, up, forward) offset that tracks the
+            // character's own facing correctly - third person's targetOffset is untouched, still
+            // the exact same non-rotating world vector it always was.
+            Vector3 effectiveOffset = aiming ? target.rotation * firstPersonEyeOffset : targetOffset;
+
+            // 2026-08-26, explicit user request (big-boss framing - see LockOnTarget.CameraFrameBias's
+            // own comment) - shifts the look-at point from the player toward the locked target's
+            // AimPoint by a tunable fraction, so the boss dominates frame while the player is still
+            // visible near the edge rather than dead-center. Only affects third person (aiming's
+            // first-person offset above is untouched); 0 bias (every existing LockOnTarget) is a
+            // no-op add of Vector3.zero, so normal enemy lock-on behavior is bit-for-bit unchanged.
+            if (!aiming)
+            {
+                Transform lockedAimPointForFraming = LockOnSource?.LockedTarget;
+                if (lockedAimPointForFraming != null)
+                {
+                    var framingTargetComp = lockedAimPointForFraming.GetComponentInParent<LockOnTarget>();
+                    if (framingTargetComp != null && framingTargetComp.CameraFrameBias > 0f)
+                    {
+                        Vector3 towardBoss = lockedAimPointForFraming.position - (target.position + effectiveOffset);
+                        effectiveOffset += towardBoss * framingTargetComp.CameraFrameBias;
+                    }
+                }
+            }
 
             // Physics.SphereCast needs the live scene, so this can't live in the pure
             // ComputeCameraPosition helper below - it only runs while actually playing, same
@@ -308,17 +596,57 @@ namespace Live2DAction.CameraSystem
             // against a non-playing scene's colliders aren't reliable anyway).
             if (Application.isPlaying && enableCameraCollision)
             {
-                Vector3 lookAtPoint = target.position + targetOffset;
+                Vector3 lookAtPoint = target.position + effectiveOffset;
                 float? obstruction = FindObstructionDistance(lookAtPoint, rotation, desiredDistance);
-                usedDistance = ClampDistanceForObstruction(desiredDistance, obstruction, cameraCollisionSkin);
+                float clampedDistance = ClampDistanceForObstruction(desiredDistance, obstruction, cameraCollisionSkin, minCollisionDistance);
+
+                if (_smoothedCollisionDistance < 0f)
+                {
+                    _smoothedCollisionDistance = clampedDistance;
+                }
+                _smoothedCollisionDistance = Mathf.MoveTowards(_smoothedCollisionDistance, clampedDistance, collisionDistanceSmoothSpeed * Time.deltaTime);
+                usedDistance = _smoothedCollisionDistance;
+            }
+            else
+            {
+                _smoothedCollisionDistance = -1f;
             }
 
-            Vector3 position = ComputeCameraPosition(target.position, rotation, usedDistance, targetOffset);
+            Vector3 position = ComputeCameraPosition(target.position, rotation, usedDistance, effectiveOffset);
 
             transform.SetPositionAndRotation(position, rotation);
 
-            SetOwnVisualHidden(Mathf.Approximately(distance, 0f));
+            // 2026-08-26, explicit user request ("第一人稱下角色要隱藏 不然會遮擋") - reverts the
+            // 2026-08-23 "always show the body in first person" experiment (see git history for
+            // that comment) back to hiding it. debugKeepVisualVisibleInFirstPerson still overrides
+            // this back to visible when checked (tuning aid, see its own comment) -
+            // firstPersonVisibleWeapon still keeps the equipped weapon rendered even while the rest
+            // of the body is hidden, so attacks stay readable in first person.
+            SetOwnVisualHidden(aiming && !debugKeepVisualVisibleInFirstPerson);
+
+            // See firstPersonHiddenAccessory's own comment - hides the back-mounted sword only
+            // while the eye camera is active, independent of the body-visible policy above.
+            SetAccessoryHidden(firstPersonHiddenAccessory, aiming);
         }
+
+        private static void SetAccessoryHidden(Transform accessory, bool hidden)
+        {
+            if (accessory == null)
+            {
+                return;
+            }
+
+            foreach (Renderer accessoryRenderer in accessory.GetComponentsInChildren<Renderer>(true))
+            {
+                accessoryRenderer.enabled = !hidden;
+            }
+        }
+
+        // Perf fix (2026-08-27, playtest report - "play mode模式下遊戲會卡頓") - FindObstructionDistance
+        // below runs every LateUpdate for the active player camera and used to call
+        // Physics.SphereCastAll, allocating a fresh RaycastHit[] every frame. Reused buffer +
+        // SphereCastNonAlloc instead - same query (mask/QueryTriggerInteraction unchanged).
+        private readonly RaycastHit[] _obstructionHitsBuffer = new RaycastHit[16];
 
         // SphereCasts from the look-at point (roughly the character's head/chest) out toward
         // where the camera would naively sit, and returns the distance to the first thing hit
@@ -331,13 +659,29 @@ namespace Live2DAction.CameraSystem
                 return null;
             }
 
+            // 2026-08-26, real playtested bug ("玩家過於靠近武士時鎖定圖標會消失並且視角突然變得很近")
+            // - same bug class as the 2026-08-23 Enemy one below (player.transform.root already
+            // excluded), but for a LOCKED TARGET instead: the locked boss's own body is deliberately
+            // supposed to fill the frame at close range (see LockOnTarget.CameraDistanceMultiplier/
+            // CameraFrameBias), so its collider must never count as "an obstruction in the way" the
+            // same way a wall would - otherwise every desired-distance/frame-bias tuning gets
+            // silently overridden the instant the boss's own CharacterController crosses the
+            // SphereCast path, which for a screen-filling giant is most of the time. The lock-on
+            // indicator "disappearing" was a symptom of this, not a separate bug - LockOnIndicator
+            // positions itself relative to the (now yanked-in) camera and can end up behind/inside
+            // its near clip plane once distance collapses to near-zero.
+            Transform lockedTargetRoot = LockOnSource?.LockedTarget != null
+                ? LockOnSource.LockedTarget.root
+                : null;
+
             Vector3 direction = -(rotation * Vector3.forward);
-            RaycastHit[] hits = Physics.SphereCastAll(lookAtPoint, cameraCollisionRadius, direction, desiredDistance, ~0, QueryTriggerInteraction.Ignore);
+            int hitCount = Physics.SphereCastNonAlloc(lookAtPoint, cameraCollisionRadius, direction, _obstructionHitsBuffer, desiredDistance, ~0, QueryTriggerInteraction.Ignore);
 
             float? closest = null;
-            foreach (RaycastHit hit in hits)
+            for (int i = 0; i < hitCount; i++)
             {
-                if (hit.collider == null || hit.collider.transform.root == target)
+                RaycastHit hit = _obstructionHitsBuffer[i];
+                if (hit.collider == null || hit.collider.transform.root == target || hit.collider.transform.root == lockedTargetRoot)
                 {
                     continue;
                 }
@@ -353,14 +697,21 @@ namespace Live2DAction.CameraSystem
 
         // Pure so the clamping arithmetic is directly EditMode-testable without a live physics
         // scene - FindObstructionDistance above is what actually queries Physics.
-        public static float ClampDistanceForObstruction(float desiredDistance, float? obstructionDistance, float skin)
+        //
+        // 2026-08-23, real playtested bug ("第三人稱與enemy近距離打鬥時 視角會突然靠得很近 甚至穿模
+        // 到enemy頭部") - minDistance added as an optional param (defaults to 0f, the previous
+        // hardcoded floor - existing tests calling the 3-arg form keep testing that exact
+        // behavior unchanged) so a nearby obstruction (most often Enemy's own body during melee
+        // range - the very thing this whole system exists to avoid clipping into) can no longer
+        // collapse the camera all the way down to point-blank/inside-the-mesh range.
+        public static float ClampDistanceForObstruction(float desiredDistance, float? obstructionDistance, float skin, float minDistance = 0f)
         {
             if (!obstructionDistance.HasValue)
             {
                 return desiredDistance;
             }
 
-            return Mathf.Clamp(obstructionDistance.Value - skin, 0f, desiredDistance);
+            return Mathf.Clamp(obstructionDistance.Value - skin, minDistance, desiredDistance);
         }
 
         // Gates auto-center on "walking forward/back", not "strafing" - see the
@@ -407,6 +758,18 @@ namespace Live2DAction.CameraSystem
             return Mathf.LerpAngle(currentYaw, targetYaw, autoCenterSpeed * deltaTime);
         }
 
+        // Pure so the clamp math is directly EditMode-testable, same convention as
+        // ComputeAutoCenterYaw/ClampDistanceForObstruction above. Mathf.DeltaAngle gives the
+        // shortest signed difference in [-180, 180] regardless of how far currentYaw has
+        // accumulated past a single turn (see _yaw's own unbounded-accumulation comment), so this
+        // stays correct no matter how many times the player has spun the camera historically.
+        public static float ClampYawToFacingCone(float currentYaw, float centerYaw, float maxDeviationDegrees)
+        {
+            float delta = Mathf.DeltaAngle(centerYaw, currentYaw);
+            float clampedDelta = Mathf.Clamp(delta, -maxDeviationDegrees, maxDeviationDegrees);
+            return centerYaw + clampedDelta;
+        }
+
         // Pure so the positioning math can be verified directly in EditMode tests without a
         // live scene or Play loop.
         public static Vector3 ComputeCameraPosition(Vector3 targetPosition, Quaternion rotation, float distance, Vector3 targetOffset)
@@ -434,7 +797,10 @@ namespace Live2DAction.CameraSystem
 
             foreach (Renderer visualRenderer in visual.GetComponentsInChildren<Renderer>(true))
             {
-                visualRenderer.enabled = !hidden;
+                // The weapon stays visible even while everything else is hidden - see
+                // firstPersonVisibleWeapon's own comment for why.
+                bool isVisibleWeapon = firstPersonVisibleWeapon != null && visualRenderer.transform.IsChildOf(firstPersonVisibleWeapon);
+                visualRenderer.enabled = !hidden || isVisibleWeapon;
             }
         }
     }

@@ -20,7 +20,6 @@ namespace Live2DAction.World
     // alongside the wall's original solid one on this same GameObject - both live side by side,
     // the solid one keeps blocking movement exactly as before, this one only detects the touch
     // just before/at the moment of contact.
-    [RequireComponent(typeof(ParticleSystem))]
     public class BoundaryBlockEffect : MonoBehaviour
     {
         // Keeps repeatedly grinding against the wall from spamming the effect every single
@@ -28,15 +27,24 @@ namespace Live2DAction.World
         // (teleportCooldownSeconds), just keyed to this wall instead of to a character.
         [SerializeField] private float cooldownSeconds = 0.6f;
 
-        private ParticleSystem _ripple;
+        // 2026-08-22, real playtested bug ("我在圍牆內自由行走穿梭後 牆體會變形") - this used to be
+        // GetComponent<ParticleSystem>() (the ParticleSystem lived directly on the WALL's own
+        // GameObject, enforced by a [RequireComponent(typeof(ParticleSystem))] this class no
+        // longer has). OnTriggerEnter below repositions/rotates "the ripple's transform" to the
+        // contact point every time a character brushes the wall - when the ripple IS the wall's
+        // own transform, that call was relocating and rotating the wall itself (mesh, BoxCollider,
+        // everything sharing that Transform) to wherever the player last touched it, which reads
+        // exactly like the wall warping as you slide along it. Now a serialized reference to a
+        // dedicated CHILD GameObject's ParticleSystem (see BoundaryWallBlockEffectSetup, which
+        // creates that child) - repositioning the child moves only the visual burst, never the
+        // wall's own Transform.
+        [SerializeField] private ParticleSystem ripple;
         private Collider _solidWall;
 
         private float _cooldownUntil = -1f;
 
         private void Awake()
         {
-            _ripple = GetComponent<ParticleSystem>();
-
             // This GameObject carries two BoxColliders (the original solid block + the new
             // padded trigger this component reacts to) - find the non-trigger one specifically
             // so the ripple's contact point is measured against the actual blocking surface, not
@@ -79,13 +87,16 @@ namespace Live2DAction.World
             // Faces away from the map center ("本地" is centered on the world origin - see
             // GreyboxSceneBuilder's own CreateBoundaryWalls) so the shimmer reads as pushing
             // outward against the barrier, regardless of which of the four walls fired it.
-            Vector3 outward = new Vector3(contactPoint.x, 0f, contactPoint.z);
-            if (outward.sqrMagnitude > 0.01f)
+            if (ripple != null)
             {
-                _ripple.transform.rotation = Quaternion.LookRotation(outward.normalized, Vector3.up);
+                Vector3 outward = new Vector3(contactPoint.x, 0f, contactPoint.z);
+                if (outward.sqrMagnitude > 0.01f)
+                {
+                    ripple.transform.rotation = Quaternion.LookRotation(outward.normalized, Vector3.up);
+                }
+                ripple.transform.position = contactPoint;
+                ripple.Play();
             }
-            _ripple.transform.position = contactPoint;
-            _ripple.Play();
 
             // The screen-edge vignette (BoundaryBlockHud) only means anything for whoever is
             // actually looking through the camera - see that class's own comment for why this is

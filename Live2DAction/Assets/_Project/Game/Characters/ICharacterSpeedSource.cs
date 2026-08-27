@@ -18,5 +18,15 @@ namespace Live2DAction.Characters
         // just always returns false, same "stub returns false for the non-applicable side"
         // convention as EnemyAI's IInputCommand.FlyPressed.
         bool IsFlying { get; }
+
+        // 2026-08-25, real playtested bug report ("屁孩王的動作有哪些以及觸發時機" investigation
+        // surfaced that the shared NewAnimator.controller's "Grounded" bool param has NO writer
+        // anywhere in the project - it just sits at its default (true) forever, so the Fall/Jump
+        // states (both gated on Grounded transitions) were permanently unreachable dead states
+        // for every character driven by CharacterAnimatorLink. Mirrors CurrentHorizontalSpeed/
+        // IsFlying above - each concrete movement implementation already tracks its own
+        // CharacterController.isGrounded for its own gravity/landing logic, this just exposes
+        // that existing value through the same interface so CharacterAnimatorLink can write it.
+        bool IsGrounded { get; }
     }
 }

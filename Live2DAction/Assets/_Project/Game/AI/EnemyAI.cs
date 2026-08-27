@@ -22,6 +22,18 @@ namespace Live2DAction.AI
         // bare EnemyAI without a PlayerCombat) - see "combat" field's own comment for why the
         // real scene doesn't rely on this value being kept correct by hand anymore.
         [SerializeField] private float attackRange = 2f;
+        // 2026-08-22/23, real playtested bug ("在滿足 detectionRange 的警備範圍時 076要盡可能靠近
+        // 玩家 目前是感覺玩家076中間隔開了很大距離") - root cause: this code default (2) exactly
+        // matches CharacterMovement.moveSpeed (the player's own ground speed), so once any gap
+        // opened up (spawn distance, a player dash, etc.) equal speeds can never close it -
+        // shouldChaseHorizontally correctly keeps trying the whole time (alwaysChaseWhileAttacking
+        // is already true for 076), it's just racing at a speed that can only ever match, never
+        // gain on, the player. 076's own Inspector value is overridden to 2.4 (the same 1.2x-the-
+        // player multiplier aerialHorizontalSpeed below already uses, for the identical reason),
+        // NOT this code default, so it actually closes to true contact distance instead of
+        // trailing at a permanent, un-closable gap. detectionRange/aerialCombatChaseCeiling above
+        // are untouched - this is purely about closing speed once already within range, not how
+        // far away it starts noticing/chasing from.
         [SerializeField] private float moveSpeed = 2f;
         [SerializeField] private float rotationSpeedDegrees = 480f;
         [SerializeField] private float gravity = -20f;
@@ -52,6 +64,27 @@ namespace Live2DAction.AI
         // frame. Left false for ordinary enemies (e.g. Enemy), which should keep only turning
         // to face the player once actually aware of them.
         [SerializeField] private bool alwaysFaceTarget;
+
+        // 2026-08-20, real playtested bug ("076真的能貼著玩家追擊 但076打不到我") - ground melee
+        // freezes horizontal movement the instant CurrentState becomes Attacking (see
+        // shouldChaseHorizontally below), which can trigger a few frames BEFORE alwaysFaceTarget's
+        // own RotateTowards has actually finished turning to face the player (rotation is gradual,
+        // the distance check that starts the swing is instant) - a directional capsule swung at a
+        // still-turning body can whiff a genuinely-adjacent target on nothing but facing angle.
+        // Optional (null-safe below, same "opt-in per character" pattern as alwaysFaceTarget/
+        // stance) - true makes ResolveActiveHit use an omnidirectional sphere instead of a
+        // forward-facing capsule (same mechanism Aerial Combat already uses for a different
+        // reason - see UseSphericalJudgment's own comment), so a genuinely-close hit lands
+        // regardless of which way this character happens to be facing at the exact instant the
+        // swing resolves. Left false for ordinary enemies (e.g. Enemy), whose forward-facing
+        // capsule is the intended "you have to actually aim your swing" design.
+        [SerializeField] private bool alwaysUseSphericalJudgment;
+
+        // 2026-08-20, real playtested bug ("076沒辦法主動靠我靠得很近") - see this field's own
+        // call site (shouldChaseHorizontally) for the full explanation. Optional (null-safe -
+        // just a bool, no component reference), same "opt-in per character" pattern as the two
+        // fields above it.
+        [SerializeField] private bool alwaysChaseWhileAttacking;
 
         // 2026-08-13, real bug report ("我已經盡到敵人範圍內，線條從紅色變成黃色，但敵人尚未作
         // 出攻擊，這代表視覺呈現與數值邏輯判定很明顯不一致") - root cause: PlayerCombat's own
@@ -144,12 +177,43 @@ namespace Live2DAction.AI
         // this only needs to be "clearly in front, not at the player's own feet", not an exact
         // strike distance - the vertical/attack-range judgment that actually decides when to
         // swing is untouched and still measures the real player position.
+        //
+        // 2026-08-23, real playtested bug ("空中的時候 076與玩家隔了一段距離 並且有小幅度前後抖動的
+        // 跡象 像是被卡住") - this 2f code default sits almost exactly ON 076's own effective
+        // attack-range boundary (attackRange fallback 2f, since her `combat` reference is unset -
+        // see that field's own comment), so once she arrived at the approach point,
+        // distance-to-player kept flickering a hair above/below that boundary every frame purely
+        // from float noise, which flickers CurrentState between Chasing/Attacking and reads as
+        // "stuck, jittering back and forth" instead of settling. 076's own Inspector value is
+        // overridden to 0.8 - still a nonzero forward offset (so the original directly-overhead
+        // degenerate case above stays fixed), but now solidly INSIDE her attack range instead of
+        // balanced on its edge, and close enough to actually read as "closing the gap" the same
+        // way the ground-chase fix (moveSpeed override) already does.
+        //
+        // 2026-08-23, real playtested bug ("我和enemy飛到空中他就不攻擊我了還會退後") - "Enemy" 's
+        // own effective attack range (EnemyAttack.asset: Range 0.5 + Radius 0.5 = 1.0) is SMALLER
+        // than this 2f code default, so once she reached the approach point her distance-to-
+        // player sat at ~2, permanently outside her own 1.0 attack range - CurrentState could
+        // never become Attacking while airborne, only Chasing, which was still enough to keep
+        // shouldChaseHorizontally true and chase the approach point forever. Worse, since that
+        // point is anchored to the PLAYER's own current forward direction, a player turning to
+        // face her while already closer than 2 units moves the point PAST her own current
+        // position, so she'd have to back away from the player to reach it - exactly "退後"
+        // (backing away) instead of attacking. Enemy's own Inspector value is overridden to 0.6 -
+        // comfortably inside her 1.0 attack range, same reasoning as 076's own 0.8 override above.
         [SerializeField] private float aerialApproachDistance = 2f;
 
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private float _verticalVelocity;
         private bool _isAerialCombat;
+
+        // Perf fix (2026-08-27, playtest report - "play mode模式下遊戲會卡頓") - TryGetGroundNormal
+        // runs every Update while grounded (direct port of CharacterMovement's own copy - see that
+        // class's matching field for the full reasoning) and used to call Physics.SphereCastAll,
+        // allocating a fresh RaycastHit[] every frame per enemy instance. Reused buffer +
+        // SphereCastNonAlloc instead - same query (mask/QueryTriggerInteraction unchanged).
+        private readonly RaycastHit[] _groundNormalHitsBuffer = new RaycastHit[16];
 
         // 2026-08-18, this transform is the CharacterController's own transform, and the
         // capsule's "up" axis follows the transform's local Y axis - real playtested bug: an
@@ -193,6 +257,11 @@ namespace Live2DAction.AI
         public bool FlyPressed => false; // AI never triggers the player-only flight
         public bool FlyDescendPressed => false;
         public bool BoostPressed => false; // AI never triggers the player-only flight boost
+        public bool AimPressed => false; // AI never triggers the player-only ranged weapon
+        public bool FirePressed => false;
+        public bool ViewTogglePressed => false; // AI never triggers the player-only first-person toggle
+        public bool ZoomInPressed => false; // AI never triggers the player-only aim-zoom controls
+        public bool ZoomOutPressed => false;
 
         // 2026-08-20, explicit user request ("敵人的移動動作採用跟玩家一樣地踏步") -
         // ICharacterSpeedSource, so CharacterAnimatorLink can drive Enemy's Locomotion blend tree
@@ -202,6 +271,11 @@ namespace Live2DAction.AI
         // already-settled scope decision, see CharacterMovement.IsFlying's own history).
         public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
         public bool IsFlying => false;
+
+        // 2026-08-25 - see ICharacterSpeedSource.IsGrounded's own comment (the Grounded
+        // Animator bool had no writer at all until this). _controller.isGrounded is already
+        // the same value the gravity-reset/slide logic elsewhere in this class reads every frame.
+        public bool IsGrounded => _controller.isGrounded;
 
         private void Awake()
         {
@@ -304,7 +378,7 @@ namespace Live2DAction.AI
 
             if (combat != null)
             {
-                combat.UseSphericalJudgment = _isAerialCombat;
+                combat.UseSphericalJudgment = _isAerialCombat || alwaysUseSphericalJudgment;
             }
 
             // isDead falls back to Idle rather than a dedicated Dead enum value - deliberately a
@@ -340,26 +414,76 @@ namespace Live2DAction.AI
             // attacking, not the point it's walking toward. Ground-combat chasing is untouched
             // (this whole block only runs the aerial branch while _isAerialCombat is true).
             Vector3 aerialChaseDirection = direction;
+            // 2026-08-23, real playtested bug ("靠近076仍然抖動...像是被卡住") - confirmed via
+            // EditorApplication.Step() frame-by-frame: once close to the approach point, distance
+            // oscillated a fixed +/-0.012 every single frame forever, never settling. Root cause:
+            // this used to feed straight into `chaseDirection * aerialHorizontalSpeed` below with
+            // no overshoot guard (unlike the vertical closing speed further down, which already
+            // uses Mathf.MoveTowards specifically to avoid this) - once the remaining gap to the
+            // approach point was smaller than one frame's own movement step, she'd fly straight
+            // past it, then the point would be behind her next frame, so she'd reverse and fly
+            // past it again the other way, forever. aerialHorizontalSpeedThisFrame below clamps
+            // the closing speed to "no more than the remaining distance this frame", the same
+            // no-overshoot guarantee Mathf.MoveTowards gives the vertical case, just expressed as
+            // a velocity since this class threads velocities through to _controller.Move rather
+            // than setting position directly.
+            float aerialHorizontalSpeedThisFrame = aerialHorizontalSpeed;
             if (_isAerialCombat)
             {
                 Vector3 approachPoint = target.position + target.forward * aerialApproachDistance;
                 Vector3 toApproachPoint = approachPoint - transform.position;
                 toApproachPoint.y = 0f;
-                if (toApproachPoint.sqrMagnitude > 0.0001f)
+                float distanceToApproachPoint = toApproachPoint.magnitude;
+                if (distanceToApproachPoint > 0.0001f)
                 {
                     aerialChaseDirection = toApproachPoint.normalized;
                 }
+                aerialHorizontalSpeedThisFrame = Mathf.Min(aerialHorizontalSpeed, distanceToApproachPoint / Mathf.Max(Time.deltaTime, 0.0001f));
             }
 
             // Same bug/fix as the aerial exit condition above - ground melee freezes horizontal
             // movement while Attacking (the target isn't going anywhere mid-swing), but Aerial
             // Combat's target very much can, so it keeps chasing horizontally through its own
             // swing too instead of planting in place and letting the player fly out of range.
+            //
+            // 2026-08-20, real playtested bug ("076沒辦法主動靠我靠得很近") - ordinary ground melee
+            // stops the INSTANT distance crosses effectiveAttackRange (1.2 for 076, so it could be
+            // up to 1.2 units away, not touching), then just plants and swings from there forever
+            // - it never actually closes the remaining gap to true body contact (~0.88, the real
+            // CharacterController-blocked minimum). alwaysChaseWhileAttacking (opt-in, same
+            // per-character pattern as alwaysFaceTarget/alwaysUseSphericalJudgment - all three
+            // added for 076's close-quarters design) keeps walking toward the target through the
+            // whole Attacking state instead, so physics naturally presses it all the way in to
+            // the real minimum distance rather than stopping short at the attack-range boundary.
             bool shouldChaseHorizontally = CurrentState == EnemyState.Chasing
-                || (_isAerialCombat && CurrentState == EnemyState.Attacking);
-            // aerialHorizontalSpeed (not the ground moveSpeed) while genuinely in Aerial Combat -
-            // see that field's own comment for the 1.2x-the-player's-flight-speed reasoning.
-            float horizontalSpeed = _isAerialCombat ? aerialHorizontalSpeed : moveSpeed;
+                || ((_isAerialCombat || alwaysChaseWhileAttacking) && CurrentState == EnemyState.Attacking);
+
+            // 2026-08-23, real playtested bug ("076還是推著我走") - alwaysChaseWhileAttacking (see
+            // that field's own comment) deliberately keeps walking at full moveSpeed toward the
+            // target's exact position (distance == 0) through the whole Attacking state, on the
+            // assumption physics would naturally stop HER once blocked. In practice, two
+            // CharacterControllers colliding doesn't just stop the mover - the target's own next
+            // Move() call (even one only applying gravity, no player input at all) resolves
+            // against a still-advancing attacker and gets carried along with her, reading as
+            // being pushed. The real achievable minimum between two solid capsules is never 0,
+            // it's the sum of their radii - chasing straight at distance==0 forever means she's
+            // ALWAYS still "trying" at full speed against a wall she can physically never reach,
+            // and that continuous press is exactly what shoves the target. groundContactDistance
+            // estimates that real minimum (her own scaled radius + an assumed ~0.4 target radius,
+            // matching Player's own CharacterController) plus a small buffer, and speed now
+            // tapers to zero (Mathf.Min against the remaining gap ABOVE that distance, same
+            // no-overshoot shape aerialHorizontalSpeedThisFrame already uses) instead of pressing
+            // in at full moveSpeed indefinitely once already at that expected contact range.
+            float ownWorldRadius = _controller.radius * transform.lossyScale.x;
+            float groundContactDistance = ownWorldRadius + 0.4f + 0.1f;
+            float remainingToContact = Mathf.Max(0f, distance - groundContactDistance);
+            float groundHorizontalSpeedThisFrame = Mathf.Min(moveSpeed, remainingToContact / Mathf.Max(Time.deltaTime, 0.0001f));
+
+            // aerialHorizontalSpeedThisFrame (not the ground moveSpeed) while genuinely in Aerial
+            // Combat - see that field's own comment for the 1.2x-the-player's-flight-speed
+            // reasoning, and aerialHorizontalSpeedThisFrame's own computation above for why it's
+            // the clamped-per-frame value rather than the raw aerialHorizontalSpeed constant.
+            float horizontalSpeed = _isAerialCombat ? aerialHorizontalSpeedThisFrame : groundHorizontalSpeedThisFrame;
             Vector3 chaseDirection = _isAerialCombat ? aerialChaseDirection : direction;
             _horizontalVelocity = shouldChaseHorizontally ? chaseDirection * horizontalSpeed : Vector3.zero;
             MoveInput = new Vector2(direction.x, direction.z);
@@ -511,20 +635,39 @@ namespace Live2DAction.AI
         // transform.root) that would just turn into extra parameters either way, and this
         // class's own header comment already documents the deliberate choice not to share
         // movement code with CharacterMovement.
+        //
+        // 2026-08-23, real playtested bug ("我靠近她 他反而會退後") - _controller.center/height/
+        // radius are LOCAL (pre-scale) values, but this method was adding them straight onto
+        // transform.position (a WORLD position) as if they were already world units. Invisible
+        // for scale-1 characters (Enemy, Player) - the bug only actually surfaces on 076, whose
+        // 5x scale means the true world capsule bottom sits ~1.6 world units below where this
+        // math thought it was. The cast origin ended up around 076's own chest height instead of
+        // her feet, so its short downward sweep could clip the PLAYER's own capsule (rather than
+        // the actual ground) whenever the player got close - misread as "076 is standing ON TOP
+        // of the player", which unconditionally triggers the slide-away push below regardless of
+        // any real slope angle, at slideSpeed (4) faster than her own moveSpeed (2.4) - reading
+        // exactly like she flinches backward the moment you close the distance. Multiplying by
+        // transform.lossyScale here makes the probe track 076's ACTUAL world-space capsule
+        // (bottom right at her feet) the same way it already correctly did for scale-1 characters.
         private bool TryGetGroundNormal(out Vector3 normal, out CharacterController otherCharacterController)
         {
-            float capsuleBottomLocalY = _controller.center.y - _controller.height / 2f;
-            Vector3 origin = transform.position + new Vector3(0f, capsuleBottomLocalY + _controller.radius, 0f);
-            float castDistance = _controller.radius + 0.3f;
-            float castRadius = Mathf.Max(0.05f, _controller.radius * 0.8f);
+            float scaleY = transform.lossyScale.y;
+            float scaleXZ = Mathf.Max(transform.lossyScale.x, transform.lossyScale.z);
+            float worldRadius = _controller.radius * scaleXZ;
+            float worldHeight = _controller.height * scaleY;
+            float capsuleBottomLocalY = _controller.center.y * scaleY - worldHeight / 2f;
+            Vector3 origin = transform.position + new Vector3(0f, capsuleBottomLocalY + worldRadius, 0f);
+            float castDistance = worldRadius + 0.3f;
+            float castRadius = Mathf.Max(0.05f, worldRadius * 0.8f);
 
-            RaycastHit[] hits = Physics.SphereCastAll(origin, castRadius, Vector3.down, castDistance, ~0, QueryTriggerInteraction.Ignore);
+            int hitCount = Physics.SphereCastNonAlloc(origin, castRadius, Vector3.down, _groundNormalHitsBuffer, castDistance, ~0, QueryTriggerInteraction.Ignore);
             float closestDistance = float.MaxValue;
             normal = Vector3.up;
             otherCharacterController = null;
             bool found = false;
-            foreach (RaycastHit hit in hits)
+            for (int i = 0; i < hitCount; i++)
             {
+                RaycastHit hit = _groundNormalHitsBuffer[i];
                 if (hit.collider == null || hit.collider.transform.root == transform.root)
                 {
                     continue;

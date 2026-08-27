@@ -124,10 +124,21 @@ namespace Live2DAction.EditorTools
             trigger.center = solid.center;
             trigger.size = solid.size + Vector3.one * (TriggerPadding * 2f);
 
-            ParticleSystem ps = wall.AddComponent<ParticleSystem>();
+            // 2026-08-22, real playtested bug ("我在圍牆內自由行走穿梭後 牆體會變形") - the
+            // ParticleSystem used to live directly on the wall's own GameObject, so
+            // BoundaryBlockEffect repositioning/rotating "the ripple's transform" every touch was
+            // actually moving the wall itself (mesh + BoxColliders, all on that same Transform).
+            // A dedicated child GameObject gives the ripple its own Transform to be shoved around
+            // without ever touching the wall's.
+            var rippleGo = new GameObject("RippleEmitter");
+            rippleGo.transform.SetParent(wall.transform, false);
+            ParticleSystem ps = rippleGo.AddComponent<ParticleSystem>();
             ConfigureRipple(ps);
 
-            wall.AddComponent<BoundaryBlockEffect>();
+            BoundaryBlockEffect effect = wall.AddComponent<BoundaryBlockEffect>();
+            var so = new SerializedObject(effect);
+            so.FindProperty("ripple").objectReferenceValue = ps;
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
 
         // Icy blue-white shimmer burst, world-space so it stays put at the contact point

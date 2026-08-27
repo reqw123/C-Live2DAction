@@ -1,0 +1,56 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: PW2_Attack_GuardKick
+  m_EditorClassIdentifier: 
+  attackId: GuardKick
+  clipName: PW2_GuardKick
+  minDistance: 0
+  maxDistance: 1.05
+  maxAngleDegrees: 70
+  cooldownSeconds: 5.5
+  selectionWeightPhase1: 25
+  selectionWeightPhase2: 30
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.3
+  recoverySeconds: 0.4
+  startupTracking: 1
+  lateTracking: 0.15
+  trackingDropNormalizedTime: 0.3
+  baseHealthDamage: 16
+  basePoiseDamage: 12
+  knockbackForce: 3
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 0.4
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 3
+    startNormalized: 0.43
+    endNormalized: 0.57
+    damageMultiplier: 1
+    measured: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  designNotes: "Measured via SampleAnimation (2026-08-25). Straight kick, real forward
+    reach ~0.93-1.12m. incomingDamageMultiplierWhileGuarding=0.4 gives partial-block
+    during its own guard pose per spec ('\u4E0D\u662F\u7121\u689D\u4EF6\u5B8C\u7F8E\u683C\u64CB')
+    - poise damage still applies in full."

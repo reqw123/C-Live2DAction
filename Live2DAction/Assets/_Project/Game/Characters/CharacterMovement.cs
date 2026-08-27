@@ -259,6 +259,13 @@ namespace Live2DAction.Characters
         private float _pitchAngularVelocity;
         private float _desiredPitchDegrees;
 
+        // Perf fix (2026-08-27, playtest report - "play mode模式下遊戲會卡頓") - TryGetGroundNormal
+        // runs every Update while grounded (essentially every frame while standing/walking) and
+        // used to call Physics.SphereCastAll, allocating a fresh RaycastHit[] each time. Reused
+        // buffer + SphereCastNonAlloc instead - same query (mask/QueryTriggerInteraction
+        // unchanged); 16 is generous for a single ground probe.
+        private readonly RaycastHit[] _groundNormalHitsBuffer = new RaycastHit[16];
+
         // 2026-08-18, REVERTED same day from applying _pitch to the root transform.rotation -
         // real playtested bug on EnemyAI's identical setup (see that class's own comment for the
         // full story): CharacterController's capsule "up" axis follows the transform's own local
@@ -302,6 +309,11 @@ namespace Live2DAction.Characters
         // Exposed for CharacterAnimatorLink (drives the Animator's existing but previously-
         // unused "Fly" bool) and for a wing visual to toggle itself on/off.
         public bool IsFlying => _isFlying;
+
+        // 2026-08-25 - see ICharacterSpeedSource.IsGrounded's own comment (the Grounded
+        // Animator bool had no writer at all until this). _controller.isGrounded is already
+        // the same value the gravity-reset/jump/slide logic above reads every frame.
+        public bool IsGrounded => _controller.isGrounded;
 
         // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.5) - single source
         // of truth for the current banking-tilt angle, read by both this class's own Visual
@@ -512,7 +524,16 @@ namespace Live2DAction.Characters
                     // offset feeds the pitch calc below; facingDirection itself stays horizontal-
                     // only, same as before, since yaw is computed separately via LookRotation on
                     // a flat vector further down.
-                    _desiredPitchDegrees = AimUtility.ClampedPitchDegrees(toTarget, maxPitchDegrees);
+                    //
+                    // 2026-08-25, user feedback ("舊版無論平地還是空中視角永遠平行且人物直立") - first
+                    // tried gating this on _isFlying (matching _bankRollDegrees just below, which
+                    // was already flying-only) since the lean was originally built for aerial
+                    // combat. Follow-up feedback ("飛行時玩家身體面向地面傾斜 我要直立") clarified the
+                    // requirement is unconditional, not flying-specific either - upright always,
+                    // full stop, same as camera roll's own final rule. Body no longer pitches
+                    // toward a locked target's vertical offset at all; only yaw (facing) still
+                    // tracks it via facingDirection below.
+                    _desiredPitchDegrees = 0f;
                     toTarget.y = 0f;
                     facingDirection = toTarget;
                 }
@@ -761,20 +782,32 @@ namespace Live2DAction.Characters
         // used by Update() to unconditionally slide off another character regardless of the
         // exact contact angle, see that call site's own comment for why the slope-angle check
         // alone wasn't enough.
+        // 2026-08-23 - _controller.center/height/radius are LOCAL (pre-scale) values; multiplied
+        // by transform.lossyScale here so the probe still finds the capsule's true world-space
+        // bottom on a non-1-scaled character (see EnemyAI.TryGetGroundNormal's own copy of this
+        // fix for the real playtested bug - 076's 5x scale - that exposed this). A no-op for
+        // every scale-1 character already using this method (CharacterMovement is player-only
+        // today), kept here purely so this copy doesn't silently reintroduce the same bug if a
+        // scaled character ever ends up using CharacterMovement instead of EnemyAI.
         private bool TryGetGroundNormal(out Vector3 normal, out CharacterController otherCharacterController)
         {
-            float capsuleBottomLocalY = _controller.center.y - _controller.height / 2f;
-            Vector3 origin = transform.position + new Vector3(0f, capsuleBottomLocalY + _controller.radius, 0f);
-            float castDistance = _controller.radius + 0.3f;
-            float castRadius = Mathf.Max(0.05f, _controller.radius * 0.8f);
+            float scaleY = transform.lossyScale.y;
+            float scaleXZ = Mathf.Max(transform.lossyScale.x, transform.lossyScale.z);
+            float worldRadius = _controller.radius * scaleXZ;
+            float worldHeight = _controller.height * scaleY;
+            float capsuleBottomLocalY = _controller.center.y * scaleY - worldHeight / 2f;
+            Vector3 origin = transform.position + new Vector3(0f, capsuleBottomLocalY + worldRadius, 0f);
+            float castDistance = worldRadius + 0.3f;
+            float castRadius = Mathf.Max(0.05f, worldRadius * 0.8f);
 
-            RaycastHit[] hits = Physics.SphereCastAll(origin, castRadius, Vector3.down, castDistance, ~0, QueryTriggerInteraction.Ignore);
+            int hitCount = Physics.SphereCastNonAlloc(origin, castRadius, Vector3.down, _groundNormalHitsBuffer, castDistance, ~0, QueryTriggerInteraction.Ignore);
             float closestDistance = float.MaxValue;
             normal = Vector3.up;
             otherCharacterController = null;
             bool found = false;
-            foreach (RaycastHit hit in hits)
+            for (int i = 0; i < hitCount; i++)
             {
+                RaycastHit hit = _groundNormalHitsBuffer[i];
                 if (hit.collider == null || hit.collider.transform.root == transform.root)
                 {
                     continue;

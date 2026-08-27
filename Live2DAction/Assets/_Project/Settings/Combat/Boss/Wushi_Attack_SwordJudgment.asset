@@ -1,0 +1,68 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_SwordJudgment
+  m_EditorClassIdentifier: 
+  attackId: SwordJudgment
+  clipName: Wushi_SwordJudgment
+  minDistance: 0
+  maxDistance: 3.5
+  maxAngleDegrees: 65
+  cooldownSeconds: 2.5
+  selectionWeightPhase1: 1
+  selectionWeightPhase2: 1
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.35
+  recoverySeconds: 0.6
+  startupTracking: 1
+  lateTracking: 0.15
+  trackingDropNormalizedTime: 0.28
+  baseHealthDamage: 32
+  basePoiseDamage: 22
+  knockbackForce: 4
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 6
+    startNormalized: 0.16
+    endNormalized: 0.21
+    damageMultiplier: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.59
+    endNormalized: 0.72
+    damageMultiplier: 1
+    measured: 1
+  derivedAttack: {fileID: 11400000, guid: 3d43848aea03f0c46b7907befb32c7ac, type: 2}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0.6
+  deriveChancePhase2: 0.85
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 3
+  isMajorAttack: 1
+  designNotes: "2026-08-26, real playtested bug (\"\u6BCF\u6B21\u90FD\u662F\u5288\u780D\u7D50\u675F\u5F8C\u528D\u624D\u7D05\")
+    - re-measured against the actual clip via AnimationMode.SampleAnimationClip,
+    tracking BladeHitbox's position/speed relative to root every ~0.05s across the
+    whole 3.3s clip. The OLD windows (0.445-0.495, 0.72-0.93) both landed in the
+    LULL right after each real swing had already finished moving, not during it -
+    confirmed by the blade's own speed dropping near 0 during both old windows while
+    the real fast cutting motion (peak speed 97 units/s at t=0.182 for swing 1, a
+    sustained 20-30 units/s sweep across t=0.59-0.71 for swing 2) had already happened
+    earlier. New windows are centered on those two measured fast-swing phases instead.
+    Not a guess this time - measured is 1 on both."

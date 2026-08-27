@@ -15,6 +15,15 @@ Shader "Live2DAction/LightPillarURP"
         _ScrollSpeed("Vertical Scroll Speed", Float) = 1.6
         _BandFrequency("Rising Band Frequency", Float) = 7
         _TopFadeStart("Top Fade Start (0-1 height)", Range(0, 1)) = 0.55
+
+        // 2026-08-22, explicit user request ("上升氣流渲染成鮮紅色 並且由下而上逐漸渲染") - driven at
+        // runtime (not exposed as a look you'd hand-tune in the inspector) by a script reacting to
+        // TimeTrialController.IsRunning. Both default to their no-op values (0 and 1) so existing
+        // materials using this shader (LightPillar.mat's portal beam) render byte-identical to
+        // before these were added.
+        _ActiveColor("Activated Tint Color", Color) = (1, 0.08, 0.08, 1)
+        _ActiveBlend("Activated Tint Blend (0-1)", Range(0, 1)) = 0
+        _FillHeight01("Activation Fill Height (0-1 height)", Range(0, 1)) = 1
     }
     SubShader
     {
@@ -62,6 +71,9 @@ Shader "Live2DAction/LightPillarURP"
             float _ScrollSpeed;
             float _BandFrequency;
             float _TopFadeStart;
+            float4 _ActiveColor;
+            float _ActiveBlend;
+            float _FillHeight01;
 
             Varyings Vert(Attributes IN)
             {
@@ -96,7 +108,15 @@ Shader "Live2DAction/LightPillarURP"
                 float topFade = 1.0 - smoothstep(_TopFadeStart, 1.0, IN.localY01);
                 alpha *= topFade;
 
-                float3 color = _Color.rgb * (1.0 + fresnel * 0.6);
+                // 2026-08-22, explicit user request ("上升氣流渲染成鮮紅色 並且由下而上逐漸渲染") -
+                // soft rising edge (not a hard cutoff) so the red activation reads as sweeping up
+                // the column rather than popping in a flat line. _FillHeight01 stays at 1 (fully
+                // revealed, no-op) whenever the driving script isn't touching it.
+                float fillMask = 1.0 - smoothstep(_FillHeight01 - 0.08, _FillHeight01 + 0.08, IN.localY01);
+                alpha *= fillMask;
+
+                float3 baseColor = lerp(_Color.rgb, _ActiveColor.rgb, _ActiveBlend);
+                float3 color = baseColor * (1.0 + fresnel * 0.6);
                 return float4(color, saturate(alpha));
             }
             ENDHLSL

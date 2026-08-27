@@ -182,7 +182,32 @@ namespace Live2DAction.Combat
             // fires Damaged and this method never runs at all (see postStaggerGraceSeconds' own
             // comment). Anything that reaches this point is, by construction, past the window.
             _timeSinceLastHit = 0f;
-            _currentStance = Mathf.Min(maxStance, _currentStance + info.Amount * stanceGainMultiplier);
+            // 2026-08-24, boss moveset request - DamageInfo.ExplicitPoiseAmount lets a caller
+            // (currently only BossHitbox) specify poise gain independently of health damage, for
+            // attacks whose design explicitly decouples the two (see DamageInfo's own comment).
+            // Every other existing caller leaves this null, so this falls through to the exact
+            // same derived formula as before - zero behavior change for Player/Enemy combat.
+            float gain = info.ExplicitPoiseAmount ?? info.Amount * stanceGainMultiplier;
+            ApplyStanceGain(gain);
+        }
+
+        // 2026-08-26, explicit user request (Boss AI spec, section 三 - "提供AddPostureDamage(float)
+        // 等公開整合介面") - a way to add posture damage directly, decoupled from the normal
+        // Health.ApplyDamage/DamageInfo pipeline entirely (e.g. a future parry/perfect-guard system
+        // that should build the boss's posture without also dealing HP damage). OnDamaged above
+        // stays the path for every existing normal-hit caller; this is purely additive. Shares the
+        // exact same fill/stagger-trigger logic via ApplyStanceGain so there's only one place that
+        // decides "did this cross maxStance" - no duplicated threshold check to drift out of sync.
+        public void AddPostureDamage(float amount)
+        {
+            if (IsStaggered || _health.IsDead || amount <= 0f) return;
+            _timeSinceLastHit = 0f;
+            ApplyStanceGain(amount);
+        }
+
+        private void ApplyStanceGain(float gain)
+        {
+            _currentStance = Mathf.Min(maxStance, _currentStance + gain);
             if (_currentStance >= maxStance)
             {
                 // 2026-08-19, explicit user request ("讓架勢條滿格後進入硬直的同時 清空快速架勢
@@ -212,6 +237,16 @@ namespace Live2DAction.Combat
             _timeSinceLastHit = 0f;
             _postStaggerGraceRemaining = postStaggerGraceSeconds;
             _health.SetInvulnerable(this, postStaggerGraceSeconds > 0f);
+        }
+
+        // 2026-08-24, boss moveset request ("Boss完成起身後恢復約20%架勢") - call AFTER EndStagger,
+        // not instead of it (EndStagger's own zero-out + invulnerability grace still need to
+        // happen exactly as before for every existing caller). No prior caller needed a way to
+        // set stance to a specific fraction rather than always-zero, hence this being new rather
+        // than reusing EndStagger itself.
+        public void RestoreStanceFractionAfterRecovery(float fraction)
+        {
+            _currentStance = Mathf.Clamp(maxStance * fraction, 0f, maxStance);
         }
 
         // 2026-08-19, bug report ("血量歸0應該是做出死亡動作然後消失 並非硬直蹲下") - a fatal hit

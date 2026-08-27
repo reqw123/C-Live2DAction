@@ -77,6 +77,22 @@ namespace Live2DAction.EditorTools
     // 1-(1-t)^2 curve/shape as before (t=i/8, i=0..6 now instead of i=0..8) - "後面的光環也要對應
     // 調整" - so the climb still reads as one continuous curve, just re-based higher, not a kink
     // at gate 0 alone.
+    //
+    // 2026-08-23, explicit user request ("現在的金色光環都是連續直線排序 我要你變成S形 總共20 任你
+    // 排序 有高有低但有邏輯") - the straight-line course (7 gates, one linear lerp start->end) was
+    // replaced with a proper S-curve of 20 gates for more difficulty: a lateral sine sway across
+    // the flight path's own perpendicular axis (exactly one full sine period end to end - one
+    // left bend, one right bend, tracing an actual "S" from a bird's-eye view) layered on top of
+    // the SAME start->end line and the SAME 1-(1-t)^2 height easing this course has used since
+    // 2026-08-20, plus a second, faster sine wave on top of the height (two full up/down cycles)
+    // for "有高有低" without breaking the overall smooth climb - "有邏輯" is exactly why both waves
+    // are pure sine functions over an even t=i/19 sampling rather than hand-placed/randomized
+    // points: the shape is fully deterministic and both waves are mathematically guaranteed to
+    // hit exactly zero at t=0 and t=1 (sin of an integer multiple of 2π), so gate 0 and the final
+    // gate land EXACTLY on the same two positions this course has always used - Updraft_MainArea's
+    // measured clearance point and the "just short of the sky island's edge" finish, both real
+    // playtested constraints from the history above, are preserved untouched even though every
+    // interior gate moved. See GenerateGatePositions below for the actual formula.
     internal static class SkyIslandTimeTrialSetup
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";
@@ -99,21 +115,80 @@ namespace Live2DAction.EditorTools
         // speed), but no longer detached from what's actually on screen.
         private const float TriggerRadius = 2.0f;
 
-        // X/Z still sampled at the original t=i/8 spacing along the same start->SkyIsland_Ground
-        // line (only the last two samples, t=7/8 and t=8/8, are gone - see this class's own
-        // header comment) - height re-eased via the same 1-(1-t)^2 curve from a raised start
-        // (12.0, up from 10.56) to the same end (23.0, SkyIsland_Ground's own height), so the
-        // shape is identical, just re-based higher and one segment shorter.
-        private static readonly Vector3[] GatePositions =
+        // 2026-08-23, explicit user request ("變成S形 總共20 任你排序 有高有低但有邏輯") - replaces
+        // the old hand-typed 7-point straight-line array with a computed 20-point S-curve. See
+        // GenerateGatePositions below for the actual formula; StartPoint/EndPoint are the exact
+        // same two positions this course has used since the 2026-08-20 fixes above (Updraft_
+        // MainArea's measured clearance point and the "just short of the sky island's edge"
+        // finish) - only the 18 interior gates actually moved.
+        private static readonly Vector3 StartPoint = new Vector3(-5.33f, 13.5f, -6.82f);
+        private static readonly Vector3 EndPoint = new Vector3(-52.34f, 23.81f, -20.45f);
+        private const int GateCount = 20;
+
+        // How far the path swings to either side of the straight start->end line - one full sine
+        // period across the whole course traces exactly one S: swings one way, crosses back
+        // through the centerline, swings the other way, ends back on-center.
+        //
+        // 2026-08-23, real playtested bug ("金色光環的間隔太密集 s形也不夠彎曲 沒有難度") - the first
+        // pass (9f) read as a cramped slalom rather than a real S-turn: gate-to-gate spacing is a
+        // direct function of this amplitude (a wider sway means each evenly-t-sampled gate covers
+        // more actual world distance, since the sine's own slope is steeper), so a timid curve was
+        // ALSO the cause of the too-tight spacing complaint - one fix addresses both. More than
+        // doubled to 22f - open sky well above GreyboxSceneBuilder's boundary walls (wallHeight=6f;
+        // every gate sits at world Y=13.5-23.8) with no other geometry nearby, confirmed by
+        // re-screenshotting the new course top-down after this change.
+        //
+        // 2026-08-24, real playtested bug ("金色光環各自的間隔不夠遠") - still too tight even after
+        // the above. StartPoint/EndPoint stay fixed (real playtested constraints - Updraft_
+        // MainArea's measured clearance point and "just short of the sky island's edge", see this
+        // file's class comment), so the only lever that widens EVERY gap without either point
+        // moving is more amplitude - the sin() formula is mathematically guaranteed to still hit
+        // exactly 0 at t=0/0.5/1 regardless of how large this gets. Raised again to 32f.
+        private const float LateralSwayAmplitude = 32f;
+
+        // A second, faster sine riding on top of the established 1-(1-t)^2 height-easing curve -
+        // two full up/down cycles across the course for "有高有低", independent of the lateral
+        // sway's own single cycle so the highs/lows don't always land exactly on the same gates as
+        // the left/right turns (reads as one flowing 3D weave rather than two synchronized waves).
+        // Scaled up alongside LateralSwayAmplitude above so the vertical weave stays proportional
+        // to the now much wider horizontal one, rather than reading as flat by comparison.
+        //
+        // 2026-08-24 - raised alongside LateralSwayAmplitude's own same-date increase, same
+        // proportionality reasoning.
+        private const float VerticalWaveAmplitude = 7f;
+
+        private static readonly Vector3[] GatePositions = GenerateGatePositions();
+
+        private static Vector3[] GenerateGatePositions()
         {
-            new Vector3(-5.33f, 12f, -6.82f),        // 0: start - now 2 units clear of Updraft_MainArea's measured top (world Y=10), not 0.56
-            new Vector3(-13.17f, 14.58f, -9.09f),    // 1
-            new Vector3(-21f, 16.81f, -11.36f),      // 2
-            new Vector3(-28.83f, 18.7f, -13.64f),    // 3
-            new Vector3(-36.67f, 20.25f, -15.91f),   // 4
-            new Vector3(-44.5f, 21.45f, -18.18f),    // 5
-            new Vector3(-52.34f, 22.31f, -20.45f),   // 6: finish - just short of the sky island's own edge, not on top of it
-        };
+            Vector2 startXZ = new Vector2(StartPoint.x, StartPoint.z);
+            Vector2 endXZ = new Vector2(EndPoint.x, EndPoint.z);
+            Vector2 mainDirXZ = (endXZ - startXZ).normalized;
+            // 90-degree rotation in the XZ plane - the axis the S-curve sways across.
+            Vector2 perpDirXZ = new Vector2(-mainDirXZ.y, mainDirXZ.x);
+
+            var positions = new Vector3[GateCount];
+            for (int i = 0; i < GateCount; i++)
+            {
+                float t = i / (float)(GateCount - 1);
+
+                Vector2 centerlineXZ = Vector2.Lerp(startXZ, endXZ, t);
+                // sin(t * 2π) is 0 at t=0, t=0.5, AND t=1 - one full S-bend that starts and ends
+                // exactly on the centerline, so gate 0/the last gate never drift sideways off
+                // StartPoint/EndPoint regardless of amplitude.
+                float lateral = LateralSwayAmplitude * Mathf.Sin(t * Mathf.PI * 2f);
+                Vector2 posXZ = centerlineXZ + perpDirXZ * lateral;
+
+                float baseHeight = StartPoint.y + (EndPoint.y - StartPoint.y) * (1f - Mathf.Pow(1f - t, 2f));
+                // sin(t * 4π) - two full cycles, also exactly 0 at t=0 and t=1 for the same reason
+                // as the lateral sway above, so it never disturbs the two endpoint heights either.
+                float verticalWave = VerticalWaveAmplitude * Mathf.Sin(t * Mathf.PI * 4f);
+
+                positions[i] = new Vector3(posXZ.x, baseHeight + verticalWave, posXZ.y);
+            }
+
+            return positions;
+        }
 
         [MenuItem("Tools/Live2DAction/Add Sky Island Time Trial Course")]
         public static void Apply()

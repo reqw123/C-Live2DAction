@@ -1,0 +1,68 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_OverheadSlam
+  m_EditorClassIdentifier: 
+  attackId: OverheadSlam
+  clipName: Wushi_OverheadSlam
+  minDistance: 0
+  maxDistance: 3.2
+  maxAngleDegrees: 60
+  cooldownSeconds: 2.5
+  selectionWeightPhase1: 1
+  selectionWeightPhase2: 1
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.4
+  recoverySeconds: 0.4
+  startupTracking: 1
+  lateTracking: 0.15
+  trackingDropNormalizedTime: 0.3
+  baseHealthDamage: 28
+  basePoiseDamage: 22
+  knockbackForce: 4.5
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 6
+    startNormalized: 0.55
+    endNormalized: 0.66
+    damageMultiplier: 1
+    measured: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 1
+  designNotes: '2026-08-26, real playtested bug ("每次都是劈砍結束後劍才紅") - the earlier
+    note here correctly identified the real strike at t=0.59 normalized (motion
+    spike), but the hitWindows array below it had somehow ended up with 0.78-0.93
+    instead of the 0.55-0.68 the note itself describes - a stale/mistyped value,
+    not a measurement error. Re-measured properly this time via
+    AnimationMode.SampleAnimationClip, tracking BladeHitbox position/speed
+    relative to root across the whole clip: the blade is held raised overhead
+    (height 4.3-5.2 relative to root) from t=0.10 to t=0.55, then a sharp speed
+    spike (peak 63.9 units/s at t=0.576) crashes it down through a real
+    front-facing, full-body-height sweep (forward 1.3-2.7, height dropping from
+    4.5 down to -0.2 relative to root) across t=0.56-0.65, settling near-ground
+    by t=0.66. 0.78-0.93 was entirely inside the slow recovery AFTER that crash
+    (speed 3.5-10 there, blade already lifting back up) - same "window fires
+    after the swing already happened" bug as Wushi_Attack_SwordJudgment. measured
+    is 1 this time.'

@@ -41,7 +41,14 @@ namespace Live2DAction.World
         // SkyIslandTimeTrialSetup already orients along the course's travel direction (previous
         // gate -> this gate) - reusing that existing data means the dash always pushes further
         // ALONG the intended route, not toward wherever the player happened to be facing/moving.
-        [SerializeField] private float dashSpeed = 14f;
+        // 2026-08-24, explicit user request ("金色光環通過時 賦予玩家的衝刺距離改為現在的0.5倍") -
+        // halved from 14f together with DashInstantDisplacement below, since both scale the total
+        // forward distance one dash covers linearly (see CharacterMovement.ApplyDash:
+        // instantDisplacement is an immediate Move() snap, dashSpeed decays linearly to 0 over
+        // DashDecaySeconds and its own area-under-the-line contributes the rest) - halving both
+        // halves the total distance while keeping the same "quick pop + short follow-through"
+        // shape of the dash, not just one piece of it.
+        [SerializeField] private float dashSpeed = 7f;
 
         // 2026-08-19, explicit user request ("穿過光圈需有短位移向前衝刺") - the pure velocity-
         // decay dash (above) apparently didn't read as an actual "衝刺" (dash) on its own, likely
@@ -51,7 +58,8 @@ namespace Live2DAction.World
         // independent of frame timing - so touching a gate always produces an unmistakable
         // "displaced forward" pop the same frame, with the velocity decay providing a few more
         // frames of lingering follow-through after that.
-        private const float DashInstantDisplacement = 2.5f;
+        // 2026-08-24 - halved alongside dashSpeed above, see that field's own comment.
+        private const float DashInstantDisplacement = 1.25f;
 
         // 2026-08-19, explicit user request ("被觸碰的光圈做一個向外擴大然後淡化成藍色消失的特效") -
         // touching a gate plays a one-shot "consumed" animation (scale up, tint toward blue, fade

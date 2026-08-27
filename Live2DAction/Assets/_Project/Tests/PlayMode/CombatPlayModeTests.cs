@@ -24,6 +24,11 @@ public class CombatPlayModeTests
         public bool FlyPressed { get; set; }
         public bool FlyDescendPressed { get; set; }
         public bool BoostPressed { get; set; } // 2026-08-20, flight system design - interface addition, stub needs it to compile
+        public bool AimPressed { get; set; } // 2026-08-23, ranged weapon - interface addition, stub needs it to compile
+        public bool FirePressed { get; set; }
+        public bool ViewTogglePressed { get; set; } // 2026-08-23, first-person toggle - interface addition, stub needs it to compile
+        public bool ZoomInPressed { get; set; } // 2026-08-23, aim-zoom controls - interface addition, stub needs it to compile
+        public bool ZoomOutPressed { get; set; }
     }
 
     private static void SetField(object target, string fieldName, object value)

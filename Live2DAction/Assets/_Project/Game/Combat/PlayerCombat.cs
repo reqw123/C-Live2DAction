@@ -81,6 +81,28 @@ namespace Live2DAction.Combat
         // so "primary" unambiguously means "the attack this component will actually use".
         public AttackData PrimaryAttack => comboAttacks != null && comboAttacks.Length > 0 ? comboAttacks[0] : null;
 
+        // 2026-08-26, explicit user request ("這個極近距離應該要對齊玩家的極限攻擊距離 保證玩家在最
+        // 遠能攻擊到武士的情況下 能觸發武士的踢擊並擊退") - same "read the real Range/Radius instead
+        // of a separately-tuned number that can drift out of sync" reasoning as PrimaryAttack's own
+        // comment above, generalized across the WHOLE combo (not just comboAttacks[0]) since a
+        // "how far can this character possibly reach me from" question needs the furthest combo
+        // step, not just the first one. Physics.OverlapCapsule/OverlapSphere above query out to
+        // Range+Radius from attackOrigin, so that sum - not Range alone - is the real max reach.
+        public float MaxAttackReach
+        {
+            get
+            {
+                float max = 0f;
+                if (comboAttacks == null) return max;
+                foreach (AttackData attack in comboAttacks)
+                {
+                    if (attack == null) continue;
+                    max = Mathf.Max(max, attack.Range + attack.Radius);
+                }
+                return max;
+            }
+        }
+
         // 2026-08-13, explicit user request (ultimate skill: "attack1傷害乘10倍") - set/reset
         // by UltimateAbility while its buff window is active. 1 = no effect, the default/
         // inactive state.

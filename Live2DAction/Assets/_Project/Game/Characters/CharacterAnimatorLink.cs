@@ -44,6 +44,14 @@ namespace Live2DAction.Characters
         // either - Fly is just the first of that unused set to actually get consumed).
         private static readonly int FlyParameterHash = Animator.StringToHash("Fly");
 
+        // 2026-08-25, real playtested bug ("動作有哪些以及觸發時機" investigation found the
+        // Animator's "Grounded" bool had no writer anywhere in the project - it just sat at its
+        // default (true) forever, which made the Fall/Jump states (both gated on Grounded
+        // transitions) permanently unreachable dead states. Same wiring pattern as Fly right
+        // above - ICharacterSpeedSource.IsGrounded now exposes whichever movement system's own
+        // CharacterController.isGrounded, same idiom.
+        private static readonly int GroundedParameterHash = Animator.StringToHash("Grounded");
+
         private void Awake()
         {
             _speedSource = GetComponent<ICharacterSpeedSource>();
@@ -75,6 +83,16 @@ namespace Live2DAction.Characters
             // Always false for Enemy (ICharacterSpeedSource.IsFlying) - harmless, Enemy's
             // Animator Controller has the same unused "Fly" bool sitting on it as Player's.
             animator.SetBool(FlyParameterHash, _speedSource.IsFlying);
+            // 2026-08-25, user feedback ("在空中時身體好像在比手畫腳...要的是保持直立的姿勢") - the
+            // Controller has no dedicated Flying state at all (Fly above is still unused - nothing
+            // transitions on it), so as soon as today's Grounded wiring made Fall/Jump reachable,
+            // active flight (isGrounded=false, same as any other airborne moment) started dropping
+            // into the Fall state's tumbling/flailing-arms clip - correct for an actual
+            // uncontrolled fall, wrong for deliberate flight. Feeding IsFlying into Grounded too
+            // keeps flight in Locomotion/Idle (already the composed, upright pose the ground fix
+            // uses) instead of Fall, while a real fall (not holding flight, e.g. after energy runs
+            // out or a knockback) still correctly shows Fall.
+            animator.SetBool(GroundedParameterHash, _speedSource.IsGrounded || _speedSource.IsFlying);
         }
 
         public static float ComputeSpeedParameter(float currentSpeed, float maxAnimatorSpeed)

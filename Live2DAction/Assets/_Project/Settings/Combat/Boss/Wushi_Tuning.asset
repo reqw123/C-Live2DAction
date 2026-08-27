@@ -1,0 +1,81 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 59ea5dc3f3838844184a37591fd23b3a, type: 3}
+  m_Name: Wushi_Tuning
+  m_EditorClassIdentifier: 
+  alertRange: 5
+  phaseThreshold: 0.5
+  globalRestPhase1MinSeconds: 0.35
+  globalRestPhase1MaxSeconds: 0.5
+  globalRestPhase2MinSeconds: 0.25
+  globalRestPhase2MaxSeconds: 0.4
+  majorAttackExtraRestMinSeconds: 0.5
+  majorAttackExtraRestMaxSeconds: 1
+  approachDecelerationDistance: 0.5
+  attackReadinessBufferMinSeconds: 0.2
+  attackReadinessBufferMaxSeconds: 0.35
+  walkSpeed: 3
+  runSpeed: 6
+  unsteadyWalkSpeed: 1.2
+  rotationSpeedDegrees: 360
+  decisionIntervalSeconds: 0.2
+  decisionIntervalPhase1MinSeconds: 0.25
+  decisionIntervalPhase1MaxSeconds: 0.45
+  decisionIntervalPhase2MinSeconds: 0.15
+  decisionIntervalPhase2MaxSeconds: 0.3
+  postureUnsteadyEnterFraction: 0.75
+  postureUnsteadyExitFraction: 0.6
+  postureBreakDurationMinSeconds: 3
+  postureBreakDurationMaxSeconds: 3
+  postureRestoreOnRecover: 0.2
+  postureRegenDelaySeconds: 2
+  postureRegenPerSecond: 5
+  postureKneelNormalizedTime: 0.5
+  reviveDelaySeconds: 5
+  permanentDeath: 1
+  vanishTriggerSeconds: 999999
+  vanishTrackDurationSeconds: 3.5
+  vanishWarningMinSeconds: 0.6
+  vanishWarningMaxSeconds: 1.5
+  vanishTotalCycleSeconds: 5
+  vanishLandingBehindDistanceMin: 2.5
+  vanishLandingBehindDistanceMax: 4
+  diveLandingRecoverySeconds: 1
+  dodgeCounterChancePhase1: 0.15
+  dodgeCounterChancePhase2: 0.25
+  dodgeCounterCooldownMinSeconds: 8
+  dodgeCounterCooldownMaxSeconds: 10
+  dodgeCounterReactionDelayMinSeconds: 0.15
+  dodgeCounterReactionDelayMaxSeconds: 0.25
+  dodgeIframeStartNormalized: 0.15
+  dodgeIframeEndNormalized: 0.35
+  sprintMinDistance: 4
+  sprintMaxDistance: 8
+  sprintCooldownSeconds: 6
+  sprintBrakeDistance: 2
+  sprintBrakeMinSeconds: 0.25
+  sprintBrakeMaxSeconds: 0.35
+  ultimateIdealMinDistance: 2
+  ultimateIdealMaxDistance: 4
+  ultimateMaxDistance: 5
+  ultimateMinTriggerDistanceFraction: 0.8
+  ultimateRepositionSpeed: 4
+  ultimateRepositionTimeoutSeconds: 3
+  ultimateApproachSpeed: 6.5
+  ultimateLeapSpeed: 9
+  ultimateStartupMinSeconds: 1.5
+  ultimateStartupMaxSeconds: 2
+  ultimateTrackingLockSeconds: 0.5
+  ultimateRecoverySeconds: 1.25
+  postUltimateBufferSeconds: 1.5
+  postVanishBufferSeconds: 1
+  breakdanceTriggerSeconds: 15

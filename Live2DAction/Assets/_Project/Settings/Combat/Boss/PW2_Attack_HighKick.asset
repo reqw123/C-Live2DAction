@@ -1,0 +1,58 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: PW2_Attack_HighKick
+  m_EditorClassIdentifier: 
+  attackId: HighKick
+  clipName: PW2_HighKick
+  minDistance: 0
+  maxDistance: 1.1
+  maxAngleDegrees: 60
+  cooldownSeconds: 5
+  selectionWeightPhase1: 25
+  selectionWeightPhase2: 30
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.65
+  recoverySeconds: 0.95
+  startupTracking: 1
+  lateTracking: 0.1
+  trackingDropNormalizedTime: 0.3
+  baseHealthDamage: 22
+  basePoiseDamage: 16
+  knockbackForce: 4
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 3
+    startNormalized: 0.8
+    endNormalized: 1
+    damageMultiplier: 1
+    measured: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  designNotes: 'Measured via SampleAnimation (2026-08-25). WARNING: real peak extension
+    (t=0.43-0.83) arcs to head height (~2.2m world Y), forward reach up to 1.06m
+    - flies OVER a grounded player''s hurtbox. Used the clip''s lower/later window
+    instead (foot descending, ~0.80m reach at hurtbox-compatible height) - the only
+    geometrically valid window against a standing target. Flagging for human review
+    - this clip may need retiming/re-choreography.'
