@@ -30,6 +30,25 @@ namespace Live2DAction.Combat.Boss
         [SerializeField] private float majorAttackExtraRestMinSeconds = 2f;
         [SerializeField] private float majorAttackExtraRestMaxSeconds = 3f;
 
+        // 2026-08-29, user request ("每招 盡量做到輪流施放 不要有技能被孤立") - without this a
+        // high-weight staple (e.g. PunchCombo1 w50) crowds the rest of the pool out over a long
+        // fight, so some moves are barely ever seen. PickAttack scales a candidate's selection
+        // weight down toward attackRotationRecentFactor if it was used within
+        // attackRotationRecoverySeconds, recovering linearly to full weight by the end of that
+        // window - a soft least-recently-used bias on top of the existing weighted roll, distinct
+        // from each attack's own hard cooldownSeconds. 0 disables it (pure weighted random).
+        [Header("Attack rotation bias (spec: 輪流施放)")]
+        [SerializeField] private float attackRotationRecoverySeconds = 6f;
+        [SerializeField, Range(0f, 1f)] private float attackRotationRecentFactor = 0.15f;
+
+        // 2026-08-30, user report (屁孩王: "技能銜接不夠快...攻擊後搖太長") - a normal attack state
+        // runs the WHOLE clip (to ~0.98 normalized) before EndAttack, so the clip's return-to-
+        // stance recovery tail is dead time the boss can't act through. This cuts the attack this
+        // many normalized-time units AFTER its last hit window closes - UpdateAttack CrossFades
+        // straight out of the recovery into the next attack / Idle. Large default (2) = never cut
+        // (unchanged for 武士 / any boss that doesn't set it).
+        [SerializeField] private float attackRecoveryTailCutNormalized = 2f;
+
         [Header("Approach -> attack readiness")]
         [Tooltip("Distance from the player's own attack range at which the boss starts decelerating " +
                  "instead of running straight into melee range at full speed.")]
@@ -75,8 +94,23 @@ namespace Live2DAction.Combat.Boss
         [SerializeField] private float postureBreakDurationMaxSeconds = 4f;
         [Tooltip("Fraction of max poise restored the instant the boss finishes getting back up.")]
         [SerializeField, Range(0f, 1f)] private float postureRestoreOnRecover = 0.2f;
-        [Tooltip("Seconds after the LAST poise-damaging hit before poise starts regenerating.")]
+        [Tooltip("2026-09-01, user report (\"讓他倒下來的時候放低Y座標貼地就好\") - Wushi_PostureKneel is " +
+                 "a falling_down clip whose baked height curve floats well above the CC's grounded root " +
+                 "(the Animator sits directly on 武士's root, no separate Visual child to offset instead). " +
+                 "World-metres the boss ROOT drops for the duration of the held collapse pose, restored " +
+                 "the instant it ends. 0.4 measured off the REAL bone positions at the frozen frame (not " +
+                 "mesh bounds - Meshy's are unreliable): Hips/Spine/Head cluster at world Y 0.91-1.09 " +
+                 "against a ~0.5 floor, so ~0.4 centres that torso mass on the ground - one bent leg's toe " +
+                 "sits a little low as the trade-off, far less noticeable than the whole torso floating. " +
+                 "Still hand-tunable if the collapse ever looks off.")]
+        [SerializeField] private float postureBrokenGroundDropOffset = 0.4f;
+        // spec item 8 §9.3 - UNUSED. StancePoise is the single authority for poise regen (its own
+        // regenDelaySeconds / regenPerSecond, on the boss's StancePoise component - see 追加88's
+        // "武士 posture regen slowed"). BossStateMachine never reads these; kept only so the two
+        // Tuning assets don't need a re-serialize. Do NOT wire a second regen loop off them.
+        [Tooltip("UNUSED - StancePoise owns poise regen. See spec item 8 §9.3.")]
         [SerializeField] private float postureRegenDelaySeconds = 2f;
+        [Tooltip("UNUSED - StancePoise owns poise regen. See spec item 8 §9.3.")]
         [SerializeField] private float postureRegenPerSecond = 5f;
         // 2026-08-26, explicit user request (Boss AI spec, section 三) - the kneel-and-stand clip
         // actually available for this pack (falling_down, substituted for the missing dedicated
@@ -112,6 +146,15 @@ namespace Live2DAction.Combat.Boss
                  "once health reaches zero, matching the original permanent-death spec. If false " +
                  "(default, existing behavior), the boss auto-revives after reviveDelaySeconds.")]
         [SerializeField] private bool permanentDeath;
+
+        // 2026-08-31, explicit user request ("復活時間到慢慢站起來") - when reviveDelaySeconds
+        // elapses the boss no longer snaps straight back to a standing Alert pose; it enters
+        // BossState.GettingUp and plays its own death take BACKWARDS over this many seconds (no
+        // dedicated stand-up clip exists in either boss pack), so the corpse visibly climbs back
+        // to its feet before re-engaging. Ignored when permanentDeath is true.
+        [Tooltip("Seconds the boss takes to rise from the ground (death clip played in reverse) " +
+                 "after reviveDelaySeconds, before returning to Alert.")]
+        [SerializeField] private float standUpSeconds = 1.8f;
 
         [Header("30s vanish/dive cycle")]
         [SerializeField] private float vanishTriggerSeconds = 30f;
@@ -180,6 +223,11 @@ namespace Live2DAction.Combat.Boss
                  "has no root motion wired, so without this the leap never actually translated the " +
                  "boss at all). Faster than the windup's own approach speed for a real leap feel.")]
         [SerializeField] private float ultimateLeapSpeed = 9f;
+        [Tooltip("2026-08-29, user (\"為甚麼飛踢步行呢\") - upward velocity kicked into _verticalVelocity " +
+                 "the instant UltimateAttack begins, so the forward lunge is a real airborne flying " +
+                 "kick instead of a ground-level slide. ApplyMotion's normal gravity arcs it back " +
+                 "down through the strike. 0 = the old flat ground-slide. ~7 gives a ~1.2m, ~0.7s hop.")]
+        [SerializeField] private float ultimateLeapJumpSpeed = 7f;
         [SerializeField] private float ultimateStartupMinSeconds = 1.5f;
         [SerializeField] private float ultimateStartupMaxSeconds = 2f;
         [Tooltip("Last N seconds of startup where tracking tapers to 0 and the strike direction locks.")]
@@ -204,6 +252,13 @@ namespace Live2DAction.Combat.Boss
                  "timer/reset so the two schedules don't interfere with each other.")]
         [SerializeField] private float leapSlamTriggerSeconds = 20f;
 
+        [Tooltip("2026-08-28, explicit user request (\"飛天前有1秒前搖\" then \"不要蹲下 改站在原地\") - " +
+                 "seconds the boss holds still (idle pose, facing the player, LeapSlamWindup state) " +
+                 "before the actual leap begins - the tell is that it stops moving/attacking for a " +
+                 "beat. The leap energy is consumed at the END of this hold, not the start, so a " +
+                 "windup cancelled by a posture break keeps the banked energy.")]
+        [SerializeField] private float leapSlamWindupSeconds = 1f;
+
         [Tooltip("2026-08-27, explicit user request (\"不能跳很高嗎 至少讓玩家看不到的高度\") - extra " +
                  "WORLD UNITS of height layered on top of the clip's own baked Hips-bone rise (which " +
                  "only reaches ~11 units on its own - see leapSlamAttack's designNotes), driven " +
@@ -219,6 +274,51 @@ namespace Live2DAction.Combat.Boss
                  "Hips bone independently reaches near-ground (measured ~0.53), so the script-driven " +
                  "extra arc and the clip's own baked landing motion settle back to earth together.")]
         [SerializeField] private float leapSlamHeightFallEndNormalized = 0.53f;
+        [Tooltip("2026-08-27, playtested bug (\"落地位置仍然不對 還是浮空\") - WORLD UNITS short of " +
+                 "the player Wushi teleports to before the leap, measured back along the line toward " +
+                 "where Wushi leapt from. Landing on the player's EXACT xz drops Wushi onto the " +
+                 "player's own CharacterController capsule and he hangs there at ~player height. The " +
+                 "landing AOE radius (3.0, see leapSlamAttack.designNotes) still covers the player at " +
+                 "this offset. Set to 0 for dead-centre landing (will re-introduce the float).")]
+        [SerializeField] private float leapSlamLandingOffset = 2f;
+        [Tooltip("2026-08-28, user request (\"武士飛空後著地y座標從0.623改為0.5\") - WORLD UNITS added " +
+                 "to the raycast-hit ground surface Y to get Wushi's LeapSlam landing transform Y. " +
+                 "The old auto-computed value was ~0.123 (capsule-bottom-to-origin + skinWidth), " +
+                 "which rests the capsule flush; 0 plants the transform origin (feet) on the ground " +
+                 "surface itself. While LeapSlam holds this, the grounded clamp / gravity are kept " +
+                 "off so the CharacterController can't push it back up to its natural rest height.")]
+        [SerializeField] private float leapSlamLandingGroundedOffset = 0f;
+        [Tooltip("2026-08-28, explicit user request (\"落地前我想要讓他能追蹤玩家位置 然後落地\") - " +
+                 "reverses the earlier \"landing xz committed once at takeoff, no mid-leap homing\" " +
+                 "rule. While airborne, up to this normalized clip time, Wushi steers its horizontal " +
+                 "toward the player's CURRENT position so the slam lands where they ARE, not where " +
+                 "they were when the leap began. Past this normalized time the landing spot is locked " +
+                 "and the last stretch of the descent is a committed straight drop - that gap is the " +
+                 "player's last-instant dodge window. Keep it below leapSlamHeightFallEndNormalized " +
+                 "(0.53) - the height arc pins the transform after that and no horizontal move is " +
+                 "possible anyway.")]
+        [SerializeField] private float leapSlamTrackUntilNormalized = 0.45f;
+        [Tooltip("Cap (world units / second) on the airborne homing speed from " +
+                 "leapSlamTrackUntilNormalized above, so a player sprinting away mid-leap makes " +
+                 "Wushi visibly chase through the air rather than teleport-snap across the arena. " +
+                 "The homing normally moves only as fast as it needs to close the remaining gap by " +
+                 "the lock time; this just bounds a large correction.")]
+        [SerializeField] private float leapSlamMaxTrackSpeed = 30f;
+        [Tooltip("2026-08-29, user request (屁孩王: \"飛向天空那朝沒有鎖定玩家方向飛過去攻擊\") - when " +
+                 "TRUE (武士's behaviour), CommitLeapSlamLanding blinks the boss to just short of the " +
+                 "player the instant the windup ends, then the height arc plays in place. When FALSE, " +
+                 "it only locks the facing/landing-Y at takeoff and the boss physically FLIES there: " +
+                 "the airborne homing (see leapSlamTrackUntilNormalized) does the whole horizontal " +
+                 "travel from the takeoff spot to the player, so it reads as a real pounce instead of " +
+                 "a teleport. Needs leapCap (TryEnterLeapSlam) kept short enough that the homing can " +
+                 "close the gap before the lock time.")]
+        [SerializeField] private bool leapSlamTeleportToLanding = true;
+        [Tooltip("Only used when leapSlamTeleportToLanding is FALSE (屁孩王's flying pounce): seconds " +
+                 "from LeapSlam state entry over which the boss flies from its takeoff spot to the " +
+                 "player and the script height arc rises+falls. Driven off wall time, not the clip's " +
+                 "normalizedTime, so a crossfade can't stall the travel. Set it near the clip's own " +
+                 "slam-window start (leapSlamAttack hitWindows) so the boss lands as the slam connects.")]
+        [SerializeField] private float leapSlamFlightSeconds = 1.3f;
 
         // 2026-08-26, explicit user request ("玩家極近距離靠近武士時 容易躲避所有攻擊 如何解決") - a
         // real weapon swing's own arc has a minimum reach (you can't cut something touching the
@@ -237,6 +337,12 @@ namespace Live2DAction.Combat.Boss
                  "explicit user request (\"必須達到範圍內持續2秒才踢擊 給玩家一點輸出空間\"): deliberately " +
                  "not instant, so hugging briefly to land a hit isn't punished immediately.")]
         [SerializeField] private float tooCloseDurationSeconds = 2f;
+        [Tooltip("2026-09-02, user rule (\"武士的所有攻擊手段一定都是大於圓圈的，不然就會頻繁觸發踢擊\"): " +
+                 "scheduled/forced attacks that bypass the normal Approach standoff (periodic OverheadSlam) " +
+                 "stay pending until the boss is at least this far PAST EffectiveTooCloseDistance, so a " +
+                 "lunging pool attack that ended point-blank can't make the boss slam from inside its own " +
+                 "kick zone and then get stuck force-kicking.")]
+        [SerializeField] private float forcedAttackStandoffMargin = 0.6f;
 
         public float AlertRange => alertRange;
         public float PhaseThreshold => phaseThreshold;
@@ -266,6 +372,7 @@ namespace Live2DAction.Combat.Boss
         public float PostureBreakDurationMinSeconds => postureBreakDurationMinSeconds;
         public float PostureBreakDurationMaxSeconds => postureBreakDurationMaxSeconds;
         public float PostureRestoreOnRecover => postureRestoreOnRecover;
+        public float PostureBrokenGroundDropOffset => postureBrokenGroundDropOffset;
         public float PostureRegenDelaySeconds => postureRegenDelaySeconds;
         public float PostureRegenPerSecond => postureRegenPerSecond;
         public float PostureKneelNormalizedTime => postureKneelNormalizedTime;
@@ -274,7 +381,11 @@ namespace Live2DAction.Combat.Boss
         public float GlobalRestMaxSeconds(BossPhase phase) => phase == BossPhase.Phase1 ? globalRestPhase1MaxSeconds : globalRestPhase2MaxSeconds;
         public float MajorAttackExtraRestMinSeconds => majorAttackExtraRestMinSeconds;
         public float MajorAttackExtraRestMaxSeconds => majorAttackExtraRestMaxSeconds;
+        public float AttackRotationRecoverySeconds => attackRotationRecoverySeconds;
+        public float AttackRotationRecentFactor => attackRotationRecentFactor;
+        public float AttackRecoveryTailCutNormalized => attackRecoveryTailCutNormalized;
         public float ReviveDelaySeconds => reviveDelaySeconds;
+        public float StandUpSeconds => standUpSeconds;
         public float VanishTriggerSeconds => vanishTriggerSeconds;
         public float VanishTrackDurationSeconds => vanishTrackDurationSeconds;
         public float VanishWarningMinSeconds => vanishWarningMinSeconds;
@@ -302,16 +413,25 @@ namespace Live2DAction.Combat.Boss
         public float UltimateMaxDistance => ultimateMaxDistance;
         public float TooCloseDistance => tooCloseDistance;
         public float TooCloseDurationSeconds => tooCloseDurationSeconds;
+        public float ForcedAttackStandoffMargin => forcedAttackStandoffMargin;
         public float LeapSlamTriggerSeconds => leapSlamTriggerSeconds;
+        public float LeapSlamWindupSeconds => leapSlamWindupSeconds;
         public float LeapSlamExtraHeight => leapSlamExtraHeight;
         public float LeapSlamHeightRiseStartNormalized => leapSlamHeightRiseStartNormalized;
         public float LeapSlamHeightPeakNormalized => leapSlamHeightPeakNormalized;
         public float LeapSlamHeightFallEndNormalized => leapSlamHeightFallEndNormalized;
+        public float LeapSlamLandingOffset => leapSlamLandingOffset;
+        public float LeapSlamLandingGroundedOffset => leapSlamLandingGroundedOffset;
+        public float LeapSlamTrackUntilNormalized => leapSlamTrackUntilNormalized;
+        public float LeapSlamMaxTrackSpeed => leapSlamMaxTrackSpeed;
+        public bool LeapSlamTeleportToLanding => leapSlamTeleportToLanding;
+        public float LeapSlamFlightSeconds => leapSlamFlightSeconds;
         public float UltimateMinTriggerDistanceFraction => ultimateMinTriggerDistanceFraction;
         public float UltimateRepositionSpeed => ultimateRepositionSpeed;
         public float UltimateRepositionTimeoutSeconds => ultimateRepositionTimeoutSeconds;
         public float UltimateApproachSpeed => ultimateApproachSpeed;
         public float UltimateLeapSpeed => ultimateLeapSpeed;
+        public float UltimateLeapJumpSpeed => ultimateLeapJumpSpeed;
         public float UltimateStartupMinSeconds => ultimateStartupMinSeconds;
         public float UltimateStartupMaxSeconds => ultimateStartupMaxSeconds;
         public float UltimateTrackingLockSeconds => ultimateTrackingLockSeconds;

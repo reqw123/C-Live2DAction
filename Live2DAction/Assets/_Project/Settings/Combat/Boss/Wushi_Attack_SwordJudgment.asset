@@ -12,24 +12,27 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
   m_Name: Wushi_Attack_SwordJudgment
   m_EditorClassIdentifier: 
-  attackId: SwordJudgment
+  attackId: ChargeCut
   clipName: Wushi_SwordJudgment
   minDistance: 0
   maxDistance: 3.5
   maxAngleDegrees: 65
-  cooldownSeconds: 2.5
+  cooldownSeconds: 1
   selectionWeightPhase1: 1
   selectionWeightPhase2: 1
   disallowImmediateRepeat: 1
   maxConsecutiveUses: 1
   startupSeconds: 0.35
   recoverySeconds: 0.6
+  faceTargetSnapOnStart: 0
+  facingYawOffsetDegrees: 0
   startupTracking: 1
   lateTracking: 0.15
   trackingDropNormalizedTime: 0.28
-  baseHealthDamage: 32
+  healthDamageIsPercentOfTargetMax: 0
+  baseHealthDamage: 42
   basePoiseDamage: 22
-  knockbackForce: 4
+  knockbackForce: 0
   launchesTarget: 0
   interruptible: 1
   superArmorDuringActiveWindows: 0
@@ -39,15 +42,46 @@ MonoBehaviour:
   rootMotionEndNormalized: 1
   hitWindows:
   - part: 6
-    startNormalized: 0.16
-    endNormalized: 0.21
+    startNormalized: 0.09
+    endNormalized: 0.23
     damageMultiplier: 1
+    deflectReaction: 1
     measured: 1
   - part: 6
-    startNormalized: 0.59
-    endNormalized: 0.72
+    startNormalized: 0.61
+    endNormalized: 0.66
     damageMultiplier: 1
+    deflectReaction: 1
     measured: 1
+  attackMotion:
+    moveStartNormalized: 0.1
+    moveEndNormalized: 0.5
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
   derivedAttack: {fileID: 11400000, guid: 3d43848aea03f0c46b7907befb32c7ac, type: 2}
   deriveWindowStartNormalized: 0.7
   deriveWindowEndNormalized: 0.95

@@ -14,6 +14,14 @@ namespace Live2DAction.Combat
         private float _elapsed;
         private bool _hitResolvedThisAttack;
 
+        // 2026-08-29, cat combat design (Docs/CAT_COMBAT_DESIGN.md 3.2/3.3) - a single-shot
+        // attack outside the combo array (the cat's charged heavy / pounce). Runs the exact same
+        // Startup/Active/Recovery timing off its own AttackData, but never chains into the combo
+        // and always returns straight to Idle - so ComboIndex stays -1 the whole time (existing
+        // tests/callers that read ComboIndex are unaffected). Set via StartOverride, cleared on
+        // return to Idle.
+        private AttackData _overrideAttack;
+
         public ComboAttackState(AttackData[] combo)
         {
             _combo = combo;
@@ -21,7 +29,10 @@ namespace Live2DAction.Combat
 
         public AttackPhase Phase => _phase;
         public int ComboIndex => _comboIndex;
-        public AttackData CurrentAttack => _comboIndex >= 0 && _comboIndex < _combo.Length ? _combo[_comboIndex] : null;
+        public bool IsOverrideAttackActive => _overrideAttack != null;
+        public AttackData CurrentAttack => _overrideAttack != null
+            ? _overrideAttack
+            : (_comboIndex >= 0 && _comboIndex < _combo.Length ? _combo[_comboIndex] : null);
 
         // Normalized (0-1) progress through the *current* phase only (not the whole attack) -
         // _elapsed accumulates from the start of the attack across all three phases, so this
@@ -84,7 +95,7 @@ namespace Live2DAction.Combat
             }
 
             _elapsed += deltaTime;
-            AttackData current = _combo[_comboIndex];
+            AttackData current = CurrentAttack;
             bool didHit = false;
 
             switch (_phase)
@@ -114,7 +125,9 @@ namespace Live2DAction.Combat
                     float recoveryEnd = recoveryStart + current.RecoverySeconds;
                     int nextIndex = _comboIndex + 1;
 
-                    if (attackPressed && _elapsed <= comboWindowEnd && nextIndex < _combo.Length && _combo[nextIndex] != null)
+                    // An override attack (charged heavy / pounce) never chains into the combo -
+                    // it just plays out its own recovery and returns to Idle.
+                    if (_overrideAttack == null && attackPressed && _elapsed <= comboWindowEnd && nextIndex < _combo.Length && _combo[nextIndex] != null)
                     {
                         StartAttack(nextIndex);
                     }
@@ -122,6 +135,7 @@ namespace Live2DAction.Combat
                     {
                         _phase = AttackPhase.Idle;
                         _comboIndex = -1;
+                        _overrideAttack = null;
                     }
                     break;
             }
@@ -129,9 +143,27 @@ namespace Live2DAction.Combat
             return didHit;
         }
 
+        // Starts a single-shot attack from an AttackData that is NOT in the combo array (the
+        // cat's charged heavy / pounce claw). No-op unless currently Idle. Returns true if it
+        // started. ComboIndex stays -1 throughout; IsOverrideAttackActive reports true.
+        public bool StartOverride(AttackData attack)
+        {
+            if (_phase != AttackPhase.Idle || attack == null)
+            {
+                return false;
+            }
+            _overrideAttack = attack;
+            _comboIndex = -1;
+            _phase = AttackPhase.Startup;
+            _elapsed = 0f;
+            _hitResolvedThisAttack = false;
+            return true;
+        }
+
         private void StartAttack(int index)
         {
             _comboIndex = index;
+            _overrideAttack = null;
             _phase = AttackPhase.Startup;
             _elapsed = 0f;
             _hitResolvedThisAttack = false;

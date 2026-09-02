@@ -20,6 +20,23 @@ namespace Live2DAction.Combat.Boss
     {
         [SerializeField] private Collider hitCollider;
 
+        // 2026-09-01, spec WUSHI_COMBAT_ENGINEERING_SPEC.md §4 (M2 項目 3). The default SweepCheck
+        // sweeps the collider CENTRE from its last pose to this one. A rotating blade barely moves at
+        // the hilt while the tip carves a long arc, so a centre sweep (and the `distance < 0.0001`
+        // early-out) misses the tip's path entirely. When this is on AND hitCollider is a
+        // CapsuleCollider (the katana BladeHitbox), the sweep instead samples the capsule as a line
+        // - root / mid / tip - and sweeps each point prev->curr, subdividing per bladeSweepMaxSampleTravel
+        // (same maths as the player's PlayerWeaponHitbox / WeaponSweepUtility). OFF (the default) =
+        // every existing BossHitbox behaves exactly as before - only the 武士 blade opts in.
+        [SerializeField] private bool useRotationalSweep;
+        [Tooltip("Rotational sweep only: a sample point moving further than this in one physics step " +
+                 "is subdivided so a fast swing can't tunnel a target (spec §4.2 default 0.25).")]
+        [SerializeField] private float bladeSweepMaxSampleTravel = 0.25f;
+
+        // Scratch buffer for one sub-segment SphereCast (rotational sweep only), copied into
+        // _sweepHitsBuffer. Same no-GC precedent as _sweepHitsBuffer.
+        private readonly RaycastHit[] _bladeSubBuffer = new RaycastHit[8];
+
         private Transform _attackerRoot;
         private string _attackerTeam;
         private BossAttackDefinition _activeAttack;
@@ -128,9 +145,22 @@ namespace Live2DAction.Combat.Boss
             _activeAttack = null;
             _activeWindow = null;
             _hasPreviousPose = false;
+            HasSwept = false;
         }
 
         public bool IsActive => hitCollider != null && hitCollider.enabled;
+
+        // 2026-09-01, Sekiro deflect debug overlay - the last translation-swept segment this
+        // FixedUpdate tested (SekiroDeflectDebug draws it). Only meaningful while active.
+        public Vector3 LastSweepFrom { get; private set; }
+        public Vector3 LastSweepTo { get; private set; }
+        public bool HasSwept { get; private set; }
+
+        // 2026-09-01, user request (隻狼 blade-clash SFX) - lets a listener that only has the
+        // resulting DamageInfo (PlayerGuardClashSfx, off PlayerGuard.Blocked) tell a blocked
+        // SWORD strike apart from a blocked kick, without threading the part through DamageInfo.
+        // Non-null only while this hitbox is mid-window (Activate..Deactivate).
+        public BossHitboxPart? ActiveWindowPart => _activeWindow != null ? _activeWindow.part : (BossHitboxPart?)null;
 
         // 2026-08-26, real playtested bug ("刀亮紅的時機正確 但由於角色身高 和彼此間隔距離 刀尖角度等等
         // 因素始終沒能產生碰撞") - the actual fix. OnTriggerEnter only ever sees discrete overlap
@@ -169,15 +199,65 @@ namespace Live2DAction.Combat.Boss
             Vector3 currentPosition = transform.position;
             Vector3 delta = currentPosition - _previousPosition;
             float distance = delta.magnitude;
-            if (distance < 0.0001f)
-            {
-                return; // barely moved - the ordinary OnTriggerEnter overlap check already covers this case fine
-            }
-            Vector3 direction = delta / distance;
+            Vector3 direction = distance > 0.0001f ? delta / distance : Vector3.zero;
 
             // NonAlloc variants writing into the reused _sweepHitsBuffer - see that field's own
             // comment for why (this used to be *CastAll, allocating a fresh array every call).
             int hitCount;
+
+            // spec §4 (M2 項目 3): rotational blade sweep. The capsule centre barely translates when
+            // the blade is rotating about the wrist, so the centre-sweep below (and its early-out)
+            // misses the tip's arc - sample root/mid/tip and sweep each instead.
+            bool sweptThisFrame;
+            if (useRotationalSweep && hitCollider is CapsuleCollider bladeCapsule)
+            {
+                hitCount = MultiPointBladeSweep(bladeCapsule); // sets LastSweepFrom/To itself
+                sweptThisFrame = true;
+            }
+            else
+            {
+                sweptThisFrame = SweepCentreShape(distance, direction, out hitCount);
+            }
+
+            // 2026-09-01 ("踢擊離得太進...很難彈反") - even when the hitbox barely moved this frame (no
+            // real swept cast) still run the clash check: TryResolveBladeClash's overlap probe catches
+            // a guard volume the hitbox is already sitting inside, which a *Cast silently ignores.
+            if (!sweptThisFrame && !(_activeWindow != null && IsClashablePart(_activeWindow.part)))
+            {
+                return; // barely moved / unsupported shape and not a clashable window - plain OnTriggerEnter covers it
+            }
+
+            // 2026-09-01, Sekiro deflect (spec 三/四) - a melee window's sweep, on the first guard
+            // volume it crosses (not clearly behind the body), routes to the clash resolver instead
+            // of a body hit. 2026-09-01 follow-up (user: "武士的踢擊也要能彈反") - kicks / bare
+            // fists are clashable too now, only the LandingAOE shockwave and a plain Body hit are not.
+            if (_activeWindow != null && IsClashablePart(_activeWindow.part)
+                && TryResolveBladeClash(hitCount))
+            {
+                return;
+            }
+
+            for (int i = 0; i < hitCount; i++)
+            {
+                Collider sweptCollider = _sweepHitsBuffer[i].collider;
+                if (sweptCollider == hitCollider) continue; // never self-hit
+                TryResolveHit(sweptCollider);
+            }
+        }
+
+        // The original centre-translation sweep. Returns false (skip resolution) if the hitbox
+        // barely moved or its shape isn't supported; otherwise writes hitCount and returns true.
+        private bool SweepCentreShape(float distance, Vector3 direction, out int hitCount)
+        {
+            hitCount = 0;
+            LastSweepFrom = _previousPosition;
+            LastSweepTo = transform.position;
+            HasSwept = true;
+            if (distance < 0.0001f)
+            {
+                return false; // barely moved - the ordinary OnTriggerEnter overlap check already covers this case fine
+            }
+
             if (hitCollider is BoxCollider box)
             {
                 Vector3 halfExtents = Vector3.Scale(box.size, transform.lossyScale) * 0.5f;
@@ -216,15 +296,227 @@ namespace Live2DAction.Combat.Boss
             }
             else
             {
-                return; // no supported shape (e.g. MeshCollider) - falls back to plain OnTriggerEnter only
+                return false; // no supported shape (e.g. MeshCollider) - falls back to plain OnTriggerEnter only
             }
+
+            return true;
+        }
+
+        // spec §4.4 - sample the blade capsule at root/mid/tip, sweep each point from its previous
+        // world pose to this one (subdividing so a fast swing can't tunnel), and gather de-duplicated
+        // hits into _sweepHitsBuffer. Returns the hit count, exactly like the centre-shape branch, so
+        // the clash + TryResolveHit tail in SweepCheck is identical for both paths.
+        private int MultiPointBladeSweep(CapsuleCollider cap)
+        {
+            CapsuleWorldEnds(cap, _previousPosition, _previousRotation,
+                out Vector3 pRoot, out Vector3 pMid, out Vector3 pTip, out float worldRadius);
+            CapsuleWorldEnds(cap, transform.position, transform.rotation,
+                out Vector3 cRoot, out Vector3 cMid, out Vector3 cTip, out _);
+
+            // Debug overlay (SekiroDeflectDebug): the tip's arc chord is the interesting one.
+            LastSweepFrom = pTip;
+            LastSweepTo = cTip;
+            HasSwept = true;
+
+            int count = 0;
+            count = SweepBladeSample(pRoot, cRoot, worldRadius, count);
+            count = SweepBladeSample(pMid, cMid, worldRadius, count);
+            count = SweepBladeSample(pTip, cTip, worldRadius, count);
+            return count;
+        }
+
+        // One blade sample point's swept SphereCast(s), previous->current, appended (de-duplicated by
+        // collider, so distinct targets keep their slots) into _sweepHitsBuffer from writeIndex.
+        private int SweepBladeSample(Vector3 from, Vector3 to, float radius, int writeIndex)
+        {
+            Vector3 d = to - from;
+            float travel = d.magnitude;
+            Vector3 dir = travel > 1e-5f ? d / travel : Vector3.forward;
+            int subdivisions = WeaponSweepUtility.SubdivisionCount(travel, bladeSweepMaxSampleTravel);
+            float subLength = WeaponSweepUtility.SubSegmentLength(travel, subdivisions);
+
+            for (int s = 0; s < subdivisions && writeIndex < _sweepHitsBuffer.Length; s++)
+            {
+                Vector3 subFrom = WeaponSweepUtility.SubSegmentStart(from, to, s, subdivisions);
+                int n = Physics.SphereCastNonAlloc(subFrom, radius, dir, _bladeSubBuffer,
+                    Mathf.Max(subLength, 0f), ~0, QueryTriggerInteraction.Collide);
+                for (int i = 0; i < n && writeIndex < _sweepHitsBuffer.Length; i++)
+                {
+                    RaycastHit hit = _bladeSubBuffer[i];
+                    if (hit.collider == null || hit.collider == hitCollider)
+                    {
+                        continue;
+                    }
+                    bool dup = false;
+                    for (int k = 0; k < writeIndex; k++)
+                    {
+                        if (_sweepHitsBuffer[k].collider == hit.collider) { dup = true; break; }
+                    }
+                    if (!dup)
+                    {
+                        _sweepHitsBuffer[writeIndex++] = hit;
+                    }
+                }
+            }
+            return writeIndex;
+        }
+
+        // The capsule's root / mid / tip in world space for a given pose, plus its world radius -
+        // same scaling rules Unity itself uses (axis dim by that axis's lossyScale, radius by the
+        // larger of the other two), matching the centre-shape capsule branch above.
+        private void CapsuleWorldEnds(CapsuleCollider cap, Vector3 pos, Quaternion rot,
+            out Vector3 root, out Vector3 mid, out Vector3 tip, out float worldRadius)
+        {
+            Vector3 ls = transform.lossyScale;
+            float axisScale = cap.direction == 0 ? ls.x : cap.direction == 1 ? ls.y : ls.z;
+            float radiusScale = cap.direction == 0 ? Mathf.Max(ls.y, ls.z)
+                : cap.direction == 1 ? Mathf.Max(ls.x, ls.z)
+                : Mathf.Max(ls.x, ls.y);
+            worldRadius = cap.radius * radiusScale;
+            float halfLine = Mathf.Max(0f, cap.height * 0.5f - cap.radius) * axisScale;
+
+            Vector3 localAxis = cap.direction == 0 ? Vector3.right : cap.direction == 1 ? Vector3.up : Vector3.forward;
+            Vector3 worldAxis = (rot * localAxis).normalized;
+            mid = pos + rot * cap.center;
+            tip = mid + worldAxis * halfLine;
+            root = mid - worldAxis * halfLine;
+        }
+
+        // A generous world radius around the hitbox for the point-blank clash overlap probe - big
+        // enough to cover the collider itself plus a little reach (a kick/blade "right on top of" the
+        // guard should still clash even if the exact swept geometry missed).
+        private float OverlapProbeRadius()
+        {
+            Vector3 ls = transform.lossyScale;
+            float maxScale = Mathf.Max(ls.x, Mathf.Max(ls.y, ls.z));
+            if (hitCollider is SphereCollider s) return s.radius * maxScale + 0.35f;
+            if (hitCollider is CapsuleCollider c) return c.radius * maxScale + 0.35f;
+            if (hitCollider is BoxCollider b) return Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)) * maxScale * 0.5f + 0.35f;
+            return 0.6f;
+        }
+
+        private static bool IsClashablePart(BossHitboxPart part)
+        {
+            return part == BossHitboxPart.Weapon
+                || part == BossHitboxPart.LeftHand || part == BossHitboxPart.RightHand
+                || part == BossHitboxPart.LeftFoot || part == BossHitboxPart.RightFoot;
+        }
+
+        private readonly Collider[] _clashOverlapBuffer = new Collider[16];
+
+        // Returns true if the sweep was consumed by a blade clash (parry or guard) - the caller
+        // then skips the body-hit loop for this sweep.
+        private bool TryResolveBladeClash(int hitCount)
+        {
+            if (_activeAttack == null || _activeWindow == null || _attackerRoot == null)
+            {
+                return false;
+            }
+
+            PlayerGuardVolume volume = null;
+            float volumeDist = float.MaxValue;
+            float bodyDist = float.MaxValue;
 
             for (int i = 0; i < hitCount; i++)
             {
-                Collider sweptCollider = _sweepHitsBuffer[i].collider;
-                if (sweptCollider == hitCollider) continue; // never self-hit
-                TryResolveHit(sweptCollider);
+                Collider col = _sweepHitsBuffer[i].collider;
+                if (col == null || col == hitCollider) continue;
+                if (col.transform.root == _attackerRoot) continue;
+                float d = _sweepHitsBuffer[i].distance;
+
+                PlayerGuardVolume v = col.GetComponentInParent<PlayerGuardVolume>();
+                if (v != null && v.Active)
+                {
+                    if (d < volumeDist) { volumeDist = d; volume = v; }
+                    continue;
+                }
+                if (col.GetComponentInParent<IDamageable>() != null && d < bodyDist)
+                {
+                    bodyDist = d;
+                }
             }
+
+            // 2026-09-01, user report ("踢擊離得太進或太遠都很難彈反") - a *Cast ignores a collider it
+            // already overlaps at the sweep start, so a point-blank kick whose foot begins inside the
+            // guard volume never registers as clashable and drops straight to a body hit. Also probe
+            // the hitbox's CURRENT volume with an overlap check (distance 0 = the guard is right here).
+            {
+                float probeRadius = OverlapProbeRadius();
+                int n = Physics.OverlapSphereNonAlloc(transform.position, probeRadius, _clashOverlapBuffer, ~0, QueryTriggerInteraction.Collide);
+                for (int i = 0; i < n; i++)
+                {
+                    Collider col = _clashOverlapBuffer[i];
+                    if (col == null || col == hitCollider || col.transform.root == _attackerRoot) continue;
+                    PlayerGuardVolume v = col.GetComponentInParent<PlayerGuardVolume>();
+                    if (v != null && v.Active)
+                    {
+                        volume = v;
+                        volumeDist = 0f; // touching now - guard wins any tie
+                    }
+                }
+            }
+
+            if (volume == null)
+            {
+                return false;
+            }
+            // Blade reached the body clearly ahead of the guard ("繞過防禦刀刃、先命中身體") -> body hit.
+            // CapsuleCast reports distance 0 for a start-overlap, so on a tie the guard wins (defense-favourable).
+            if (bodyDist + 0.05f < volumeDist)
+            {
+                return false;
+            }
+
+            var receiver = volume.GetComponentInParent<IBladeClashReceiver>();
+            if (receiver == null)
+            {
+                return false;
+            }
+
+            Transform targetRoot = volume.transform.root;
+            if (_hitTargetsThisActivation.Contains(targetRoot))
+            {
+                return true; // already resolved against this target this window
+            }
+
+            Vector3 sweepDelta = transform.position - _previousPosition;
+            Vector3 contact = (volumeDist > 0f && volumeDist < float.MaxValue && sweepDelta.sqrMagnitude > 1e-6f)
+                ? _previousPosition + sweepDelta.normalized * volumeDist
+                : volume.transform.position;
+
+            Vector3 dir = volume.transform.position - _attackerRoot.position;
+            dir.y = 0f;
+            dir = dir.sqrMagnitude > 0.0001f ? dir.normalized : _attackerRoot.forward;
+
+            float healthDamage = ComputeHealthDamage(volume.GetComponentInParent<Health>());
+            float poiseDamage = _activeAttack.BasePoiseDamage * _activeWindow.damageMultiplier;
+
+            BladeClashResult result = receiver.TryResolveClash(
+                new BladeClashInfo(_attackerRoot.gameObject, healthDamage, poiseDamage, contact, dir,
+                    _activeWindow.deflectReaction));
+
+            if (result == BladeClashResult.None)
+            {
+                return false; // guard wasn't actually valid (down / not frontal) -> let the body hit land
+            }
+            _hitTargetsThisActivation.Add(targetRoot);
+            return true;
+        }
+
+        private float ComputeHealthDamage(Health targetHealth)
+        {
+            float dmg;
+            if (_activeAttack.HealthDamageIsPercentOfTargetMax)
+            {
+                dmg = (targetHealth != null && targetHealth.MaxHealth > 0f)
+                    ? targetHealth.MaxHealth * (_activeAttack.BaseHealthDamage / 100f)
+                    : _activeAttack.BaseHealthDamage;
+            }
+            else
+            {
+                dmg = _activeAttack.BaseHealthDamage;
+            }
+            return dmg * _activeWindow.damageMultiplier;
         }
 
         private void OnTriggerEnter(Collider other)
@@ -263,7 +555,11 @@ namespace Live2DAction.Combat.Boss
 
             _hitTargetsThisActivation.Add(targetRoot);
 
-            float healthDamage = _activeAttack.BaseHealthDamage * _activeWindow.damageMultiplier;
+            // baseHealthDamage may be a percent (5 => 5%) of the target's own max health, resolved
+            // here at hit time. GetComponentInParent because the collider we hit is usually a child
+            // hurtbox (PlayerHurtbox) of the object that actually carries Health. Same math the
+            // blade-clash path uses - see ComputeHealthDamage.
+            float healthDamage = ComputeHealthDamage(other.GetComponentInParent<Health>());
             float poiseDamage = _activeAttack.BasePoiseDamage * _activeWindow.damageMultiplier;
 
             // Guarding (Boxing_Guard_Right_Straight_Kick's stance) reduces incoming HEALTH damage

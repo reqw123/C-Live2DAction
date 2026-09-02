@@ -204,6 +204,7 @@ namespace Live2DAction.AI
         [SerializeField] private float aerialApproachDistance = 2f;
 
         private CharacterController _controller;
+        private NavPathFollower _pathFollower; // optional, see Awake / the ground chaseDirection
         private Vector3 _horizontalVelocity;
         private float _verticalVelocity;
         private bool _isAerialCombat;
@@ -262,6 +263,7 @@ namespace Live2DAction.AI
         public bool ViewTogglePressed => false; // AI never triggers the player-only first-person toggle
         public bool ZoomInPressed => false; // AI never triggers the player-only aim-zoom controls
         public bool ZoomOutPressed => false;
+        public bool WalkTogglePressed => false; // AI never toggles the player-only walk/run mode
 
         // 2026-08-20, explicit user request ("敵人的移動動作採用跟玩家一樣地踏步") -
         // ICharacterSpeedSource, so CharacterAnimatorLink can drive Enemy's Locomotion blend tree
@@ -280,6 +282,10 @@ namespace Live2DAction.AI
         private void Awake()
         {
             _controller = GetComponent<CharacterController>();
+            // 2026-08-31, user report ("被地圖物件擋住路線卡住") - optional. Routes the GROUND chase
+            // around NavMesh obstacles; null (no component / no baked mesh) keeps the old
+            // straight-at-the-player chase. Aerial-combat chasing is untouched (it flies).
+            _pathFollower = GetComponent<NavPathFollower>();
         }
 
         private void Update()
@@ -484,7 +490,15 @@ namespace Live2DAction.AI
             // reasoning, and aerialHorizontalSpeedThisFrame's own computation above for why it's
             // the clamped-per-frame value rather than the raw aerialHorizontalSpeed constant.
             float horizontalSpeed = _isAerialCombat ? aerialHorizontalSpeedThisFrame : groundHorizontalSpeedThisFrame;
-            Vector3 chaseDirection = _isAerialCombat ? aerialChaseDirection : direction;
+            // 2026-08-31 ("被地圖物件擋住路線卡住") - ground chase routes around NavMesh obstacles
+            // when a NavPathFollower is wired (fails open to `direction`). Aerial chase and the
+            // facing/MoveInput below still use the raw player direction - only the MOVEMENT target
+            // changes, Enemy should still visually look at the player it's attacking.
+            Vector3 groundChaseDirection = _pathFollower != null
+                ? _pathFollower.SteeringDirection(target.position)
+                : direction;
+            if (groundChaseDirection.sqrMagnitude < 0.0001f) groundChaseDirection = direction;
+            Vector3 chaseDirection = _isAerialCombat ? aerialChaseDirection : groundChaseDirection;
             _horizontalVelocity = shouldChaseHorizontally ? chaseDirection * horizontalSpeed : Vector3.zero;
             MoveInput = new Vector2(direction.x, direction.z);
 

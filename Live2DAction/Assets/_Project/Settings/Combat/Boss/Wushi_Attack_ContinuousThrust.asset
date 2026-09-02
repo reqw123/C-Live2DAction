@@ -1,0 +1,127 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_ContinuousThrust
+  m_EditorClassIdentifier: 
+  attackId: ContinuousThrust
+  clipName: Wushi_ContinuousThrust
+  minDistance: 0
+  maxDistance: 4
+  maxAngleDegrees: 60
+  cooldownSeconds: 3
+  selectionWeightPhase1: 2
+  selectionWeightPhase2: 2.2
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.2
+  recoverySeconds: 0.5
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  attackPitchDegrees: 20
+  startupTracking: 1
+  lateTracking: 0.2
+  trackingDropNormalizedTime: 0.6
+  healthDamageIsPercentOfTargetMax: 1
+  baseHealthDamage: 1
+  basePoiseDamage: 3
+  knockbackForce: 1.8
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 6
+    startNormalized: 0.045
+    endNormalized: 0.1
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.22
+    endNormalized: 0.29
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.335
+    endNormalized: 0.385
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.445
+    endNormalized: 0.495
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.575
+    endNormalized: 0.665
+    damageMultiplier: 1.3
+    deflectReaction: 1
+    measured: 1
+  attackMotion:
+    moveStartNormalized: 0.05
+    moveEndNormalized: 0.68
+    forwardDistance: 1.5
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 0
+  designNotes: "2026-09-01, user request (\u9023\u7E8C\u523A\u5200.zip \u7684 Meshy_AI_Parkside_Portrait_biped
+    Animation - same pipeline as Wushi_DoubleCombo). Clip 'ContinuousThrust' (Scene
+    take, without_skin FBX 205KB, 92 frames / 3.033s, imported Humanoid, XZ baked
+    in-place). SHARED with the Player (F execution - Maya NewAnimator 'ExecuteThrust'
+    state). A 5-jab continuous thrust; measured offline via AnimationMode.SampleAnimationClip
+    retargeted onto the live 4x Wushi, reading BladeHitbox world pos vs Chest (fwd-of-hips
+    + speed):\\n jab1 nt 0.045-0.10  (blade fwd 2.6, Y~3.0, whips back at 0.10 spd
+    92)\\n jab2 nt 0.22-0.29   (fwd 2.1, Y~3.0)\\n jab3 nt 0.335-0.385 (fwd 2.55,
+    Y~4.1 - head-height stab)\\n jab4 nt 0.445-0.495 (fwd 2.6, Y~4.5)\\n jab5 nt
+    0.575-0.665 (fwd 3.3 DEEPEST, Y~2.0 - committed low lunge, dmgMult 1.3; blade
+    then parked forward 0.67-0.77 = no new hit; 0.8-1.0 = blade-pull recovery).\\nhealthDamageIsPercentOfTargetMax=true,
+    baseHealthDamage=1 => 1% per jab, ~5% for the full 5-hit combo (respects '\u5927\u62DB\u4EE5\u5916\u56FA\u5B9A\u62635%').
+    poise 3/jab (~15 total, near DoubleCombo's 24). maxDistance 2.8 (Meshy 'starts
+    behind root' caveat - see DoubleCombo notes; useRootMotion=0 first pass, baked
+    in-place). WINDOWS NEED IN-PLAY CONFIRMATION on the live boss (frames-advancing)
+    before shipping."

@@ -1,0 +1,109 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_ScissorTakedown
+  m_EditorClassIdentifier:
+  attackId: ScissorTakedown
+  clipName: Wushi_ScissorTakedown
+  minDistance: 2
+  maxDistance: 7
+  maxAngleDegrees: 55
+  cooldownSeconds: 7
+  selectionWeightPhase1: 0.5
+  selectionWeightPhase2: 0.6
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.55
+  recoverySeconds: 0.7
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  startupTracking: 1
+  lateTracking: 0.05
+  trackingDropNormalizedTime: 0.16
+  healthDamageIsPercentOfTargetMax: 0
+  baseHealthDamage: 45
+  basePoiseDamage: 24
+  knockbackForce: 0
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 6
+    startNormalized: 0.57
+    endNormalized: 0.72
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  attackMotion:
+    moveStartNormalized: 0.05
+    moveEndNormalized: 0.55
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 1
+  lungeTargetGapMeters: 1.4
+  lungeMaxMeters: 7
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 1
+  designNotes: '2026-09-02, Meshy AI attack (跳躍頭部剪刀腳摔.zip / Jumping_Head_Scissor_Takedown,
+    take "Scene", 3.67s) imported as Wushi_ScissorTakedown. Measured offline on the
+    live 4x 武士: a LEAPING command-grab. hips localZ (forward) travels 0 -> ~10 units
+    by nt 0.80 (then the clip drifts on to ~14.5 by nt 1.0 - the usual Meshy "starts
+    behind root, walks forward" tail). hips localY jumps 1.7 -> 4.2 (nt 0.25, airborne)
+    -> bottoms 0.69 (nt 0.70, the slam), feet leave the ground nt 0.15-0.55. Scissor
+    the head in the air nt 0.30-0.50, drive down nt 0.50-0.70. Hit window nt 0.50-0.72
+    (the takedown impact). deflectReaction ContinueCombo (追加94 續 44 - 武士 has no
+    flinch clip). knockback 0 / launchesTarget 0 per user rule "only the kick knocks
+    the player back".
+
+    2026-09-02 續 46 - ENABLED. Clip re-imported lockRootPositionXZ (the ~10-unit baked
+    forward travel stripped, jump height kept). Horizontal leap driven by the FSM:
+    lungeDistanceFromTargetGap=1 replaces attackMotion.forwardDistance at commit with
+    (live gap to player - lungeTargetGapMeters 1.4), clamped 0..7m, spent over
+    attackMotion window nt 0.05-0.55 - lands ~1.4m in front of the player at any range,
+    no BossAnimatorRootMotionRelay / applyRootMotion needed on 武士.
+    NEEDS PLAY TUNING: lungeTargetGapMeters, the nt 0.05-0.55 window vs the visible jump
+    arc, and whether the in-place jump reads OK with the root planted (feet leave via
+    bone anim only). selectionWeight 0.5/0.6, 7s cooldown, minDistance 2 maxDistance 7.'

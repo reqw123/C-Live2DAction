@@ -39,6 +39,16 @@ namespace Live2DAction.Combat
         // LightAttack1/2's spark behavior.
         [SerializeField] private bool alwaysSpawnHitEffect;
 
+        // 2026-08-29, cat combat design (Docs/CAT_COMBAT_DESIGN.md 4.3) - optional knockback on
+        // the target. 0 (the default) = no knockback, so every existing AttackData asset
+        // (LightAttack1/2/3, EnemyAttack, TrainingDummy's shared refs) keeps its current
+        // no-shove behavior with zero re-authoring. Consumed by PlayerCombat -> a target's
+        // Live2DAction.Combat.Boss.IKnockbackReceiver, if it has one. knockbackForce is the
+        // push speed (units/sec) fed to the receiver; knockbackLaunches adds a small vertical
+        // pop (the cat's pounce / heavy).
+        [SerializeField] private float knockbackForce;
+        [SerializeField] private bool knockbackLaunches;
+
         public string AttackId => attackId;
         public float Damage => damage;
         public float Range => range;
@@ -49,6 +59,8 @@ namespace Live2DAction.Combat
         public int ComboWindowFrames => comboWindowFrames;
         public GameObject HitEffectOverride => hitEffectOverride;
         public bool AlwaysSpawnHitEffect => alwaysSpawnHitEffect;
+        public float KnockbackForce => knockbackForce;
+        public bool KnockbackLaunches => knockbackLaunches;
 
         public float StartupSeconds => startupFrames / FramesPerSecond;
         public float ActiveSeconds => activeFrames / FramesPerSecond;

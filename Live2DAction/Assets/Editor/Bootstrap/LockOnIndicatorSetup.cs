@@ -22,6 +22,11 @@ namespace Live2DAction.EditorTools
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";
         private const string RingSpritePath = "Assets/_Project/UI/Textures/LockOnRing.png";
+        // 2026-08-28, explicit user request ("某些視角角度會讓此圓圈消失") - draw the ring over all
+        // scene geometry so a low camera angle / the target's own body between it and the camera
+        // can't occlude it. Material baked here from the always-on-top UI shader.
+        private const string RingMaterialPath = "Assets/_Project/VFX/Materials/UILockOnRing.mat";
+        private const string RingShaderName = "Live2DAction/UIAlwaysOnTop";
 
         private static readonly Vector2 RingSize = new Vector2(0.35f, 0.35f);
 
@@ -29,6 +34,7 @@ namespace Live2DAction.EditorTools
         public static void Apply()
         {
             EnsureRingSprite();
+            Material ringMaterial = EnsureRingMaterial();
 
             Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
@@ -74,6 +80,10 @@ namespace Live2DAction.EditorTools
 
             Image ring = CreateCenteredImage(canvasGo.transform, "Ring", ringSprite, RingSize);
             ring.color = new Color(1f, 1f, 1f, 0f); // starts invisible - LateUpdate drives alpha
+            if (ringMaterial != null)
+            {
+                ring.material = ringMaterial; // ZTest Always - never occluded by scene geometry
+            }
 
             LockOnIndicator indicator = canvasGo.AddComponent<LockOnIndicator>();
             var so = new SerializedObject(indicator);
@@ -106,6 +116,35 @@ namespace Live2DAction.EditorTools
             // avoids the compressed-corner faint-square-outline bug those both hit first.
             image.useSpriteMesh = true;
             return image;
+        }
+
+        private static Material EnsureRingMaterial()
+        {
+            Shader shader = Shader.Find(RingShaderName);
+            if (shader == null)
+            {
+                Debug.LogError("Shader '" + RingShaderName + "' not found - is UIAlwaysOnTop.shader in the project? Ring will use the default UI material and can still be occluded.");
+                return null;
+            }
+
+            Material material = AssetDatabase.LoadAssetAtPath<Material>(RingMaterialPath);
+            if (material == null)
+            {
+                string dir = Path.GetDirectoryName(RingMaterialPath);
+                if (dir != null && !AssetDatabase.IsValidFolder(dir))
+                {
+                    Directory.CreateDirectory(Path.Combine(Application.dataPath, "..", dir));
+                    AssetDatabase.Refresh();
+                }
+                material = new Material(shader) { name = "UILockOnRing" };
+                AssetDatabase.CreateAsset(material, RingMaterialPath);
+            }
+            else if (material.shader != shader)
+            {
+                material.shader = shader;
+                EditorUtility.SetDirty(material);
+            }
+            return material;
         }
 
         // Same core+glow Gaussian ring bake as InvulnerabilityRippleSetup.EnsureRingSprite, just a

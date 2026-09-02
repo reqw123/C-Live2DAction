@@ -16,7 +16,10 @@
 - **Live2D 完整鏈**（見下方第 6 節）：Cubism SDK 5-r.4.2（`Assets/Live2D/Cubism/`，含**所有平台的原生
   plugin** — Windows/macOS/Linux/Android/iOS/UWP）＋ 076/077 佔位模型（已複製進 `Assets/_Project/Live2D/`）
   ＋ URP 版 shader。**`C:\question\` 不是依賴**，SDK 不用重新下載或啟用授權。
-- 全部美術/場景資產（直接進版控，無 LFS — clone 較大但不需要額外步驟）
+- 全部美術/場景資產（直接進版控，無 LFS — clone 較大但不需要額外步驟）。**例外**：4 個
+  Meshy 校園建築原始 FBX 單檔 >100 MB（GitHub 上限），**不在版控裡**，只留在原作者本機——
+  clone 後這幾棟會 missing mesh（貼圖/材質仍在）。清單與補回方法見 `Docs/LARGE_ASSETS.md`。
+  新的 Meshy 內嵌貼圖 FBX（`Meshy_AI_*_texture.fbx`）會被 `.gitignore` 自動擋。
 - `.mcp.json`（Unity MCP client 設定）
 
 需要**人手動**做、AI 無法代勞的：
@@ -83,15 +86,36 @@ Editor 視窗**沒有 OS 焦點**時（純用 MCP 工具驅動、沒有人點進
   coroutine 全部靜默不執行。**下結論說碰撞/觸發邏輯壞掉之前，先檢查 `Time.frameCount`。**
   你自己同步呼叫的 `CharacterController.Move()` 還是會動，容易誤以為「一切正常在跑」。
 - **PlayMode 測試會卡死 Test Runner**：`editor_state.tests.is_running` 卡 `true`、`current_job_id: null`，
-  之後每個碰 test runner / asset database 的 MCP 呼叫都失敗（`"tests_running"`）。
+  之後每個碰 test runner / asset database 的 MCP 呼叫都失敗（`"tests_running"` / `error: busy`）。
   - `manage_editor(action="stop")` 先試，能清 Play Mode 轉場卡住。
-  - `run_tests(clear_stuck=true)` 只清 MCP 自己的記帳，**清不掉** Unity 內部的 `tests.is_running`。
+  - `run_tests(clear_stuck=true)` 只清 MCP 自己的 `TestJobManager` 記帳，**清不掉** Unity 內部的
+    `TestRunStatus._isRunning`（被 abort 的 run 沒呼叫 `MarkFinished()`）。
   - `validate_script` 不受影響（純 Roslyn），可當驗證退路。
-  - 卡住 ~10 分鐘試遍上述都沒用 → **停手，請使用者點進 Editor 視窗 / 開 Test Runner 視窗**
-    恢復焦點，不要繼續用 MCP 硬敲（每次重試都白燒 turn）。
 
-**結論**：MCP 驅動下，PlayMode 驗證不可靠。優先用 EditMode 測試 + `validate_script` + 程式碼審查，
-需要真的 Play 就把修改做完、請使用者本人在互動 Editor 裡試。
+### stale `tests_running` 的反射解法（2026-09-01 追加94 續 14 查出，已驗證）
+
+根因：`MCPForUnity.Editor.Services.TestRunStatus._isRunning`（internal static）卡 `true`。
+`EditorStateCache` 讀它 → `tests.is_running` → Python 端 gate 擋掉所有 `run_tests`。用 `execute_code` 反射清：
+
+```csharp
+var bf = System.Reflection.BindingFlags.Public|System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static;
+System.Type.GetType("MCPForUnity.Editor.Services.TestRunStatus, MCPForUnity.Editor").GetMethod("MarkFinished", bf).Invoke(null, null);
+var nt = System.Type.GetType("MCPForUnity.Editor.Services.TestRunnerNoThrottle, MCPForUnity.Editor");
+nt.GetMethod("SetTestRunActive", bf).Invoke(null, new object[]{false});
+try { nt.GetMethod("RestoreThrottling", bf).Invoke(null, null); } catch {}
+UnityEditor.SessionState.SetBool("TestRunnerNoThrottle_TestRunActive", false);
+var tjm = System.Type.GetType("MCPForUnity.Editor.Services.TestJobManager, MCPForUnity.Editor");
+tjm.GetField("_currentJobId", bf).SetValue(null, null);
+System.Type.GetType("MCPForUnity.Editor.Services.EditorStateCache, MCPForUnity.Editor").GetMethod("ForceUpdate", bf).Invoke(null, new object[]{"clear"});
+```
+
+清完 **EditMode via MCP 恢復可靠**（263→270 全綠驗證過）。**PlayMode via MCP 仍是死路** ——
+清完後認真試（`init_timeout` 120s、editor 回報 focused），PlayMode 進得去、`Time.time` 有前進（沒凍幀），
+但 NUnit `[UnityTest]` 卡在第 1 個測試 `completed:0` 超過 5 分鐘（測試全是 `yield return null`），
+`manage_editor(stop)` 解不開、又要再反射清一次。
+
+**結論**：MCP 驅動下，PlayMode 驗證不可靠。EditMode 現在可以硬清後跑；PlayMode 一律把修改做完、
+請使用者本人從 Test Runner 視窗跑。
 
 ---
 
@@ -120,6 +144,13 @@ Editor 視窗**沒有 OS 焦點**時（純用 MCP 工具驅動、沒有人點進
   `Pagoda_ClimbRamp`（傾斜 box collider，與裝飾用的分層屋頂 mesh 分開）。
 - **不要**為了「traversal 卡卡」把 stepOffset 調回去 — 會重現原 bug。
 
+### AI 避障：NavMesh 路徑跟隨（追加71）
+
+- `NavPathFollower`（`Assets/_Project/Game/AI/`，agent-less）掛在**武士 / 屁孩王 / Enemy**。`BossStateMachine.MoveTowardTarget` + `UpdateReturnHome`、`EnemyAI` 地面 chaseDirection 先問它要方向，fail-open 退回直線（沒 baked mesh 的 AI 不會更糟）。**沒引入 NavMeshAgent**（movement 仍是 `CharacterController.Move`）。
+- **改/加地圖幾何後要重跑選單 `Tools/Live2DAction/Bake Navigation Mesh`**（`NavMeshBakeSetup.cs`，不自動呼叫）。NavMesh 存在 `Assets/_Project/Scenes/GreyboxTest/NavMesh-Navigation.asset`。角色 + 車輛用 `NavMeshModifier(ignoreFromBuild)` 排除在 bake 外。
+- **Player/Cat 沒接**（輸入驅動，沒路線）；它們卡是碰撞體品質問題，另做 collider pass。
+- 學校區 navmesh 目前 `PathPartial`（plaza y=−6、地形破碎），待整理後重烤。
+
 ---
 
 ## 5. Live2D 模型
@@ -144,11 +175,110 @@ Editor 視窗**沒有 OS 焦點**時（純用 MCP 工具驅動、沒有人點進
   不影響渲染/邏輯）；每次用 `EditorSceneManager.OpenScene` 開這個場景存檔後，076/077 立牌名字
   就要順手重跑 `Tools/Live2DAction/[Fix] Rename Live2D Standees To 076-077`。
 - **法律限制照舊**：076/077 是《Fairy Tail》同人模型 → **絕對不得進任何對外 Build**。
-  `ASSET_LICENSES.md` 現在共 6 個 `_DoNotShip` 素材（076、077、Mecha 機甲、Player5「lacrimosa」、
-  狼的末路武器、原神劍展示組），全部只能在開發機做內部原型驗證。這條 AI 不能自己放行。
+  `ASSET_LICENSES.md` 的佔位/禁售素材：076、077、Mecha 機甲、Player5「lacrimosa」、狼的末路武器
+  （2026-08-31 追加77 起已不掛在 Player 身上、被血刀取代，但檔案仍在磁碟）、原神劍展示組，
+  外加**血刀 `BloodKatana.glb`（追加77，來源待使用者確認，確認前比照禁售）**。全部只能在開發機
+  做內部原型驗證。這條 AI 不能自己放行。
+- **Player 持握武器（追加77 / 追加81 續 3）**：血刀 `BloodKatana.glb` 掛 `Rhand_Weapon2`，掛載物件
+  **仍命名 "WolfsGravestone"**（`UltimateAbility.FindWeapon()` 靠這個字面名字找要拋的武器＝R 大招丟武士刀）。
+  結構 `WolfsGravestone`(wrapper) / `BladeMesh`(GLB)；wrapper localRotation + BladeMesh offset 是手調權威值。
+  **追加81 續 3：`PlayerKatanaSetup` 在 wrapper 加 `MeshBoundsFixer`** — glb mesh bounds 退化 (0,0,0)、
+  執行期會被視錐剔除、武士刀「消失」，這顆 `[ExecuteAlways]` 元件每次載入重算 bounds。
+- **Player 背劍裝飾（追加81 續 3/4）**：使用者要狼末大劍**放回背上當裝飾**、擺「劍柄左上刀劍右下」。
+  `PlayerBackGreatswordSetup.cs`（選單 `Attach Wolf's Gravestone As Back Decoration`）把 `Genshin_WGS.fbx`
+  掛 **Player root**（scale 1；不掛脊椎骨——骨骼 80x lossy scale 會把 localPosition 乘爆甩飛，踩過）、
+  命名 **`BackGreatswordDecor`（不叫 WolfsGravestone → R 大招不丟它）**、接 **兩顆 TPC**（Main Camera +
+  CatCamera）的 `firstPersonHiddenAccessory`、自帶 `MeshBoundsFixer`。transform 從 git d735761/8ecb5fb
+  原封還原（`localPos (1,−0.80115217,−0.2)`、`Euler(0,0,43)`、`scale 1`）——**FBX 握把在模型 +Y 端**
+  （`pCylinder5` local Y≈2.37，原點端是刀尖），Euler 43° → 握把左肩、刀尖右下。**《原神》仿製 DoNotShip**。
+  詳見 memory `player-weapon-mount`。
+- **Player R 待命光環 = 火焰，閃電已移除（追加77→81）**：SwordOrbit（`不要有人形.mp4`）已刪，換成
+  `PlayerUltimateAura`（`不要出現人物_...mp4`）。**它不是施放特效，是「必殺可用」（`energy.IsFull`）的常駐
+  待命光環**，由 `UltimateReadyAura` 的 `flameAura` 欄位 SetActive-toggle。**追加81：**(1) 2026-08-16 的
+  奇犽風繞圈電光（就是「白色一圈」那個）整條刪——`bolt` 欄位/`LightningAuraUtility`/`UltimateReadyAuraSetup.cs`/
+  `LightningBolt.mat`/場景 `Player/UltimateReadyAura` 子物件都沒了；`UltimateActivationBurst`（施放瞬間金環）保留。
+  (2) 火焰改成**只有來源影片**——追加79/80 疊的 front 層/自製 Embers+GroundRing/`_Brightness` 1.3/中央裁切全拆，
+  prefab 就一個 billboard flipbook。atlas 重烤（完整 frame、54 幀、亮度鍵門檻 52）。尺寸「忠於來源比例，
+  略大於角色」：`SizeHeight 2.7` / `SizeWidth ×1280/720` / offset `(0,0.31,0)`。
+  `PlayerUltimateAuraVfxSetup.cs` 選單 `Add Player Ultimate Ready Aura VFX (flame, on full energy)`，可重跑。
+  memory `sword-orbit-ultimate-vfx` 有完整 recipe。
+- **Player R 施放特效 = SwordOrbit「劍體環繞」（追加69→77 刪→追加81 復原）**：使用者「player 施展 r 技能
+  原來的特效不見了 就是一把劍的旋轉砍擊(我不是說大劍)」。跟上面的待命火焰**是兩回事**——火焰=充能好了、
+  這個=真的按 R 施放時 spawn 一次。源 `不要有人形.mp4`（**烘進 RGB 的灰色透明棋盤格背景**——亮度鍵門檻要
+  拉到 60 才鍵得掉）。`SwordOrbitVfxSetup.cs` 選單 `Add Sword Orbit Skill VFX (R ultimate cast)` 建
+  `SwordOrbitSkillVFX.prefab` 接 `UltimateAbility.castVfxPrefab`（追加79 移除、追加81 加回）+ `castVfxLocalOffset`
+  `(0,0.4,0)`。可重跑。
+- **Player 普攻特效已移除（追加78）**：player 近戰要從拳頭改揮刀、後續做隻狼式對打。`LightAttack1/2/3`
+  的 `hitEffectOverride` 清空，`Attack01/02/03.prefab` 及相關素材已刪（敵人的 `Attack3SlashEffect` 保留）。
+  動畫替換（可用專案內 `CombatAnimations/TC_Sword_Free_Pack/`）＋ 對打機制未做。memory `player-melee-rework`。
+- **右鍵 = 武士刀格擋（追加86 + 追加88 微調）**：右鍵不再是瞄準射擊。`IInputCommand.GuardPressed`（新 default
+  member `=> false`）；`PlayerInputProvider` 的 `AimPressed`/`FirePressed` 恆 false、`AttackPressed` gate 在
+  `!GuardPressed`。`Combat/PlayerGuard`（Player root，`IIncomingDamageModifier`）：正面錐 150° 內傷害
+  HP ×0.15、架勢全額（`poiseMultiplier` 要跟 `StancePoise.stanceGainMultiplier` 0.2 一致）、`CharacterMovement.
+  ExternalSpeedMultiplier`（新欄位）×0.35。`Health.ApplyDamage` 新增套用同物件 `IIncomingDamageModifier` 的
+  一段（無 modifier 時零改變）。選單 `Add Player Katana Guard`（`PlayerGuardSetup.cs`）。
+  **追加88**：格擋 pose 轉**兩根骨** —— `upperArmBone`(`Bip001-R-UpperArm`, euler (-30,-40,-18)) +
+  `swordArmBone`(`Bip001-R-Forearm`, euler 改成 (-55,25,-165))，做出「刀尖左上刀柄右下」負斜率跨身格擋
+  （前臂單獨轉抬不起手）。左鍵音效移除（`PlayerMeleeSfx`/`PlayerMeleeSfxSetup` 刪），改成 `PlayerGuardClashSfx`
+  訂閱 `PlayerGuard.Blocked`、只在擋下 boss `BossHitbox.ActiveWindowPart==Weapon`（新 getter）時放 clank，
+  選單 `Add Player Guard Clash SFX`。武士 `StancePoise` regen 調慢（`regenPerSecond` 20→8、delay 1.5→3）。
+  memory `player-melee-rework`。
+- **射擊系統退役但資產保留（追加86）**：Player 移除 `RangedWeapon`/`RangedAttackDistance`/tracer
+  `LineRenderer`/root `AudioSource` + 場景移除 `RangedWeaponHud` + 右手 `AK47` 實例。`RangedWeapon.cs` /
+  `AK47.fbx` / `RangedWeaponSetup.cs` / `GunshotSfxSetup.cs` / `GunshotSfx.wav` 全留磁碟。重跑
+  `Add Ranged Weapon To Player` 會加回 component 但 `AimPressed` 恆 false → 不會走火。
+- **Maya `NewAnimator` 是共用的**（`MayaAnime/Animator/NewAnimator.controller`）：Player + `中立者1` + `守望者`
+  三個都在用，且 `中立者1` 也掛 `ExecutionAbility`。改上面的 state（例如 repoint `Execute`）會連他們一起改。
+  要給 Player 專屬動作 → 加**新** trigger/state（追加87 F 處決就是這樣：`ExecutionAbility.executeTriggerName`
+  新欄位 + Maya controller 新 `ExecuteThrust` state）。`Enemy` 用另一個同名 `NewAnimator`（`ArisaAnime/`）。
+  memory `maya-newanimator-shared-by-player-and-others`。
+- **連續刺刀動作（追加87 加入 → 追加89 退回）**：`CombatAnimations/Meshy/ContinuousThrust.fbx`（Meshy）
+  加成武士普攻 + Player F 處決。**追加89 停用** —— 離線量測證實這 clip 是**旋身撲擊**：髖部單調前+側漂
+  ~1.5m（`lockRootPositionXZ` 只清 root 淨位移、per-frame 前進烤在髖曲線 → 可見身體走出去）、chest yaw
+  ±130°。已從 `武士 normalAttackPool` 移除、F 處決退回 `FlyingKick`。**FBX/asset/controller state 全留磁碟**。
+  **追加89 留下的通用改動**：`BossAttackDefinition.faceTargetSnapOnStart`（bool，攻擊進入時 snap yaw 對準
+  目標）；`ExecutionAbility.BeginExecution` 先 snap 對準被處決目標（FlyingKick 也受用）。
+  memory `continuous-thrust-shared-anim`。
+- **R 大招特效有音效了（追加78→79）**：兩支來源 mp4 內含 AAC 音軌（使用者自有），ffmpeg 抽軌 →
+  `Assets/_Project/Audio/Skills/`。cat = `CatDarkQi_Cast.wav`（2.9s，施放時播）。player = 追加79 改成
+  `PlayerUltimateAura_Ready.wav`（2.3s 前半段，能量剛滿時播一次「充能完成」stinger，`loop=false`）。
+  `SlashVfxController` 的自毀延時也算 `AudioSource.clip.length`（cat 還在用；player 火焰追加79 拿掉了
+  `SlashVfxController`）。**DarkQi 那支抽音要用 input seek**（`-ss` 放 `-i` 前），output seek 會抽出靜音。
+- **AI 生成 VFX 影片常見「烘進 RGB 的灰色透明棋盤格」背景**（`不要有人形.mp4`、`幫我生成一個黑暗劍氣風格
+  的版本.mp4` 都是，不是純黑）。純亮度 alpha 鍵鍵不掉（淺方塊 luma 到 ~74）→ 一層灰濁半透明霧「掉漆」感。
+  兩種解法：(1) 亮度鍵門檻拉到 ~60（會犧牲暗部細節）；(2) **彩度（chroma）去背**——棋盤格是純灰
+  chroma=0，彩色特效 chroma 高，`alpha = max((chroma−10)/70, (maxc−92)/120)`（第二項留白色核心），
+  暗色調特效用這個乾淨很多（見 `CatDarkQiVfxSetup.cs` 追加81）。暗色素材記得把 `_Brightness` 拉到 ~2.0。
+- **billboard VFX 截圖驗證這台機器很難搞**：`manage_camera` 的 scene_view / game_view 都抓不到 flipbook 粒子；
+  借 game Main Camera `cam.Render()` 到 RenderTexture 時，billboard 朝向 `Camera.main`（不是臨時視角），且這輪
+  一直遇到 tonemap 爆掉整片糊白（HDR / 非 HDR RT 都試過）。實務：用 ffmpeg 把 atlas 合成在深/淺底逐格
+  目視檢查內容，其餘（尺寸/亮度/接縫）交給使用者實機 Play-test + 一行常數重跑選單。
 
 ## 6. 其他
 
+- **武士 Boss 開場演出**（追加91 demo → **追加92 已接入 `GreyboxTest.unity`**）：Timeline+Cinemachine
+  舉刀起手式過場，走進 `BossRoomTrigger` → 過場 → `BossStateMachine.ForceEngage()` 直接開打。轉正工具
+  選單 `[Boss Intro] Wire Into GreyboxTest`（`BossIntroGreyboxSetup.cs`，可重跑、只在 GreyboxTest 為
+  active scene 時執行）。腳本在 `_Project/Game/Cutscene/`。原 demo 場景 `SamuraiBossArena.unity`（選單
+  `[Exploration] Build Samurai Boss Arena`）保留當參考、**仍不在 Build Settings**。決策+術語+轉正記錄在
+  `Docs/BOSS_INTRO_EXPLORATION.md`（§9 = 追加92）。`Live2DAction.Runtime.asmdef` 加了 `Unity.Cinemachine`
+  + `Unity.Timeline` 參照。踩坑：Timeline 播帶 root motion 的 Humanoid clip 要做只刪水平 root 曲線的
+  in-place 副本（**`RootT.y` 留著**）；Meshy 模型退化 bounds 會被過場相機視錐剔除，要
+  `smr.updateWhenOffscreen=true`；過場期間 `CameraPossessionSwitcher`/`ViewFocusDirector`/
+  `SpectatorCameraToggle` 會在 LateUpdate 把 `Main Camera` 硬開回來，**必須一起停用**。
+  memory `boss-intro-cutscene-exploration`。
+- **隻狼式彈反 + 武士戰鬥系統 9 項工程改造（追加94 續 1～34，2026-09-01～09-02）**：外部 AI 規格
+  `Docs/WUSHI_COMBAT_ENGINEERING_SPEC.md`（開頭有逐項「實作進度」表）。CHANGELOG「追加94 續 N」是流水帳。
+  當前 EditMode **288/288**。核心：`PlayerGuard`（右鍵格擋 + `EffectiveParryWindow` 0.20s + 反連按 `_parryScale`）、
+  `PlayerGuardVolume`（玩家錨定守備膠囊，proxy——不是貼刀身）、`BladeClash`/`DeflectReaction`（每 hit-window
+  決定彈反是否中斷連段）、`BossLifeNodeController`（武士 2 個 Deathblow 節點 → Phase 2 → 永久死亡）、
+  `SekiroDeflectDebug`（F9 gizmo + session 數據儀表）、`BossAttackTimingReport`（選單 `[9] 武士 Attack
+  Timing Report`——讀 Animator state speed 印每招真實 contact 秒 + 有效 ms）。**規格進度**：M1 完成、
+  M2（Boss 旋轉 Sweep 完成 / **玩家武器 Sweep 續 23 退回**，`PlayerWeaponHitbox` 留磁碟需陪同 Play debug）、
+  M3（程式化攻擊位移 + **武士 root scale 4→1「做法 A」完成**（`WushiRootScaleSetup.cs`，幾何逐項驗證保留）/
+  **精確 Guard collider（5C）使用者跳過**）、M4 完成、M5 groundwork 完成。**所有「程式完成」項目的 Play
+  手感驗收未跑**（本機 MCP PlayMode runner 不可靠——見上方「stale `tests_running`」）。
+  memory `player-melee-rework`。
 - **`GreyboxSceneBuilder.Build()` 會先清空整個場景再重建**它自己寫的內容 — 曾誤刪當天尚未 commit
   的角色/立牌。**只做局部修改就用 `EditorSceneManager.OpenScene` 直接改**（照 `Fix*.cs` 的模式），
   絕不要為了改個材質就呼叫 `Build()`。真要整場重建，先問使用者，並照 `CHANGELOG.md` 記錄的完整
@@ -167,6 +297,30 @@ Editor 視窗**沒有 OS 焦點**時（純用 MCP 工具驅動、沒有人點進
 - **角色命名對照**（2026-08-19 重新命名）：`Player`（Maya，玩家）、`Mecha`（舊 `Player2`，
   DoNotShip 機甲看板）、`TrainingDummy`（舊 `Player3`，站樁假人）、`Enemy`（舊 `Player4`，Arisa，
   含完整戰鬥/空戰 AI）。`KNOWN_ISSUES.md` 裡沒標日期的舊條目一律用改名前的稱呼，讀時對照換算。
+- **怪物級別**（2026-08-29 使用者定義）：普通怪＝`Enemy`（`EnemyAI`，不受限）、菁英怪＝`屁孩王`
+  （`BossStateMachine`，`confineToArena=true`，被關本地、GateWatch）、boss＝`武士`（`BossStateMachine`，
+  `confineToArena=false`，**不受城牆限制——使用者原始設計**；追加72 曾誤改 true、追加73 撤回。只吃
+  `leashRange` 32 距離 leash）。共用腳本，差異全靠逐-instance 欄位；三者 AI 互不干擾但傷害
+  （HP/架勢/擊飛）保留。舊文件的「精怪」＝菁英怪。
+  **死亡→復活**（追加70）：武士＋屁孩王都 `permanentDeath=false` / `reviveDelaySeconds=5`，死亡 5 秒後進
+  `BossState.GettingUp`（把死亡 clip 倒放 `StandUpSeconds`≈1.8s 當起身）再回 Alert。屍體不消失
+  （`Health.deferDeactivationToDeathAnimation=true` + 無 `DeathAnimationLink`）。兩隻死亡 clip 設
+  `lockRootHeightY=true`+`heightFromFeet=true` 讓屍體貼地不飄。
+- **可玩角色與切換**：`Player`（Maya humanoid）＋ 獨立 `Cat`（scale 0.45、Meshy 綁定姿勢無動畫）。
+  **C** = `CameraPossessionSwitcher` 在 Player↔Cat 附身切換（`Current` 是「操控誰」的真相來源）；
+  **T** = `ViewFocusDirector` 守望者視角；**F** = `VehicleEntrySystem` 進出車（追加55→57：**雙人座**、
+  看 `possession.Current` 決定用誰。F = 駕駛座空就進、被佔就上後方平台當乘客、都滿無作用；在車上 = 下車。
+  **開車中 C 仍可切角色** —— 駕駛留車上熄火、控乘客時看自己的相機。想換人開得兩隻都下車再 F。
+  兩隻角色都不隱藏，貓的座位錨點有 -50° 仰角讓 chase cam 看得到臉）。跨系統接線：
+  `WatcherCatWiring` / `VehicleCatWiring` / `CatBarsWiring`（都從 `CatCharacterSetup` 結尾呼叫；各自也有選單）。
+  **貓 HUD（追加74）**：貓有 `StancePoise`（削韌，maxStance 50）＋ `CatCornerHud`（生命/能量/架式，clone 自
+  `PlayerCornerHud`）。`PossessionHud` 依 `CameraPossessionSwitcher.Current` 右上角換整組（操控貓 → CatCornerHud、
+  關 PlayerCornerHud）。**不 gate 戰鬥狀態**（跟 `WushiBossHudVisibility` 相反）。
+  **`CameraPossessionSwitcher.playerControl[]` / `catControl[]` 必須列全該角色「所有讀輸入的元件」**
+  （追加70 修「cat 視角下攻擊連帶觸發 player」——原本 playerControl 只有 `CharacterMovement`）：
+  player 現在（追加86）＝`CharacterMovement`+`PlayerCombat`+`TargetLockController`+`UltimateAbility`+
+  `PlayerGuard`+`ExecutionAbility`（`RangedWeapon` 退役、從陣列拿掉；`CatCharacterSetup.CollectPlayerControl`
+  收）。加新輸入元件要同步補這兩個陣列 ＋ `ViewFocusDirector.suspendWhileWatching`。
 
 ---
 

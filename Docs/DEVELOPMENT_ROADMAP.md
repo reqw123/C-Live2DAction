@@ -378,6 +378,17 @@
 - 84 個 EditMode 全過；59 個 PlayMode 測試（55 過、2 個既有已記錄的 flaky、1 個既有已知未解決的 `EnemyAttackRangeSceneTests`、1 個 TrainingDummy 已知跳過），跟改動前一致。
 - **仍待使用者本人 Play 一次確認**：Player3 目前放在座標 (5, ground+0.5, 0)，位置是否需要調整。
 
+### Step 6+：切片 2 戰鬥擴充（2026-08-19 ～ 09-02，多輪迭代 — 詳見 CHANGELOG「追加 30～94 續 34」）
+
+Step 5 之後戰鬥系統持續擴充，roadmap 這裡只記里程碑，逐條在 `CHANGELOG.md`：
+
+- **角色重命名 + 怪物級別**（追加 30 起）：普通怪 `Enemy` / 菁英怪 `屁孩王` / boss `武士`（屁孩王+武士共用 `BossStateMachine`）。對照表見 `KNOWN_ISSUES.md` 開頭。
+- **貓咪近戰機制**（追加 30，切片 2）：連段／蓄力／撲擊／空中攻擊／命中反饋。設計見 `Docs/CAT_COMBAT_DESIGN.md`。EditMode 綠，Play 手感待調。
+- **玩家近戰改武士刀 + 隻狼式彈反**（追加 78～94）：拳頭→武士刀；`PlayerGuard` 右鍵格擋 + 完美彈反（`BladeClash` / `PlayerGuardVolume` / tap-deflect + 反連按 / `Guard.fbx` 動畫）。Phase 1a/1b/2/3 完成、已接 GreyboxTest。
+- **武士 Boss 開場演出**（追加 91～92）：走進 `BossRoomTrigger` → Timeline 起手式演出 → `ForceEngage` → 開打。續 28 加開場 2.5s 360° 運鏡。
+- **武士戰鬥系統 9 項工程改造**（追加 94 續 1～34，依 `Docs/WUSHI_COMBAT_ENGINEERING_SPEC.md`）：M1（彈反反應/Tap Guard/格擋架勢）完成、M2（Boss 旋轉 Sweep 完成 / 玩家武器 Sweep 退回）、M3（程式化位移 + Boss root scale 4→1「做法 A」完成 / 精確 Guard collider 跳過）、M4（處決生命節點 + 永久死亡 / 特殊招式排程）完成、M5 groundwork（F9 數據儀表 + 出招時序報表）完成。**逐項進度表見該規格文件開頭。** EditMode 288/288 綠。
+- **切片 2 戰鬥待使用者參與**：(1) 規格項目 4 玩家揮刀 swept collider 需對焦 Editor 陪同 Play debug；(2) 規格項目 9 §10.3 數值調校 pass 需 Play 實測數據。其餘「程式完成」項目的 Play 手感驗收也都還沒跑。
+
 ## Phase 3：Live2D 與完整流程（未開始）
 
 主選單 → Live2D 開場對話（佔位素材）→ 3D 戰鬥 → 結算 → Live2D 結束對話 → 返回選單 → Windows Build。此階段起，任何要交給他人測試的版本都必須先確認 076/077 佔位素材已被排除或不會被外流。

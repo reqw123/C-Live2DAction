@@ -11,11 +11,11 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
   m_Name: PW2_Attack_Breakdance
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   attackId: Breakdance
   clipName: PW2_Breakdance1990
   minDistance: 0
-  maxDistance: 1.4
+  maxDistance: 3
   maxAngleDegrees: 180
   cooldownSeconds: 0
   selectionWeightPhase1: 0
@@ -24,9 +24,13 @@ MonoBehaviour:
   maxConsecutiveUses: 1
   startupSeconds: 0.3
   recoverySeconds: 0.5
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  attackPitchDegrees: 0
   startupTracking: 0.3
   lateTracking: 0.1
   trackingDropNormalizedTime: 0.2
+  healthDamageIsPercentOfTargetMax: 0
   baseHealthDamage: 18
   basePoiseDamage: 14
   knockbackForce: 3
@@ -37,17 +41,57 @@ MonoBehaviour:
   useRootMotion: 0
   rootMotionStartNormalized: 0
   rootMotionEndNormalized: 1
+  rootMotionScale: 1
+  rootMotionAimAtTarget: 0
+  rootMotionAimGapMeters: 1.4
+  rootMotionAimMaxMeters: 6
+  rootMotionClipForwardMeters: 1
   hitWindows:
   - part: 2
     startNormalized: 0.35
     endNormalized: 0.5
     damageMultiplier: 1
+    deflectReaction: 0
     measured: 0
   - part: 3
     startNormalized: 0.55
     endNormalized: 0.7
     damageMultiplier: 1
+    deflectReaction: 0
     measured: 0
+  attackMotion:
+    moveStartNormalized: 0.05
+    moveEndNormalized: 0.4
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 1
+  lungeTargetGapMeters: 0.8
+  lungeMaxMeters: 3
+  cancelClipBodyDrift: 0
   derivedAttack: {fileID: 0}
   deriveWindowStartNormalized: 0.7
   deriveWindowEndNormalized: 0.95
@@ -55,11 +99,13 @@ MonoBehaviour:
   deriveChancePhase2: 0
   halveDeriveChanceOnFullMiss: 1
   deriveCooldownSeconds: 5
-  designNotes: 'NOT YET measured via SampleAnimation (Editor was closed when this was
-    created - built via batchmode from the new Breakdance_1990 take instead). Hit
-    windows are a placeholder guess (mid-clip leg sweep, alternating feet) - selection
-    fields (min/maxDistance, maxAngleDegrees, cooldown, weights) are irrelevant/unused
+  isMajorAttack: 0
+  designNotes: NOT YET measured via SampleAnimation (Editor was closed when this
+    was created - built via batchmode from the new Breakdance_1990 take instead).
+    Hit windows are a placeholder guess (mid-clip leg sweep, alternating feet) -
+    selection fields (min/maxDistance, maxAngleDegrees, cooldown, weights) are irrelevant/unused
     for this attack since it is never chosen by PickAttack() - see BossStateMachine.TryEnterBreakdance,
-    which queues it purely off BossTuning.BreakdanceTriggerSeconds regardless of distance/angle.
-    Please verify hit timing/reach in Play Mode or via SampleAnimation before relying
-    on this landing consistently, same as every other attack in this pack.'
+    which queues it purely off BossTuning.BreakdanceTriggerSeconds regardless of
+    distance/angle. Please verify hit timing/reach in Play Mode or via SampleAnimation
+    before relying on this landing consistently, same as every other attack in this
+    pack.

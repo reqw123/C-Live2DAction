@@ -59,6 +59,11 @@ namespace Live2DAction.Vehicles
         private Vector3 _currentLookAt;
         private bool _initialized;
         private bool _firstPerson;
+
+        // 2026-08-30, user report ("貓咪主駕駛且 V第一人稱時 會看到貓咪的臉") - the driver model is
+        // visible now (追加57), so cockpit view looks straight at it. VehicleEntrySystem reads this
+        // to hide the driver while first-person is active.
+        public bool IsFirstPerson => _firstPerson;
         private Camera _camera;
         private Rigidbody _targetRigidbody;
 

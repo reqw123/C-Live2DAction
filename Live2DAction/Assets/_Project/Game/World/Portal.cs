@@ -338,6 +338,14 @@ namespace Live2DAction.World
                 return;
             }
 
+            // Lazy - a script recompile DURING Play triggers a domain reload that nulls this
+            // non-serialized field while Update() keeps running (Awake isn't re-called), which
+            // otherwise throws ArgumentNullException in GetPropertyBlock every frame.
+            if (_propertyBlock == null)
+            {
+                _propertyBlock = new MaterialPropertyBlock();
+            }
+
             Color color;
             if (state == VisualState.Flashing)
             {

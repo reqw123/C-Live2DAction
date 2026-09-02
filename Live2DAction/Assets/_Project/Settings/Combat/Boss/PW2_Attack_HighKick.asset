@@ -15,18 +15,22 @@ MonoBehaviour:
   attackId: HighKick
   clipName: PW2_HighKick
   minDistance: 0
-  maxDistance: 1.1
+  maxDistance: 2.5
   maxAngleDegrees: 60
   cooldownSeconds: 5
-  selectionWeightPhase1: 25
-  selectionWeightPhase2: 30
+  selectionWeightPhase1: 0
+  selectionWeightPhase2: 0
   disallowImmediateRepeat: 1
   maxConsecutiveUses: 1
   startupSeconds: 0.65
   recoverySeconds: 0.95
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  attackPitchDegrees: 0
   startupTracking: 1
   lateTracking: 0.1
   trackingDropNormalizedTime: 0.3
+  healthDamageIsPercentOfTargetMax: 0
   baseHealthDamage: 22
   basePoiseDamage: 16
   knockbackForce: 4
@@ -37,12 +41,51 @@ MonoBehaviour:
   useRootMotion: 0
   rootMotionStartNormalized: 0
   rootMotionEndNormalized: 1
+  rootMotionScale: 1
+  rootMotionAimAtTarget: 0
+  rootMotionAimGapMeters: 1.4
+  rootMotionAimMaxMeters: 6
+  rootMotionClipForwardMeters: 1
   hitWindows:
   - part: 3
     startNormalized: 0.8
     endNormalized: 1
     damageMultiplier: 1
+    deflectReaction: 0
     measured: 1
+  attackMotion:
+    moveStartNormalized: 0.05
+    moveEndNormalized: 0.55
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 1
+  lungeTargetGapMeters: 0.7
+  lungeMaxMeters: 2.5
+  cancelClipBodyDrift: 0
   derivedAttack: {fileID: 0}
   deriveWindowStartNormalized: 0.7
   deriveWindowEndNormalized: 0.95
@@ -50,6 +93,7 @@ MonoBehaviour:
   deriveChancePhase2: 0
   halveDeriveChanceOnFullMiss: 1
   deriveCooldownSeconds: 5
+  isMajorAttack: 0
   designNotes: 'Measured via SampleAnimation (2026-08-25). WARNING: real peak extension
     (t=0.43-0.83) arcs to head height (~2.2m world Y), forward reach up to 1.06m
     - flies OVER a grounded player''s hurtbox. Used the clip''s lower/later window

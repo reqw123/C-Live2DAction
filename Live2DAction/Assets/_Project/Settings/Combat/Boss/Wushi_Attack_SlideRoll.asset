@@ -1,0 +1,109 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_SlideRoll
+  m_EditorClassIdentifier: 
+  attackId: SlideRoll
+  clipName: Wushi_SlideRoll
+  minDistance: 4.5
+  maxDistance: 13
+  maxAngleDegrees: 50
+  cooldownSeconds: 6
+  selectionWeightPhase1: 0.5
+  selectionWeightPhase2: 0.7
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.3
+  recoverySeconds: 0.6
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  startupTracking: 1
+  lateTracking: 0.05
+  trackingDropNormalizedTime: 0.12
+  healthDamageIsPercentOfTargetMax: 0
+  baseHealthDamage: 32
+  basePoiseDamage: 20
+  knockbackForce: 0
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 1
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 0.74
+  rootMotionScale: 0.55
+  rootMotionAimAtTarget: 1
+  rootMotionAimGapMeters: 1.8
+  rootMotionAimMaxMeters: 10
+  rootMotionClipForwardMeters: 5.4
+  hitWindows:
+  - part: 6
+    startNormalized: 0.74
+    endNormalized: 0.9
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  attackMotion:
+    moveStartNormalized: 0
+    moveEndNormalized: 0.66
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 0
+  lungeTargetGapMeters: 1.6
+  lungeMaxMeters: 4
+  cancelClipBodyDrift: 0
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 0
+  designNotes: "2026-09-02, Meshy AI attack (\u6ED1\u884C\u7FFB\u6EFE.zip / sliding_rool,
+    take \"Scene\", 2.77s, from the \u5C41\u5B69\u738B Man-in-Black rig - retargets
+    fine). A rolling pounce: nt 0-0.70 the boss rolls low along the ground (hipY
+    drops to 0.18, feet over the top nt 0.65), then rises nt 0.72-0.80 into a downward
+    blade sweep (blade speed peak 42 at nt 0.80, bladeY 3.9 -> 1.0) - that exit slash
+    is the hit (window nt 0.74-0.90). Hips forward-drift 0 -> ~20m baked into the
+    body pose (worst of the batch) -> cancelClipBodyDrift=1 anchors the visible body;
+    lungeDistanceFromTargetGap (gap-1m, clamp 0..9) carries the boss forward toward
+    the player over the roll window nt 0-0.68, so from the ~3.5m standoff it rolls
+    ~2.5m and from 8m it rolls ~7m - a real gap-closer. Wired as attack per user
+    choice (b) \"\u7FFB\u6EFE\u64B2\u64CA roll + hit\" (not (a) an evasion). deflectReaction
+    ContinueCombo, knockback 0 per session rules. NEEDS PLAY TUNING: the roll reads
+    OK with the body anchored + FSM-carried? lungeTargetGapMeters, hit window nt,
+    whether a light contact hit during the roll itself (nt 0.15-0.35) is wanted."

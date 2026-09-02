@@ -1,0 +1,112 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_ThrustStab
+  m_EditorClassIdentifier: 
+  attackId: ThrustStab
+  clipName: Wushi_ThrustStab
+  minDistance: 4
+  maxDistance: 7
+  maxAngleDegrees: 55
+  cooldownSeconds: 1.5
+  selectionWeightPhase1: 1
+  selectionWeightPhase2: 1
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.35
+  recoverySeconds: 0.5
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  startupTracking: 1
+  lateTracking: 0.1
+  trackingDropNormalizedTime: 0.2
+  healthDamageIsPercentOfTargetMax: 0
+  baseHealthDamage: 28
+  basePoiseDamage: 18
+  knockbackForce: 0
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 1
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 0.85
+  rootMotionScale: 1.3
+  rootMotionAimAtTarget: 1
+  rootMotionAimGapMeters: 1.8
+  rootMotionAimMaxMeters: 6
+  rootMotionClipForwardMeters: 2.2
+  hitWindows:
+  - part: 6
+    startNormalized: 0.18
+    endNormalized: 0.32
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.53
+    endNormalized: 0.7
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  attackMotion:
+    moveStartNormalized: 0.08
+    moveEndNormalized: 0.4
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 0
+  lungeTargetGapMeters: 1.8
+  lungeMaxMeters: 4
+  cancelClipBodyDrift: 0
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 0
+  designNotes: "2026-09-02, Meshy AI attack (\u6B66\u58EB\u5200\u524D\u523A.zip,
+    take \"Scene\", 3.03s) imported as Wushi_ThrustStab - a katana forward thrust
+    (2-3 stabs). Measured offline on the live 4x \u6B66\u58EB: blade forward-reach
+    spikes 5.3m at nt 0.25 (speed 36) and again nt 0.63-0.65 (speed 18-36), 6.2m
+    nt 0.90. Hips forward-drift 0 -> ~4.5m baked into the body pose (NOT removable
+    by lockRootPositionXZ - Meshy clip quirk), so cancelClipBodyDrift=1 anchors the
+    visible body every frame and lungeDistanceFromTargetGap (gap-1.7m, clamp 0..4)
+    drives a short controlled commit toward the player over nt 0.08-0.40. deflectReaction
+    ContinueCombo, knockback 0 per session rules. NEEDS PLAY TUNING: hit window nt,
+    lungeTargetGapMeters, and whether the drift-cancel reads clean (feet may slide
+    if the clip has foot IK the anchor fights)."

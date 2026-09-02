@@ -1,0 +1,81 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_ChargeCut
+  m_EditorClassIdentifier:
+  attackId: CleaveCharge
+  clipName: Wushi_ChargeCut
+  minDistance: 0
+  maxDistance: 3.8
+  maxAngleDegrees: 60
+  cooldownSeconds: 2
+  selectionWeightPhase1: 2
+  selectionWeightPhase2: 2.2
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.3
+  recoverySeconds: 0.5
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  startupTracking: 1
+  lateTracking: 0.1
+  trackingDropNormalizedTime: 0.2
+  healthDamageIsPercentOfTargetMax: 0
+  baseHealthDamage: 30
+  basePoiseDamage: 20
+  knockbackForce: 0
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 6
+    startNormalized: 0.13
+    endNormalized: 0.21
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.4
+    endNormalized: 0.5
+    damageMultiplier: 1.15
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.8
+    endNormalized: 0.92
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 1
+  designNotes: '2026-09-02, user picked 武士 debug-mode state #8 (Wushi_ChargeCut) + #9
+    (ContinuousThrust) to promote into the real pool ("我比較喜歡...8/9動作的展現 請套用回真實模式").
+    Wushi_ChargeCut is the same Meshy source family as Wushi_TwistCleave (扭轉前劈) but
+    a different export + the debug state runs it at speed 1.15 (which the user prefers).
+    Measured offline on the live 4x 武士: real RootT net travel 0.78m (in-place). 3 phases:
+    early swing nt 0.13-0.19 (blade reach 3.6, speed 30), the big committed cleave nt
+    0.40-0.50 (reach spikes 7.5, speed peak 56, dmgMult 1.15), and a forward extension/
+    thrust nt 0.80-0.92 (reach 6.5 -> 8.8). useRootMotion 0 (baked in place). attackId
+    CleaveCharge (ChargeCut is taken by SwordJudgment). Replaces Wushi_Attack_TwistCleave
+    in the pool (same move, this is the version the user pointed at). Wushi_ChargeCut
+    AnimatorState speed stays 1.15. deflectReaction ContinueCombo, knockback 0 per
+    session rules. NEEDS PLAY TUNING: hit window nt, damage 30/34.5, the 3rd window.'

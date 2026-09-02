@@ -20,5 +20,5 @@ MonoBehaviour:
   activeFrames: 4
   recoveryFrames: 16
   comboWindowFrames: 10
-  hitEffectOverride: {fileID: 7964323311676820100, guid: 4ac221457d54e1b48a0781058936e16c, type: 3}
-  alwaysSpawnHitEffect: 1
+  hitEffectOverride: {fileID: 0}
+  alwaysSpawnHitEffect: 0

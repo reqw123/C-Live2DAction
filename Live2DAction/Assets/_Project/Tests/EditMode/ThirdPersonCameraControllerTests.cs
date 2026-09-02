@@ -109,6 +109,51 @@ public class ThirdPersonCameraControllerTests
         Assert.AreEqual(0f, result);
     }
 
+    // --- 2026-08-30, walk immersion framing ---
+
+    [Test]
+    public void StepBlend01_EasesTowardOneWhileWalking()
+    {
+        float b = 0f;
+        for (int i = 0; i < 200; i++) b = ThirdPersonCameraController.StepBlend01(b, towardOne: true, lerpSpeed: 5f, deltaTime: 0.016f);
+        Assert.Greater(b, 0.99f);
+    }
+
+    [Test]
+    public void StepBlend01_EasesBackToZeroWhenNotWalking()
+    {
+        float b = 1f;
+        for (int i = 0; i < 200; i++) b = ThirdPersonCameraController.StepBlend01(b, towardOne: false, lerpSpeed: 5f, deltaTime: 0.016f);
+        Assert.Less(b, 0.01f);
+    }
+
+    [Test]
+    public void StepBlend01_ClampsTheLerpFactor_NeverOvershoots()
+    {
+        // A huge speed*dt must not push the blend past 1 (Mathf.Lerp with t>1 would).
+        float b = ThirdPersonCameraController.StepBlend01(0f, towardOne: true, lerpSpeed: 999f, deltaTime: 1f);
+        Assert.AreEqual(1f, b, 0.0001f);
+    }
+
+    [Test]
+    public void WalkFramedDistance_BlendZero_Unchanged()
+    {
+        Assert.AreEqual(2.2f, ThirdPersonCameraController.WalkFramedDistance(2.2f, walkBlend: 0f, walkDistanceMultiplier: 0.8f), 0.0001f);
+    }
+
+    [Test]
+    public void WalkFramedDistance_BlendOne_PullsIn()
+    {
+        Assert.AreEqual(2.2f * 0.8f, ThirdPersonCameraController.WalkFramedDistance(2.2f, walkBlend: 1f, walkDistanceMultiplier: 0.8f), 0.0001f);
+    }
+
+    [Test]
+    public void WalkFramedFieldOfView_BlendZero_Unchanged_BlendOne_Narrows()
+    {
+        Assert.AreEqual(65f, ThirdPersonCameraController.WalkFramedFieldOfView(65f, 0f, -6f), 0.0001f);
+        Assert.AreEqual(59f, ThirdPersonCameraController.WalkFramedFieldOfView(65f, 1f, -6f), 0.0001f);
+    }
+
     [Test]
     public void YawDegrees_ReflectsCurrentYawState()
     {

@@ -31,6 +31,7 @@ public class CharacterMovementTests
         public bool ViewTogglePressed { get; set; } // 2026-08-23, first-person toggle - interface addition, stub needs it to compile
         public bool ZoomInPressed { get; set; } // 2026-08-23, aim-zoom controls - interface addition, stub needs it to compile
         public bool ZoomOutPressed { get; set; }
+        public bool WalkTogglePressed { get; set; } // 2026-08-30, walk/run toggle - settable here so the walk test can trigger it
     }
 
     private GameObject _player;
@@ -164,6 +165,30 @@ public class CharacterMovementTests
 
         Vector3 delta = _player.transform.position - start;
         Assert.Less(delta.magnitude, 0.01f, "No input should not move the player");
+    }
+
+    // 2026-08-30, Genshin-style walk/run toggle. moveSpeed is 5 (SetUp), walkSpeed set to 1 here:
+    // a 1s forward run must cover clearly more ground than a 1s forward walk after a toggle press.
+    [UnityTest]
+    public IEnumerator WalkToggle_MakesGroundMovementSlower()
+    {
+        SetField(_player.GetComponent<CharacterMovement>(), "walkSpeed", 1f);
+
+        Vector3 runStart = _player.transform.position;
+        yield return MoveForSeconds(new Vector2(0f, 1f), 1f);
+        float runDistance = (_player.transform.position - runStart).magnitude;
+
+        // one-frame toggle press, then keep moving forward in walk mode
+        _input.WalkTogglePressed = true;
+        yield return null;
+        _input.WalkTogglePressed = false;
+
+        Vector3 walkStart = _player.transform.position;
+        yield return MoveForSeconds(new Vector2(0f, 1f), 1f);
+        float walkDistance = (_player.transform.position - walkStart).magnitude;
+
+        Assert.Greater(runDistance, 2f, "sanity: running 1s at moveSpeed 5 should cover well over 2 units");
+        Assert.Less(walkDistance, runDistance * 0.5f, "walk mode should be clearly slower than run");
     }
 
     [UnityTest]

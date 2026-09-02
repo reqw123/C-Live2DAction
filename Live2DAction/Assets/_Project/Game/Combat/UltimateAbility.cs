@@ -26,6 +26,15 @@ namespace Live2DAction.Combat
         // on activation, independent of what happens to the weapon afterward.
         [SerializeField] private UltimateActivationBurst burst;
 
+        // 2026-08-30 (追加69) → removed 追加79 → restored 2026-08-31 (追加81), explicit user
+        // request ("player 施展 r 技能原來的特效不見了 就是一把劍的旋轉砍擊"): the swirling-blade
+        // energy VFX (SwordOrbit) spawned the instant R fires, parented to the player, self-
+        // destructing via its own SlashVfxController. Distinct from the ready-state flame aura on
+        // UltimateReadyAura (that says "charged"; this plays on the actual cast). Wired by
+        // SwordOrbitVfxSetup. Null = no cast VFX (just the UltimateActivationBurst shockwave).
+        [SerializeField] private GameObject castVfxPrefab;
+        [SerializeField] private Vector3 castVfxLocalOffset = new Vector3(0f, 1f, 0f);
+
         // Reused from ThirdPersonCameraController/PlayerCombat's own "optional MonoBehaviour cast
         // to an interface" convention - who to throw the sword at. See Update's own comment for
         // what happens when nothing is currently locked on.
@@ -60,6 +69,13 @@ namespace Live2DAction.Combat
 
         private PlayerCombat _combat;
         private bool _active;
+
+        // Captured when a throw starts so OnDisable can force the weapon back onto the player's
+        // back if the coroutine is killed mid-flight (see OnDisable).
+        private Transform _thrownWeapon;
+        private Transform _weaponHomeParent; // 2026-09-02 - the hand bone the katana was socketed to
+        private Vector3 _weaponHomeLocalPos;
+        private Quaternion _weaponHomeLocalRot;
 
         // Resolved on every use, not cached in Awake - same reasoning as PlayerCombat's own
         // InputCommand property.
@@ -98,6 +114,11 @@ namespace Live2DAction.Combat
                 burst.Play();
             }
 
+            if (castVfxPrefab != null)
+            {
+                Instantiate(castVfxPrefab, transform.TransformPoint(castVfxLocalOffset), transform.rotation, transform);
+            }
+
             // 2026-08-23, explicit user request ("r技能目標會是飛往滾輪指定的敵人 如果沒有指定就飛向
             // 前方") - REPLACES the previous "fall back to nearest LockOnTarget in the whole scene"
             // behavior (which could throw at something well off to the side or behind the player,
@@ -116,8 +137,25 @@ namespace Live2DAction.Combat
         {
             _active = true;
 
+            // 2026-09-01 (spec item 2): the ultimate takes over the player - drop any raised guard
+            // so its volume / pose / slowdown don't bleed into the ult animation.
+            GetComponent<PlayerGuard>()?.CancelDefenseAction();
+
+            // 2026-09-02, real playtested bug ("玩家的武士刀不見了 沒有握在手上") - the return path
+            // reparented the katana to `transform` (the Player root) instead of the hand bone it was
+            // socketed to (Rhand_Weapon2, which carries an ~80x bone scale). localPosition/Rotation
+            // captured relative to the hand then re-applied relative to the root left the katana at
+            // the player's origin at 1/80th size - effectively invisible. Capture the real parent.
+            Transform homeParent = weapon.parent;
             Vector3 homeLocalPosition = weapon.localPosition;
             Quaternion homeLocalRotation = weapon.localRotation;
+
+            // Mirror the home pose to fields so OnDisable can restore it if this coroutine is
+            // killed mid-throw (component disabled by a possession swap, player death, etc.).
+            _thrownWeapon = weapon;
+            _weaponHomeParent = homeParent;
+            _weaponHomeLocalPos = homeLocalPosition;
+            _weaponHomeLocalRot = homeLocalRotation;
 
             Vector3 startWorldPos = weapon.position;
             Quaternion startWorldRot = weapon.rotation;
@@ -236,22 +274,49 @@ namespace Live2DAction.Combat
             Vector3 embeddedPos = weapon.position;
             Quaternion embeddedRot = weapon.rotation;
             elapsed = 0f;
+            Transform dock = homeParent != null ? homeParent : transform;
             while (elapsed < returnDuration)
             {
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / returnDuration);
-                Vector3 homeWorldPos = transform.TransformPoint(homeLocalPosition);
-                Quaternion homeWorldRot = transform.rotation * homeLocalRotation;
+                Vector3 homeWorldPos = dock.TransformPoint(homeLocalPosition);
+                Quaternion homeWorldRot = dock.rotation * homeLocalRotation;
                 weapon.SetPositionAndRotation(
                     Vector3.Lerp(embeddedPos, homeWorldPos, t),
                     Quaternion.Slerp(embeddedRot, homeWorldRot, t));
                 yield return null;
             }
 
-            weapon.SetParent(transform, true);
+            weapon.SetParent(dock, true);
             weapon.localPosition = homeLocalPosition;
             weapon.localRotation = homeLocalRotation;
 
+            _thrownWeapon = null;
+            _weaponHomeParent = null;
+            _active = false;
+        }
+
+        // The throw runs as a coroutine that reparents the weapon off the player and drives its
+        // world transform every frame. If this component is disabled mid-throw - a possession swap
+        // to the cat (CameraPossessionSwitcher.playerControl), the player dying, a scene teardown -
+        // Unity silently kills the coroutine, which would strand the weapon unparented in the air
+        // with _active stuck true (the ultimate would then never fire again). Snap it home and
+        // clear state so a later re-enable starts clean.
+        private void OnDisable()
+        {
+            if (!_active)
+            {
+                return;
+            }
+            StopAllCoroutines();
+            if (_thrownWeapon != null)
+            {
+                _thrownWeapon.SetParent(_weaponHomeParent != null ? _weaponHomeParent : transform, true);
+                _thrownWeapon.localPosition = _weaponHomeLocalPos;
+                _thrownWeapon.localRotation = _weaponHomeLocalRot;
+                _thrownWeapon = null;
+            }
+            _weaponHomeParent = null;
             _active = false;
         }
 

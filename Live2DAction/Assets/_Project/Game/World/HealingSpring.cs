@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using Live2DAction.Characters;
 using Live2DAction.Core;
@@ -7,45 +8,46 @@ namespace Live2DAction.World
 {
     // 2026-08-18, explicit user request ("幫我設置一個泉水點，待在範圍內快速回復血量和能量條至滿
     // 格(只有玩家適用)") - a bonfire/spring-style rest point: standing inside the trigger heals
-    // Health and refills UltimateEnergy at a fast per-second rate (not an instant snap - "快速"
+    // Health and refills every energy meter at a fast per-second rate (not an instant snap - "快速"
     // reads as "quick", not "immediate", and a visibly filling bar is better feedback that
-    // something is actually happening than a silent teleport-to-full). Player-only, same
-    // GetComponentInParent<PlayerInputProvider> signal Portal.cs and StancePoise's own history
-    // already use for "is this actually the human player" - an enemy that wandered into the
-    // radius shouldn't get free healing.
+    // something is actually happening than a silent teleport-to-full).
     //
-    // 2026-08-20, explicit user request ("請讓泉水點也支援回復體力條") - also refills flight
-    // energy ("體力條") now, the SEPARATE UltimateEnergy instance CharacterMovement's own flight
-    // system drains (see flightEnergyPerSecond's own comment for why this needs its own rate and
-    // its own resolved reference rather than reusing the ultimate skill's).
+    // "只有玩家" is enforced via the GetComponentInParent<PlayerInputProvider> signal Portal.cs
+    // and StancePoise's own history already use for "is this actually a player-controlled
+    // character" - an enemy that wandered into the radius shouldn't get free healing.
     //
-    // Deliberately tracks the player via Enter/Exit rather than re-resolving Health/UltimateEnergy
-    // every frame - same reasoning Portal.cs's own _playerInside field has: cheap to cache once,
-    // no reason to repeat a GetComponentInParent lookup 60 times a second while standing still.
+    // 2026-08-20, explicit user request ("請讓泉水點也支援回復體力條") - also refills flight energy.
+    //
+    // 2026-08-31, explicit user request ("讓cat也可以吃到泉水恢復效果") - the cat shares the
+    // PlayerInputProvider signal (rule 8) so it already passed the "is a player" gate, but two
+    // things were wrong for it: (a) a single-slot cache (_playerHealth etc.) meant only ONE
+    // character could be served at a time - if the cat and the player were both inside, whoever
+    // entered last won; (b) `GetComponentInParent<UltimateEnergy>()` only ever found ONE meter, so
+    // the cat's dedicated SkillEnergy (大招能量, a child object) was never refilled, and its flight
+    // energy on the root got hit by BOTH rates. Now every character inside is tracked, and ALL of
+    // its UltimateEnergy instances are refilled - the one CharacterMovement uses for flight at
+    // flightEnergyPerSecond, every other one (ultimate skill / cat skill) at energyPerSecond.
     [RequireComponent(typeof(Collider))]
     public class HealingSpring : MonoBehaviour
     {
-        // 2026-08-19, explicit user request ("幫我把泉水的生命每秒回復量增加") - raised from the
-        // original 40 (12.5s to fill Player's 500 MaxHealth from empty) to 100 (5s to fill),
-        // chosen by the user from a set of options as "接近『快速』的上限" - still a visibly
-        // filling bar, not an instant snap-to-full. energyPerSecond untouched (out of scope).
+        // 2026-08-19 ("幫我把泉水的生命每秒回復量增加") - 100/sec (5s to fill the player's 500 max).
         [SerializeField] private float healPerSecond = 100f;
         [SerializeField] private float energyPerSecond = 40f;
-
-        // 2026-08-20, explicit user request ("請讓泉水點也支援回復體力條") - flight energy
-        // ("體力條") is a SEPARATE UltimateEnergy instance from the ultimate skill's own
-        // ("能量條" - see CharacterMovement.FlightEnergy's own comment for why a plain
-        // GetComponentInParent<UltimateEnergy>() can't tell the two apart). Its own rate, not
-        // reusing energyPerSecond - flight energy's max (500) is 5x the ultimate skill's (100),
-        // so the same flat rate would fill 5x slower and no longer read as "快速". Picked to match
-        // this class's own established "5 seconds to fill from empty" pace (healPerSecond's own
-        // comment: 100/sec fills Player's 500 MaxHealth in 5s) - 500 flight energy / 100 per
-        // second = the same 5s fill time.
+        // Flight energy's max (500) is 5x the skill meters' (100), so it needs its own faster rate
+        // to still read as "快速" (500 / 100 per second = the same 5s fill time).
         [SerializeField] private float flightEnergyPerSecond = 100f;
 
-        private Health _playerHealth;
-        private UltimateEnergy _playerEnergy;
-        private UltimateEnergy _playerFlightEnergy;
+        private sealed class Occupant
+        {
+            public GameObject Root;
+            public Health Health;
+            public UltimateEnergy FlightEnergy;         // may be null
+            public readonly List<UltimateEnergy> OtherEnergies = new List<UltimateEnergy>();
+        }
+
+        // Keyed by the character root (the GameObject carrying PlayerInputProvider) so re-entering
+        // an overlapping trigger collider doesn't stack duplicates.
+        private readonly Dictionary<GameObject, Occupant> _occupants = new Dictionary<GameObject, Occupant>();
 
         private void Reset()
         {
@@ -58,43 +60,69 @@ namespace Live2DAction.World
 
         private void OnTriggerEnter(Collider other)
         {
-            if (other.GetComponentInParent<PlayerInputProvider>() == null)
+            PlayerInputProvider input = other.GetComponentInParent<PlayerInputProvider>();
+            if (input == null)
             {
                 return;
             }
 
-            _playerHealth = other.GetComponentInParent<Health>();
-            _playerEnergy = other.GetComponentInParent<UltimateEnergy>();
-            _playerFlightEnergy = other.GetComponentInParent<CharacterMovement>()?.FlightEnergy;
+            GameObject root = input.gameObject;
+            if (_occupants.ContainsKey(root))
+            {
+                return;
+            }
+
+            var occ = new Occupant
+            {
+                Root = root,
+                Health = root.GetComponentInChildren<Health>(),
+                FlightEnergy = root.GetComponent<CharacterMovement>()?.FlightEnergy,
+            };
+            foreach (UltimateEnergy energy in root.GetComponentsInChildren<UltimateEnergy>(true))
+            {
+                if (energy != occ.FlightEnergy)
+                {
+                    occ.OtherEnergies.Add(energy);
+                }
+            }
+            _occupants[root] = occ;
         }
 
         private void OnTriggerExit(Collider other)
         {
-            if (other.GetComponentInParent<PlayerInputProvider>() == null)
+            PlayerInputProvider input = other.GetComponentInParent<PlayerInputProvider>();
+            if (input == null)
             {
                 return;
             }
-
-            _playerHealth = null;
-            _playerEnergy = null;
-            _playerFlightEnergy = null;
+            _occupants.Remove(input.gameObject);
         }
 
         private void Update()
         {
-            if (_playerHealth != null && !_playerHealth.IsDead)
+            if (_occupants.Count == 0)
             {
-                _playerHealth.Heal(healPerSecond * Time.deltaTime);
+                return;
             }
 
-            if (_playerEnergy != null)
+            float dt = Time.deltaTime;
+            foreach (Occupant occ in _occupants.Values)
             {
-                _playerEnergy.AddEnergy(energyPerSecond * Time.deltaTime);
-            }
-
-            if (_playerFlightEnergy != null)
-            {
-                _playerFlightEnergy.AddEnergy(flightEnergyPerSecond * Time.deltaTime);
+                if (occ.Health != null && !occ.Health.IsDead)
+                {
+                    occ.Health.Heal(healPerSecond * dt);
+                }
+                if (occ.FlightEnergy != null)
+                {
+                    occ.FlightEnergy.AddEnergy(flightEnergyPerSecond * dt);
+                }
+                for (int i = 0; i < occ.OtherEnergies.Count; i++)
+                {
+                    if (occ.OtherEnergies[i] != null)
+                    {
+                        occ.OtherEnergies[i].AddEnergy(energyPerSecond * dt);
+                    }
+                }
             }
         }
     }

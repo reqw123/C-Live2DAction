@@ -12,36 +12,41 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 59ea5dc3f3838844184a37591fd23b3a, type: 3}
   m_Name: Wushi_Tuning
   m_EditorClassIdentifier: 
-  alertRange: 5
+  alertRange: 6
   phaseThreshold: 0.5
-  globalRestPhase1MinSeconds: 0.35
-  globalRestPhase1MaxSeconds: 0.5
-  globalRestPhase2MinSeconds: 0.25
-  globalRestPhase2MaxSeconds: 0.4
-  majorAttackExtraRestMinSeconds: 0.5
-  majorAttackExtraRestMaxSeconds: 1
-  approachDecelerationDistance: 0.5
-  attackReadinessBufferMinSeconds: 0.2
-  attackReadinessBufferMaxSeconds: 0.35
-  walkSpeed: 3
-  runSpeed: 6
+  globalRestPhase1MinSeconds: 0.05
+  globalRestPhase1MaxSeconds: 0.15
+  globalRestPhase2MinSeconds: 0.03
+  globalRestPhase2MaxSeconds: 0.08
+  majorAttackExtraRestMinSeconds: 0.1
+  majorAttackExtraRestMaxSeconds: 0.3
+  attackRotationRecoverySeconds: 6
+  attackRotationRecentFactor: 0.15
+  attackRecoveryTailCutNormalized: 2
+  approachDecelerationDistance: 0.35
+  attackReadinessBufferMinSeconds: 0.05
+  attackReadinessBufferMaxSeconds: 0.12
+  walkSpeed: 5.5
+  runSpeed: 7.5
   unsteadyWalkSpeed: 1.2
-  rotationSpeedDegrees: 360
+  rotationSpeedDegrees: 520
   decisionIntervalSeconds: 0.2
-  decisionIntervalPhase1MinSeconds: 0.25
-  decisionIntervalPhase1MaxSeconds: 0.45
-  decisionIntervalPhase2MinSeconds: 0.15
-  decisionIntervalPhase2MaxSeconds: 0.3
+  decisionIntervalPhase1MinSeconds: 0.05
+  decisionIntervalPhase1MaxSeconds: 0.12
+  decisionIntervalPhase2MinSeconds: 0.03
+  decisionIntervalPhase2MaxSeconds: 0.08
   postureUnsteadyEnterFraction: 0.75
   postureUnsteadyExitFraction: 0.6
   postureBreakDurationMinSeconds: 3
   postureBreakDurationMaxSeconds: 3
   postureRestoreOnRecover: 0.2
+  postureBrokenGroundDropOffset: 0.4
   postureRegenDelaySeconds: 2
   postureRegenPerSecond: 5
-  postureKneelNormalizedTime: 0.5
+  postureKneelNormalizedTime: 0.75
   reviveDelaySeconds: 5
-  permanentDeath: 1
+  permanentDeath: 0
+  standUpSeconds: 1.8
   vanishTriggerSeconds: 999999
   vanishTrackDurationSeconds: 3.5
   vanishWarningMinSeconds: 0.6
@@ -72,6 +77,7 @@ MonoBehaviour:
   ultimateRepositionTimeoutSeconds: 3
   ultimateApproachSpeed: 6.5
   ultimateLeapSpeed: 9
+  ultimateLeapJumpSpeed: 7
   ultimateStartupMinSeconds: 1.5
   ultimateStartupMaxSeconds: 2
   ultimateTrackingLockSeconds: 0.5
@@ -79,3 +85,18 @@ MonoBehaviour:
   postUltimateBufferSeconds: 1.5
   postVanishBufferSeconds: 1
   breakdanceTriggerSeconds: 15
+  leapSlamTriggerSeconds: 50
+  leapSlamWindupSeconds: 1
+  leapSlamExtraHeight: 30
+  leapSlamHeightRiseStartNormalized: 0.05
+  leapSlamHeightPeakNormalized: 0.3
+  leapSlamHeightFallEndNormalized: 0.53
+  leapSlamLandingOffset: 2
+  leapSlamLandingGroundedOffset: 0
+  leapSlamTrackUntilNormalized: 0.45
+  leapSlamMaxTrackSpeed: 30
+  leapSlamTeleportToLanding: 1
+  leapSlamFlightSeconds: 1.3
+  tooCloseDistance: 1.6
+  tooCloseDurationSeconds: 2
+  forcedAttackStandoffMargin: 0.6

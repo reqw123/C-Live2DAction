@@ -32,6 +32,19 @@ namespace Live2DAction.Characters
         // moveSpeed can't drive the parameter past what any blend state was designed for.
         [SerializeField] private float maxAnimatorSpeed = 2f;
 
+        // 2026-08-29, user request ("移動速度太慢了 *1.5倍 腳步要配合") - the locomotion blend tree's
+        // top clip (NewRun) is authored for maxAnimatorSpeed units/s; once a character's own
+        // ground speed is pushed past that, the Speed parameter just clamps and the run clip
+        // keeps its authored cadence while the body translates faster, so the feet visibly slide.
+        // When enabled, the Animator's playback rate is scaled up by the overspeed ratio while
+        // grounded (capped at maxStrideRate) so the stride tracks the real translation speed.
+        // Opt-in - left off for the player, whose moveSpeed already sits at the blend tree's
+        // authored top. Only touched while grounded and not flying, and the overspeed ratio
+        // naturally falls back to 1 whenever the character is stationary (attacking, staggered,
+        // idle), so attack/hit clips are never sped up.
+        [SerializeField] private bool syncStrideToGroundSpeed;
+        [SerializeField] private float maxStrideRate = 2.5f;
+
         private ICharacterSpeedSource _speedSource;
         private int _speedParameterHash;
 
@@ -93,11 +106,30 @@ namespace Live2DAction.Characters
             // uses) instead of Fall, while a real fall (not holding flight, e.g. after energy runs
             // out or a knockback) still correctly shows Fall.
             animator.SetBool(GroundedParameterHash, _speedSource.IsGrounded || _speedSource.IsFlying);
+
+            if (syncStrideToGroundSpeed)
+            {
+                bool grounded = _speedSource.IsGrounded && !_speedSource.IsFlying;
+                animator.speed = ComputeStrideRate(_speedSource.CurrentHorizontalSpeed, maxAnimatorSpeed, maxStrideRate, grounded);
+            }
         }
 
         public static float ComputeSpeedParameter(float currentSpeed, float maxAnimatorSpeed)
         {
             return Mathf.Clamp(currentSpeed, 0f, maxAnimatorSpeed);
+        }
+
+        // 1 (normal playback) unless the character is moving along the ground faster than the
+        // blend tree's authored top clip - then the ratio, capped at maxRate. Never below 1:
+        // a slower-than-authored walk is what the blend tree itself is for.
+        public static float ComputeStrideRate(float currentSpeed, float authoredTopSpeed, float maxRate, bool grounded)
+        {
+            if (!grounded || authoredTopSpeed <= 0.01f)
+            {
+                return 1f;
+            }
+
+            return Mathf.Clamp(currentSpeed / authoredTopSpeed, 1f, maxRate);
         }
     }
 }

@@ -1,0 +1,115 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: PW2_Attack_ChargeSlam
+  m_EditorClassIdentifier: 
+  attackId: ChargeSlam
+  clipName: PW2_ChargeSlam
+  minDistance: 0
+  maxDistance: 2.5
+  maxAngleDegrees: 55
+  cooldownSeconds: 4
+  selectionWeightPhase1: 20
+  selectionWeightPhase2: 22
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.4
+  recoverySeconds: 0.5
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  attackPitchDegrees: 0
+  startupTracking: 1
+  lateTracking: 0.15
+  trackingDropNormalizedTime: 0.3
+  healthDamageIsPercentOfTargetMax: 0
+  baseHealthDamage: 26
+  basePoiseDamage: 20
+  knockbackForce: 10
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 1
+  rootMotionStartNormalized: 0.05
+  rootMotionEndNormalized: 0.9
+  rootMotionScale: 1
+  rootMotionAimAtTarget: 1
+  rootMotionAimGapMeters: 1
+  rootMotionAimMaxMeters: 5
+  rootMotionClipForwardMeters: 0.84
+  hitWindows:
+  - part: 0
+    startNormalized: 0.36
+    endNormalized: 0.52
+    damageMultiplier: 1
+    deflectReaction: 0
+    measured: 1
+  - part: 1
+    startNormalized: 0.36
+    endNormalized: 0.52
+    damageMultiplier: 1
+    deflectReaction: 0
+    measured: 1
+  attackMotion:
+    moveStartNormalized: 0.1
+    moveEndNormalized: 0.5
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 0
+  lungeTargetGapMeters: 1.2
+  lungeMaxMeters: 7
+  cancelClipBodyDrift: 0
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 0
+  designNotes: "2026-08-29, user request (Meshy_AI_Man_in_Black_at_the_P_biped '_biped.zip',
+    'Scene' take, 2.07s, Humanoid retarget onto \u5C41\u5B69\u738B). Forward charging
+    double-palm strike. Measured offline (x1.5 rig). LARGE baked forward travel (root
+    ~6m over t=0-0.5); motion-EXTRACTED / useRootMotion=0. Wired window t=0.38-0.50:
+    both hands thrust forward, Lh ~0.56m local at v10, Y ~1.7. maxDistance conservative
+    1.15. FULL charge = useRootMotion=1 + root-motion-trap fix - follow-up. First-pass:
+    26 HP / 20 poise / knockback 10 (shove) / no launch / cooldown 5. m_Speed 1.2.\n\n2026-08-29
+    follow-up (\u4F7F\u7528\u8005:\u300C\u9019\u5169\u62DB\u61C9\u8A72\u90FD\u662F\u6709\u4F4D\u79FB\u7684
+    \u76EE\u524D\u6C92\u770B\u5230\u300D): useRootMotion=1. BossAnimatorRootMotionRelay
+    on \u5C41\u5B69\u738B/Visual (empty OnAnimatorMove + applyRootMotion=1) makes
+    Animator.deltaPosition valid; ApplyMotion also gated on CurrentState==Attack
+    (root-motion trap fix); deltaPosition.y zeroed. rm window 0.05-0.45 (cut early
+    - full clip ~7m@1.5x). Distances/windows first-pass, user tunes."

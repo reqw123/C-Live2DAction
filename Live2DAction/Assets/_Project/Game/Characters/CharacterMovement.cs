@@ -31,6 +31,15 @@ namespace Live2DAction.Characters
         // to derive the "correct" speed from and must be tuned by eye instead.
         [SerializeField] private float moveSpeed = 2f;
 
+        // 2026-08-30, explicit user request ("設計像原神那樣的 切換式 跑步/慢走 沉浸式體驗") - Left Alt
+        // toggles a persistent walk mode; while it's on, ground movement uses this instead of
+        // moveSpeed. Maya's Locomotion blend tree (CharacterAnimatorLink) is fed the real
+        // translation speed, and NewWalk is its clip for anything up to 0.8, so a lower speed here
+        // makes the walk animation come out on its own - no Animator change needed. 0.9 ~= 45% of
+        // the run pace (a Genshin-ish ratio); the primary feel knob - if the feet slide because
+        // NewWalk is authored for a faster pace, raise this toward that pace.
+        [SerializeField] private float walkSpeed = 0.9f;
+
         // Eased (SmoothDamp/SmoothDampAngle) rather than constant-rate (MoveTowards/
         // RotateTowards): a constant rate accelerates linearly and then cuts off the instant
         // it reaches the target, which reads as mechanical - reported as "movement doesn't
@@ -255,6 +264,7 @@ namespace Live2DAction.Characters
         private CharacterController _controller;
         private Vector3 _horizontalVelocity;
         private bool _isFlying;
+        private bool _walkMode; // Genshin-style walk/run toggle (Left Alt); ground movement only
         private float _pitch;
         private float _pitchAngularVelocity;
         private float _desiredPitchDegrees;
@@ -303,12 +313,33 @@ namespace Live2DAction.Characters
 
         public float MoveSpeed => moveSpeed;
         public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
+
+        // 2026-08-31, user request ("把滑鼠右鍵改成武士刀防禦") - an external, transient scale on
+        // ground horizontal speed (1 = no effect, the default). PlayerGuard drives it down while
+        // a block is held so you can only shuffle, not run, with your guard up - the same "small
+        // settable knob another component owns" idiom as ApplyUpwardLaunch / UltimateDamageMultiplier.
+        // Only affects the grounded desiredVelocity; flight speed and dodge lunges are untouched.
+        public float ExternalSpeedMultiplier { get; set; } = 1f;
         public DodgePhase CurrentDodgePhase => _dodgeState != null ? _dodgeState.Phase : DodgePhase.Idle;
         public bool IsDodgeInvulnerable => _dodgeState != null && _dodgeState.IsInvulnerable;
 
         // Exposed for CharacterAnimatorLink (drives the Animator's existing but previously-
         // unused "Fly" bool) and for a wing visual to toggle itself on/off.
         public bool IsFlying => _isFlying;
+
+        // 2026-08-30, walk/run toggle - true while the persistent walk mode is on (and on the
+        // ground). Exposed for any future "slow down and take it in" polish (camera pull-in / FOV),
+        // same "exposed for something else to react to" idiom as IsFlying / IsDescending.
+        public bool IsWalking => _walkMode && !_isFlying;
+
+        // Pure toggle rule, extracted so it's unit-testable without a CharacterController:
+        // flying always forces run mode (so you land in run); otherwise a press flips it and it
+        // persists.
+        public static bool NextWalkMode(bool current, bool togglePressed, bool isFlying)
+        {
+            if (isFlying) return false;
+            return togglePressed ? !current : current;
+        }
 
         // 2026-08-25 - see ICharacterSpeedSource.IsGrounded's own comment (the Grounded
         // Animator bool had no writer at all until this). _controller.isGrounded is already
@@ -441,6 +472,11 @@ namespace Live2DAction.Characters
             bool flyDescendHeld = !staggered && inputCommand != null && inputCommand.FlyDescendPressed;
             UpdateFlightState(flyHeld);
 
+            // 2026-08-30, walk/run toggle (Left Alt). Flight force-clears it so you always land in
+            // run mode; otherwise a tap flips it and it persists. Only affects ground speed below.
+            bool walkTogglePressed = inputCommand != null && inputCommand.WalkTogglePressed;
+            _walkMode = NextWalkMode(_walkMode, walkTogglePressed, _isFlying);
+
             // Boost (Docs/FLIGHT_SYSTEM_DESIGN.md 2.3) - a dedicated held key, only while
             // genuinely Flying (not Glide - see boostSpeedMultiplier's own field comment).
             bool boostHeld = !staggered && inputCommand != null && inputCommand.BoostPressed;
@@ -511,7 +547,14 @@ namespace Live2DAction.Characters
                 // this from "Flying or Gliding" to Flying alone - Glide itself has since been
                 // removed entirely (see UpdateFlightState's own comment), so a plain fall now
                 // correctly uses ground moveSpeed for horizontal control, not flight speed.
-                float baseSpeed = _isFlying ? flightMoveSpeed : moveSpeed;
+                float baseSpeed = _isFlying ? flightMoveSpeed : (_walkMode ? walkSpeed : moveSpeed);
+                // ExternalSpeedMultiplier (2026-08-31): guard-up shuffle. Only bites on the
+                // ground - a held block can't happen mid-flight, and multiplying it into
+                // flightMoveSpeed too would be a silent surprise if that ever changed.
+                if (!_isFlying)
+                {
+                    baseSpeed *= Mathf.Max(0f, ExternalSpeedMultiplier);
+                }
                 Vector3 desiredVelocity = desiredDirection * (baseSpeed * boostMultiplier * diveMultiplier);
                 float smoothTime = desiredVelocity.sqrMagnitude > 0.0001f ? accelerationSmoothTime : decelerationSmoothTime;
                 _horizontalVelocity = Vector3.SmoothDamp(_horizontalVelocity, desiredVelocity, ref _horizontalVelocitySmoothDampRef, smoothTime);

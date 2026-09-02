@@ -33,8 +33,26 @@ namespace Live2DAction.Input
         // as long as the button is down, not just the instant it's pressed), FirePressed is a
         // single-frame edge trigger like AttackPressed/DodgePressed (one shot per press, not one
         // shot per frame held).
+        //
+        // 2026-08-31, user request ("移除射擊系統和步槍資產可以保留到以後") - the shooting mechanic
+        // is retired: right mouse now drives GuardPressed below instead, and PlayerInputProvider
+        // hard-wires both of these to false. The members stay on the interface so RangedWeapon.cs
+        // and every test stub that implements them still compile (the asset + scripts are kept on
+        // disk for later), they're just never true in play anymore.
         bool AimPressed { get; }
         bool FirePressed { get; }
+
+        // 2026-08-31, user request ("把滑鼠右鍵改成武士刀防禦") - a HELD signal (isPressed, like
+        // AimPressed was): the katana guard stays up for as long as right mouse is down. A DEFAULT
+        // implementation (false) rather than a bare member, same reasoning as WalkTogglePressed
+        // below: guarding is player-only (AI never blocks - the enemies have no guard mechanic),
+        // so every AI + test stub keeps compiling unchanged and only PlayerInputProvider overrides it.
+        bool GuardPressed => false;
+
+        // 2026-09-01, Sekiro-style deflect system - the EDGE of the guard button (wasPressedThisFrame),
+        // used to open the parry window exactly once per press. Held GuardPressed can't refresh it.
+        // DEFAULT false, same player-only reasoning as GuardPressed.
+        bool GuardPressedThisFrame => false;
 
         // 2026-08-23, explicit user request ("V鍵切換成第一視角(機制與右鍵瞄準同理)") - an edge
         // trigger (one toggle per press, like AttackPressed/DodgePressed) rather than a held
@@ -49,5 +67,14 @@ namespace Live2DAction.Input
         // comments for the actual FOV math.
         bool ZoomInPressed { get; }
         bool ZoomOutPressed { get; }
+
+        // 2026-08-30, explicit user request ("設計像原神那樣的 切換式 跑步/慢走 沉浸式體驗") - an
+        // edge trigger (one toggle per press, like ViewTogglePressed) that flips a persistent
+        // walk/run mode in CharacterMovement. A DEFAULT implementation (false) rather than a bare
+        // member: this is player-only (AI never walk-toggles, same as FlyPressed/ViewTogglePressed),
+        // so every AI + test stub keeps compiling unchanged and only PlayerInputProvider overrides
+        // it. When accessed through this interface, a class that implements it (PlayerInputProvider)
+        // still wins; only implementers that DON'T provide it fall back to this false.
+        bool WalkTogglePressed => false;
     }
 }

@@ -69,7 +69,11 @@
 | `Docs/GAME_DESIGN_DOCUMENT.md` | 玩法、角色能力、關卡流程、上市範圍 |
 | `Docs/TECHNICAL_DESIGN.md` | 系統架構、狀態機、資料流 |
 | `Docs/FLIGHT_SYSTEM_DESIGN.md` / `Docs/FLOATING_ISLAND_GUIDE.md` | 飛行系統 / 空島關卡 |
+| `Docs/CAT_COMBAT_DESIGN.md` | 貓咪近戰機制設計（連段/蓄力/撲擊/空中攻擊/命中反饋/敵貓，切片 2） |
+| `Docs/COMBAT_SYSTEM_SNAPSHOT.md` | 玩家 vs 武士戰鬥系統現況攤平（物件/元件值、傷害管線、架勢、隻狼彈反、Boss FSM、每招數據表、已知限制）— 給 AI 分析用 |
+| `Docs/WUSHI_COMBAT_ENGINEERING_SPEC.md` | 外部 AI 依 SNAPSHOT 產出的 9 項戰鬥系統改造工程規格（DeflectReaction/Tap Guard/旋轉 Sweep/玩家 Sweep/Boss 空間/格擋架勢/處決生命節點/特殊招式排程/最終調校）— 分階段實作藍圖，進度看 CHANGELOG |
 | `Docs/ASSET_LICENSES.md` | 每個外部資產的授權追蹤（含 DoNotShip 清單） |
+| `Docs/LARGE_ASSETS.md` | 超過 GitHub 100 MB 上限、排除版控的大型檔案清單與補回方法 |
 | `Docs/DEVELOPMENT_ROADMAP.md` | Phase/Milestone 劃分與驗收標準 |
 | `Docs/TEST_PLAN.md` | 測試範圍與方法 |
 | `Docs/BUILD_RELEASE_GUIDE.md` | Build 與發布流程、發布前檢查清單 |

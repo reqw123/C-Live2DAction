@@ -49,6 +49,12 @@ namespace Live2DAction.Targeting
         // already deactivates the GameObject on death, so this covers "died" for free without
         // TargetLockController needing to know about Health at all), or has drifted past
         // breakRange.
+        //
+        // 2026-08-29, user report ("武士在起飛後 玩家如果是鎖定視角會瞬間丟失") - the break check is
+        // now HORIZONTAL distance only. A boss that leaps or flies straight up is still "right
+        // there" and gaining altitude alone must not drop the lock; before, a ~15-20m leap over a
+        // boss already near the old 20m 3D breakRange tipped it past the edge and the lock
+        // vanished mid-attack. Horizontal-only matches how action games keep lock through a jump.
         public static bool IsStillValid(Vector3 fromPosition, Transform target, float breakRange)
         {
             if (target == null || !target.gameObject.activeInHierarchy)
@@ -56,7 +62,9 @@ namespace Live2DAction.Targeting
                 return false;
             }
 
-            return Vector3.Distance(fromPosition, target.position) <= breakRange;
+            Vector3 horizontalOffset = target.position - fromPosition;
+            horizontalOffset.y = 0f;
+            return horizontalOffset.magnitude <= breakRange;
         }
 
         // Converts a look-from-position -> target-position direction into the same

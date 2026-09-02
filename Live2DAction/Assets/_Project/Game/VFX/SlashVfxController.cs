@@ -88,6 +88,18 @@ namespace Live2DAction.VFX
                 longestDuration = Mathf.Max(longestDuration, ownDuration);
             }
 
+            // 2026-08-31 (追加78): the R-ultimate cast VFX (PlayerUltimateAura / CatDarkQi) now
+            // carry an AudioSource whose clip was cut from the source video and can outlast the
+            // visual (a fire pillar's roar tails past the flame). Keep the GameObject - and so
+            // the AudioSource - alive until the sound has also finished, otherwise Destroy()
+            // would cut it off. Null-safe: prefabs with no AudioSource are unaffected.
+            AudioSource audioSource = GetComponent<AudioSource>();
+            if (audioSource != null && audioSource.clip != null)
+            {
+                float pitch = Mathf.Approximately(audioSource.pitch, 0f) ? 1f : Mathf.Abs(audioSource.pitch);
+                longestDuration = Mathf.Max(longestDuration, audioSource.clip.length / pitch);
+            }
+
             // Small safety margin on top of the slowest child system's own playback time, so a
             // trailing spark/smoke particle never gets cut off mid-fade by Destroy() firing a
             // frame early.

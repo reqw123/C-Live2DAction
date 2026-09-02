@@ -1,0 +1,110 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: PW2_Attack_ScissorTakedown
+  m_EditorClassIdentifier: 
+  attackId: ScissorTakedown
+  clipName: PW2_ScissorTakedown
+  minDistance: 4
+  maxDistance: 11
+  maxAngleDegrees: 55
+  cooldownSeconds: 7
+  selectionWeightPhase1: 0.5
+  selectionWeightPhase2: 0.5
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 1
+  startupSeconds: 0.4
+  recoverySeconds: 0.7
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  attackPitchDegrees: 15
+  startupTracking: 1
+  lateTracking: 0.25
+  trackingDropNormalizedTime: 0.4
+  healthDamageIsPercentOfTargetMax: 0
+  baseHealthDamage: 38
+  basePoiseDamage: 200
+  knockbackForce: 11
+  launchesTarget: 1
+  commandGrab: 1
+  commandGrabNormalized: 0.45
+  commandGrabRadius: 2.5
+  interruptible: 1
+  superArmorDuringActiveWindows: 1
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 0.72
+  rootMotionScale: 1
+  rootMotionAimAtTarget: 0
+  rootMotionAimGapMeters: 0.6
+  rootMotionAimMaxMeters: 9
+  rootMotionClipForwardMeters: 4.5
+  hitWindows: []
+  attackMotion:
+    moveStartNormalized: 0.12
+    moveEndNormalized: 0.45
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 1
+  lungeTargetGapMeters: 0.6
+  lungeMaxMeters: 13
+  cancelClipBodyDrift: 0
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 0
+  designNotes: '2026-09-02 (續71) HEAD-SCISSOR COMMAND GRAB. Meshy PW2 Jumping_Head_Scissor_Takedown
+    (3.67s). 續69 collider window never connected (feet ~2m up when inverted). 續70 used
+    commandGrab + useRootMotion - but the clip bakes ~380deg of body spin into the ROOT
+    (avgAngularSpeed 1.8), so applying deltaPosition (position-only) made the forward
+    travel curl through the spin and cancel out => 屁孩王 "spun in place in the air".
+    續71: useRootMotion OFF, code-driven lunge instead - lungeDistanceFromTargetGap=1,
+    lungeTargetGapMeters 0.6, lungeMaxMeters 13, attackMotion nt 0.12-0.45. BeginAttack
+    locks the gap at cast and drives the root straight along the committed direction, so
+    the clip''s spin stays purely visual. commandGrab=1: BossStateMachine does ONE
+    horizontal proximity test at commandGrabNormalized 0.45 (the clinch), within
+    commandGrabRadius 2.5m applies this asset''s numbers directly: baseHealthDamage 38,
+    basePoiseDamage 200 (guaranteed stagger = 跩起來/held), knockbackForce 11 +
+    launchesTarget 1 (up-launch + hard fling = 反向甩出擊飛, along the commit dir).
+    lateTracking 0.25 + trackingDrop 0.4 keep the clinch yawed at the player; pitch 15
+    leans down. Gap-closer path now also accepts LungeDistanceFromTargetGap attacks (not
+    just UseRootMotion). 屁孩王-only. NO true socket grab-lock (player knocked, not
+    parented) - bigger follow-up. NEEDS PLAY TUNING (radius / grab nt / lunge speed).'

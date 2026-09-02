@@ -43,6 +43,13 @@ Shader "Live2DAction/VFX/SlashFlipbook"
         // these two values - plain floats instead, driven by script.
         _SrcBlend ("Src Blend Factor (1=One, 5=SrcAlpha)", Float) = 1
         _DstBlend ("Dst Blend Factor (1=One, 10=OneMinusSrcAlpha)", Float) = 1
+
+        // 2026-08-31 (追加79): default 4 = LEqual (normal depth test, unchanged for every
+        // existing material). A "wrap the body" aura layer sets this to 8 (Always) so the flame
+        // draws over the character mesh instead of being clipped behind it - see
+        // PlayerUltimateAuraVfxSetup's front-flame layer. Same plain-float-driven-by-script
+        // pattern as _SrcBlend/_DstBlend (no ShaderGUI in this project).
+        _ZTest ("ZTest (4=LEqual, 8=Always)", Float) = 4
     }
 
     SubShader
@@ -51,6 +58,7 @@ Shader "Live2DAction/VFX/SlashFlipbook"
 
         Cull Off
         ZWrite Off
+        ZTest [_ZTest]
         Blend [_SrcBlend] [_DstBlend]
 
         Pass

@@ -34,8 +34,66 @@ namespace Live2DAction.Targeting
                  "still stopping short of 1.0 for that reason).")]
         [SerializeField, Range(0f, 0.95f)] private float cameraFrameBias = 0f;
 
+        // 2026-08-28, explicit user request ("如何像隻狼那樣的動作遊戲，畫面中同時能看到玩家與大型boss，
+        // 並且以玩家視角能夠清楚看到雙方動作...要從玩家與武士的體積來看") - when set, the camera runs a
+        // dedicated locked-duel framing while THIS target is locked (see
+        // ThirdPersonCameraController.UpdateDuelCamera): it computes yaw/pitch/distance/look-at
+        // point each frame from the player's and this target's real volumes so BOTH stay framed
+        // and readable, instead of the crude fixed cameraDistanceMultiplier/cameraFrameBias above.
+        // Those two are left as the fallback for regular (non-boss) targets that don't set this.
+        [Tooltip("Big-boss locked-duel camera: computes framing from both volumes so player + boss " +
+                 "stay on screen and readable. Overrides cameraDistanceMultiplier/cameraFrameBias " +
+                 "for this target. Leave off for regular enemies.")]
+        [SerializeField] private bool useDuelCamera = false;
+
+        [Tooltip("This target's full standing height in world units (feet to top of head) - the " +
+                 "duel camera uses it to fit the boss in frame. 0 (or negative) = auto-measure from " +
+                 "renderer bounds at Awake, so a new boss needs no manual number. Set an explicit " +
+                 "value to override (武士 = 4.1) when the auto measure is off - e.g. a boss whose " +
+                 "SkinnedMeshRenderer bounds run large, or one that spends its idle pose crouched.")]
+        [SerializeField] private float duelTargetHeight = 0f;
+
+        // Cached auto-measured height, only computed (once, lazily) when duelTargetHeight <= 0.
+        private float _autoDuelHeight = -1f;
+
         public Transform AimPoint => aimPoint != null ? aimPoint : transform;
         public float CameraDistanceMultiplier => cameraDistanceMultiplier;
         public float CameraFrameBias => cameraFrameBias;
+        public bool UseDuelCamera => useDuelCamera;
+
+        public float DuelTargetHeight
+        {
+            get
+            {
+                if (duelTargetHeight > 0.1f)
+                {
+                    return duelTargetHeight;
+                }
+                if (_autoDuelHeight < 0f)
+                {
+                    _autoDuelHeight = MeasureHeight();
+                }
+                return _autoDuelHeight;
+            }
+        }
+
+        // Renderer-bounds union along Y. Sanity-clamped so a degenerate/stale SkinnedMeshRenderer
+        // bounds (a known hazard in this project - see Docs/KNOWN_ISSUES.md) can't feed an absurd
+        // number into the camera framing; a clearly-bad measure falls back to 2.
+        private float MeasureHeight()
+        {
+            Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0)
+            {
+                return 2f;
+            }
+            Bounds b = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++)
+            {
+                b.Encapsulate(renderers[i].bounds);
+            }
+            float h = b.size.y;
+            return (h < 0.3f || h > 60f) ? 2f : h;
+        }
     }
 }

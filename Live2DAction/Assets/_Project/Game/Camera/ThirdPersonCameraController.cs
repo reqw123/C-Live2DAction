@@ -142,6 +142,19 @@ namespace Live2DAction.CameraSystem
         // the desired/unobstructed baseline.
         [SerializeField] private float flightDistanceMultiplier = 1.4f;
 
+        // 2026-08-30, explicit user request ("相機「慢下來看風景」的拉近/FOV") - while the walk
+        // toggle is on (CharacterMovement.IsWalking, Left Alt) the third-person framing eases to a
+        // subtly closer, slightly narrower "slow down and take it in" view. Non-destructive:
+        // multiplies `distance` and offsets the base FOV, never overwrites either (same convention
+        // as flightDistanceMultiplier). Third person only - aiming/duel override distance & FOV
+        // anyway, and IsWalking is already false whenever flying.
+        [SerializeField] private float walkDistanceMultiplier = 0.82f;
+        [SerializeField] private float walkFieldOfViewDelta = -6f;
+        // Lerp-per-frame easing factor (not a deg/s rate), so flipping the toggle eases the camera
+        // in/out over ~0.4s instead of snapping - same idiom as autoCenterSpeed/descendAutoPitchSpeed.
+        [SerializeField] private float walkFramingBlendSpeed = 5f;
+        private float _walkFramingBlend;
+
         // 2026-08-12: real bug report ("很靠近敵人時角色1突然消失，畫面定格") persisted even
         // after fixing the CharacterController-climbing root cause and raising distance to 2 -
         // this project genuinely never had any camera collision avoidance (documented as a
@@ -258,8 +271,85 @@ namespace Live2DAction.CameraSystem
         [SerializeField] private float minPitch = -40f;
         [SerializeField] private float maxPitch = 70f;
 
+        // 2026-08-28, explicit user request (Sekiro-style locked-duel camera - see
+        // LockOnTarget.UseDuelCamera). Only active in third person while locked onto a target whose
+        // LockOnTarget has UseDuelCamera on; computes yaw/pitch/distance/look-at each frame from the
+        // player's and the boss's real volumes so BOTH stay framed and readable. Every other camera
+        // path is untouched.
+        [Header("Locked-duel camera (big bosses - LockOnTarget.UseDuelCamera)")]
+        [Tooltip("Player's standing height in world units - feet to head. Used for framing math.")]
+        [SerializeField] private float duelPlayerHeight = 1.3f;
+        [Tooltip("Extra headroom multiplier on the combined player+boss vertical span the camera " +
+                 "must fit. 1 = exactly fits, 1.3 = ~30% breathing room top and bottom.")]
+        [SerializeField] private float duelFrameMargin = 1.3f;
+        [Tooltip("0-1: where the camera's look-at point sits along the player->boss line. 0 = at " +
+                 "the player, 1 = at the boss. ~0.35 pushes the player toward the lower frame edge " +
+                 "(Sekiro) while the boss dominates.")]
+        [SerializeField, Range(0f, 0.8f)] private float duelLookBiasToBoss = 0.35f;
+        [Tooltip("Absolute cap (world units) on how far ahead of the player the look-at point may " +
+                 "sit, regardless of duelLookBiasToBoss - stops the player falling off the bottom " +
+                 "of the frame when the two are far apart.")]
+        [SerializeField] private float duelLookMaxAhead = 1.3f;
+        [Tooltip("Keep the player's feet at least this fraction of the frame in from the bottom edge.")]
+        [SerializeField, Range(0f, 0.3f)] private float duelPlayerBottomMargin = 0.08f;
+        [Tooltip("0-1: look-at height along the combined span (0 = span bottom, 1 = span top). " +
+                 "~0.4 keeps a tall boss's head in frame without dropping the player off the bottom.")]
+        [SerializeField, Range(0f, 1f)] private float duelLookHeightBias = 0.4f;
+        [Tooltip("How high the camera rides, as a blend from the player's head (0) to the top of " +
+                 "the framed span (1).")]
+        [SerializeField, Range(0f, 1f)] private float duelCamHeightBias = 0.35f;
+        [SerializeField] private float duelMinDistance = 5f;
+        [Tooltip("Fixed pull-back cap. The effective cap is the LARGER of this and " +
+                 "(boss height x duelMaxDistancePerHeight), so a much taller boss can pull the " +
+                 "camera back proportionally without this number being retuned.")]
+        [SerializeField] private float duelMaxDistance = 12f;
+        [SerializeField] private float duelMaxDistancePerHeight = 4f;
+        [Tooltip("When even the effective max distance can't fit the framing, the vertical FOV " +
+                 "widens (up to this) to compensate before anything gets cropped. Base FOV is " +
+                 "whatever the Camera component has.")]
+        [SerializeField] private float duelMaxFov = 85f;
+        [Tooltip("The duel camera guarantees at most this many world units ABOVE the look-at point " +
+                 "are in frame. A boss taller than that (a colossus / full-screen monster) has its " +
+                 "head crop off the top rather than the camera retreating forever - the player and " +
+                 "the boss's threatening lower body stay readable. Set high (e.g. 20) to always fit " +
+                 "the whole boss.")]
+        [SerializeField] private float duelMaxVisibleAboveLook = 7f;
+        [Tooltip("Player shouldn't fill more than this fraction of the vertical frame - stops the " +
+                 "camera from getting so close the near character dominates.")]
+        [SerializeField, Range(0.2f, 0.8f)] private float duelPlayerMaxFrameFraction = 0.5f;
+        [Tooltip("Degrees the player may still swing the camera off the boss direction with the " +
+                 "mouse before it's clamped; it eases back to centre when the mouse stops.")]
+        [SerializeField] private float duelYawMaxDeviation = 35f;
+        [SerializeField] private float duelPitchMaxDeviation = 18f;
+        [Tooltip("Degrees/sec the yaw eases back toward the boss direction when the mouse is idle.")]
+        [SerializeField] private float duelYawRecenterSpeed = 140f;
+        [Tooltip("How fast the computed pitch/distance ease in when a duel lock starts / the fight moves.")]
+        [SerializeField] private float duelSmoothSpeed = 6f;
+
+        // 2026-08-29, user report ("武士在起飛後 玩家如果是鎖定視角...視角不規則轉向") - when the boss
+        // leaps/flies high, its real Y fed the vertical-span / look-at / pitch math and the camera
+        // slammed up to fit a 15m+ span and point at the sky. Now the boss's height ABOVE the
+        // player is capped here for framing: the camera keeps tracking the boss's horizontal
+        // position with a stable, modest upward tilt while it's airborne, and snaps back to full
+        // framing when it lands. The lock-on indicator still shows the boss's true position.
+        [Tooltip("Locked-duel: cap the boss's height above the player used for framing, so a leap/flight up doesn't tilt the camera to the sky.")]
+        [SerializeField] private float duelMaxBossHeightAbovePlayer = 4.5f;
+        [Tooltip("Locked-duel: below this horizontal separation the boss counts as 'overhead' - yaw stops chasing it (would spin) and holds the last heading.")]
+        [SerializeField] private float duelOverheadSeparation = 3f;
+
         private float _yaw;
         private float _pitch;
+
+        // Duel-camera per-frame results, computed in UpdateDuelCamera and consumed by the distance,
+        // look-at-offset and FOV blocks further down LateUpdate.
+        private bool _duelActive;
+        private float _duelDistance;
+        private Vector3 _duelLookOffset;
+        private float _duelFov;
+        // Eased values so a duel lock doesn't snap the camera; -1 sentinel = "first duel frame, seed".
+        private float _duelSmoothedDistance = -1f;
+        private float _duelSmoothedPitch;
+        private bool _duelSmoothedPitchSeeded;
 
         // 2026-08-23, explicit user request ("V鍵切換成第一視角(機制與右鍵瞄準同理)") - a persistent
         // toggle (not a held state like AimPressed itself): pressing V flips this, and it stays
@@ -268,6 +358,14 @@ namespace Live2DAction.CameraSystem
         // true-first-person path - whichever is active, releasing/toggling off the OTHER one
         // still leaves you in first-person until BOTH are off.
         private bool _viewToggledFirstPerson;
+
+        // 2026-08-29, user report ("有時用 C 切到貓，玩家消失了只剩一把大劍裝飾品") - first person hides
+        // the player's Visual renderers every LateUpdate (SetOwnVisualHidden / SetAccessoryHidden).
+        // If this camera is SetActive-disabled while first person is active - CameraPossessionSwitcher
+        // does exactly that on the C swap to the cat - LateUpdate stops and those renderers are never
+        // re-enabled, leaving the player invisible with only firstPersonVisibleWeapon (the sword)
+        // showing. Tracked here so OnDisable can undo the hide.
+        private bool _firstPersonHideApplied;
 
         // 2026-08-23, real playtested bug ("我現在的play mode視角跑到了側面(第一人稱模式)") - _yaw is
         // free-look and only auto-centers behind the player while walking forward/back (see
@@ -333,6 +431,16 @@ namespace Live2DAction.CameraSystem
             {
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
+
+                // See _firstPersonHideApplied's own comment - if we go inactive mid-first-person
+                // (the C possession swap to the cat), un-hide the body/accessory we hid, or the
+                // player stays invisible for as long as you're the cat.
+                if (_firstPersonHideApplied)
+                {
+                    SetOwnVisualHidden(false);
+                    SetAccessoryHidden(firstPersonHiddenAccessory, false);
+                    _firstPersonHideApplied = false;
+                }
             }
         }
 
@@ -354,6 +462,12 @@ namespace Live2DAction.CameraSystem
             // auto-pitch block inside the isPlaying check right below can also read
             // targetMovement.IsDescending without a second lookup.
             CharacterMovement targetMovement = ResolveTargetMovement();
+
+            // 2026-08-30, walk immersion framing - eased 0..1 toward the walk-toggle state, then
+            // fed into the distance & FOV blocks further down. Edit-mode preview: IsWalking is
+            // always false, so this just holds at 0.
+            bool walkingNow = targetMovement != null && targetMovement.IsWalking;
+            _walkFramingBlend = StepBlend01(_walkFramingBlend, walkingNow, walkFramingBlendSpeed, Time.deltaTime);
 
             if (Application.isPlaying)
             {
@@ -479,6 +593,12 @@ namespace Live2DAction.CameraSystem
 
                     _yaw = ClampYawToFacingCone(_yaw, centerYaw, firstPersonMaxYawDeviation);
                 }
+
+                // Sekiro-style locked-duel camera - only in third person, only when the locked
+                // target opts in (LockOnTarget.UseDuelCamera). Mutates _yaw/_pitch here and stashes
+                // distance/look-offset for the blocks below. When it's not active, _duelActive stays
+                // false and nothing downstream changes.
+                UpdateDuelCamera(!aimingForYawClamp, isLooking);
             }
 
             // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 2.5/3.2) - the
@@ -502,13 +622,23 @@ namespace Live2DAction.CameraSystem
             bool targetAirborneUnderControl = targetMovement != null && targetMovement.IsFlying;
             float desiredDistance = targetAirborneUnderControl ? distance * flightDistanceMultiplier : distance;
 
+            // Walk immersion: eased pull-in. Before the duel/lock-on/aiming overrides below (each
+            // replaces desiredDistance outright) and non-destructive w.r.t. `distance` itself.
+            desiredDistance = WalkFramedDistance(desiredDistance, _walkFramingBlend, walkDistanceMultiplier);
+
             // 2026-08-26, explicit user request ("隻狼那種3d動作中,玩家小體積面對boss大體積的視角") -
             // see LockOnTarget.CameraDistanceMultiplier's own comment. Multiplies on top of
             // whatever desiredDistance already is (flight multiplier included) rather than
             // overwriting - `distance` itself (the user's own hands-on-tuned base value) is never
             // touched, same non-destructive precedent as flightDistanceMultiplier.
             Transform lockedAimPoint = LockOnSource?.LockedTarget;
-            if (lockedAimPoint != null)
+            if (_duelActive)
+            {
+                // Duel camera computed its own distance from both volumes - CameraDistanceMultiplier
+                // (the crude fixed pull-back) doesn't apply.
+                desiredDistance = _duelDistance;
+            }
+            else if (lockedAimPoint != null)
             {
                 var lockOnTargetComp = lockedAimPoint.GetComponentInParent<LockOnTarget>();
                 if (lockOnTargetComp != null)
@@ -545,7 +675,13 @@ namespace Live2DAction.CameraSystem
                     _thirdPersonFieldOfView = _camera.fieldOfView;
                 }
                 float aimFieldOfView = _currentZoomFieldOfView >= 0f ? _currentZoomFieldOfView : firstPersonFieldOfView;
-                _camera.fieldOfView = aiming ? aimFieldOfView : _thirdPersonFieldOfView.Value;
+                // Duel camera may widen the third-person FOV (see UpdateDuelCamera) to fit an
+                // oversized boss; _duelFov == the base FOV when it doesn't need to. Otherwise the
+                // walk-immersion narrowing eases on top of the authored base FOV.
+                float thirdPersonFov = _duelActive
+                    ? _duelFov
+                    : WalkFramedFieldOfView(_thirdPersonFieldOfView.Value, _walkFramingBlend, walkFieldOfViewDelta);
+                _camera.fieldOfView = aiming ? aimFieldOfView : thirdPersonFov;
             }
 
             float usedDistance = desiredDistance;
@@ -575,7 +711,13 @@ namespace Live2DAction.CameraSystem
             // visible near the edge rather than dead-center. Only affects third person (aiming's
             // first-person offset above is untouched); 0 bias (every existing LockOnTarget) is a
             // no-op add of Vector3.zero, so normal enemy lock-on behavior is bit-for-bit unchanged.
-            if (!aiming)
+            if (_duelActive)
+            {
+                // Duel camera computed the whole look-at point from both volumes (as a world offset
+                // from target.position) - it replaces targetOffset AND the frame-bias shift.
+                effectiveOffset = _duelLookOffset;
+            }
+            else if (!aiming)
             {
                 Transform lockedAimPointForFraming = LockOnSource?.LockedTarget;
                 if (lockedAimPointForFraming != null)
@@ -627,6 +769,10 @@ namespace Live2DAction.CameraSystem
             // See firstPersonHiddenAccessory's own comment - hides the back-mounted sword only
             // while the eye camera is active, independent of the body-visible policy above.
             SetAccessoryHidden(firstPersonHiddenAccessory, aiming);
+
+            // See _firstPersonHideApplied's own comment - remember that the hide is currently in
+            // effect so OnDisable can restore the renderers if this camera is switched off first.
+            _firstPersonHideApplied = aiming;
         }
 
         private static void SetAccessoryHidden(Transform accessory, bool hidden)
@@ -770,6 +916,186 @@ namespace Live2DAction.CameraSystem
             return centerYaw + clampedDelta;
         }
 
+        // 2026-08-30, walk immersion framing (see walkDistanceMultiplier's own comment). Pure so
+        // the easing + non-destructive application are directly EditMode-testable, same convention
+        // as ComputeAutoCenterYaw / ClampDistanceForObstruction above.
+        public static float StepBlend01(float current, bool towardOne, float lerpSpeed, float deltaTime)
+        {
+            return Mathf.Lerp(current, towardOne ? 1f : 0f, Mathf.Clamp01(lerpSpeed * deltaTime));
+        }
+
+        public static float WalkFramedDistance(float baseDistance, float walkBlend, float walkDistanceMultiplier)
+        {
+            return baseDistance * Mathf.Lerp(1f, walkDistanceMultiplier, walkBlend);
+        }
+
+        public static float WalkFramedFieldOfView(float baseFieldOfView, float walkBlend, float walkFieldOfViewDelta)
+        {
+            return baseFieldOfView + Mathf.Lerp(0f, walkFieldOfViewDelta, walkBlend);
+        }
+
+        // 2026-08-28, explicit user request ("像隻狼那樣的動作遊戲，畫面中同時能看到玩家與大型boss，
+        // 並且以玩家視角能夠清楚看到雙方動作...要從玩家與武士的體積來看") - a dedicated locked-duel
+        // camera. Runs only in third person while locked onto a LockOnTarget with UseDuelCamera set
+        // (武士). Every frame:
+        //   yaw      - eased behind the player toward the boss; mouse may swing it duelYawMaxDeviation
+        //              off, eases back when the mouse is idle.
+        //   distance - computed so the combined player+boss vertical span (with duelFrameMargin
+        //              headroom) fits the vertical FOV at the boss's distance, and the near player
+        //              still can't fill more than duelPlayerMaxFrameFraction of the frame. Clamped
+        //              to [duelMinDistance, duelMaxDistance], eased.
+        //   look-at  - a point duelLookBiasToBoss of the way from the player toward the boss, at
+        //              height duelLookHeightBias up the span (player pushed toward the lower edge,
+        //              boss dominates - "但有看的到身體").
+        //   pitch    - aims the camera (riding at duelCamHeightBias between the player's head and
+        //              the span top) at that look-at point; mouse may tilt duelPitchMaxDeviation
+        //              off, eases back.
+        // Writes _yaw/_pitch directly and stashes _duelDistance/_duelLookOffset + _duelActive for
+        // the distance and look-at-offset blocks in LateUpdate. Not active => _duelActive stays
+        // false and nothing downstream changes.
+        private void UpdateDuelCamera(bool thirdPerson, bool isLooking)
+        {
+            _duelActive = false;
+
+            LockOnTarget lot = null;
+            Transform lockedAimPoint = LockOnSource?.LockedTarget;
+            if (Application.isPlaying && thirdPerson && target != null && lockedAimPoint != null)
+            {
+                lot = lockedAimPoint.GetComponentInParent<LockOnTarget>();
+            }
+            if (lot == null || !lot.UseDuelCamera)
+            {
+                _duelSmoothedDistance = -1f;
+                _duelSmoothedPitchSeeded = false;
+                return;
+            }
+
+            if (_camera == null)
+            {
+                _camera = GetComponent<Camera>();
+            }
+            if (_camera != null && !_thirdPersonFieldOfView.HasValue)
+            {
+                _thirdPersonFieldOfView = _camera.fieldOfView;
+            }
+            float baseFov = _thirdPersonFieldOfView ?? (_camera != null ? _camera.fieldOfView : 60f);
+            float vFov = baseFov;
+            float halfFovTan = Mathf.Max(0.01f, Mathf.Tan(vFov * 0.5f * Mathf.Deg2Rad));
+
+            Vector3 bossFoot = lot.transform.position;
+            float bossHeight = lot.DuelTargetHeight;
+
+            // Cap the boss's framing height above the player - an airborne boss (leap slam, dive,
+            // flight) otherwise blows up the vertical span and pitches the camera at the sky. Its
+            // horizontal position (used for yaw/separation below) is left untouched.
+            bossFoot.y = Mathf.Min(bossFoot.y, target.position.y + duelMaxBossHeightAbovePlayer);
+
+            float playerFeetY = target.position.y - duelPlayerHeight * 0.5f;
+            float playerHeadY = target.position.y + duelPlayerHeight * 0.5f;
+            float spanBottom = Mathf.Min(playerFeetY, bossFoot.y);
+            float spanTop = Mathf.Max(playerHeadY, bossFoot.y + bossHeight);
+            float spanHeight = Mathf.Max(0.1f, spanTop - spanBottom);
+
+            Vector3 flat = bossFoot - target.position;
+            flat.y = 0f;
+            float sep = flat.magnitude;
+            Vector3 dir = sep > 0.001f
+                ? flat / sep
+                : new Vector3(Mathf.Sin(_yaw * Mathf.Deg2Rad), 0f, Mathf.Cos(_yaw * Mathf.Deg2Rad));
+            float centerYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+
+            // yaw: recenter when idle, clamp the mouse swing. When the boss is nearly overhead
+            // (small horizontal separation) its direction is noisy - a boss circling 2m to one
+            // side 12m up swings centerYaw wildly - so hold the last heading until it comes back
+            // down / moves out to a real bearing again ("視角不規則轉向").
+            bool bossHasBearing = sep > duelOverheadSeparation;
+            if (!isLooking && bossHasBearing)
+            {
+                _yaw = Mathf.MoveTowardsAngle(_yaw, centerYaw, duelYawRecenterSpeed * Time.deltaTime);
+            }
+            if (bossHasBearing)
+            {
+                _yaw = ClampYawToFacingCone(_yaw, centerYaw, duelYawMaxDeviation);
+            }
+
+            // look-at point - along the player->boss line but capped so the player never sits too
+            // far behind it (that's what drops the near player off the bottom of the frame at large
+            // separations).
+            float lookAhead = Mathf.Min(sep * duelLookBiasToBoss, duelLookMaxAhead);
+            Vector3 lookXZ = target.position + dir * lookAhead;
+            float lookY = Mathf.Lerp(spanBottom, spanTop, duelLookHeightBias);
+            Vector3 lookAt = new Vector3(lookXZ.x, lookY, lookXZ.z);
+            float camY = Mathf.Lerp(playerHeadY, spanTop, duelCamHeightBias);
+
+            // distance D = camera-to-lookAt. Three independent framing constraints, take the largest:
+            //  (a) far edge fits vertical FOV: the top of the span at the boss's distance
+            //      (cam->boss ≈ D + sep - lookAhead) must be inside half the FOV.
+            //  (b) near player isn't oversized: cam->player (≈ D - lookAhead) big enough that the
+            //      player is at most duelPlayerMaxFrameFraction of the frame.
+            //  (c) near player's FEET stay in frame: the downward angle from the camera to the
+            //      player's feet must not fall past the bottom edge (minus duelPlayerBottomMargin).
+            // Partial-crop fallback: only guarantee duelMaxVisibleAboveLook world units above the
+            // look-at fit - a colossus taller than that has its head crop off the top instead of
+            // the camera retreating forever (武士 needs ~2.4, well under the default 7, so no crop).
+            float halfSpanTop = Mathf.Min(spanTop - lookAt.y, duelMaxVisibleAboveLook);
+            float distForFar = (halfSpanTop * duelFrameMargin) / halfFovTan - (sep - lookAhead);
+            float distForNearSize = (duelPlayerHeight / Mathf.Max(0.05f, duelPlayerMaxFrameFraction) * 0.5f) / halfFovTan
+                                    + lookAhead;
+            float bottomEdgeAngle = Mathf.Max(0.02f, (0.5f - duelPlayerBottomMargin) * vFov * Mathf.Deg2Rad);
+            float distForNearFeet = (camY - playerFeetY) / Mathf.Tan(bottomEdgeAngle) + lookAhead;
+            float idealDistance = Mathf.Max(distForFar, Mathf.Max(distForNearSize, distForNearFeet));
+
+            // Effective pull-back cap scales with the boss so a much taller one still fits.
+            float effectiveMaxDistance = Mathf.Max(duelMaxDistance, bossHeight * duelMaxDistancePerHeight);
+            float distance = Mathf.Clamp(idealDistance, duelMinDistance, effectiveMaxDistance);
+
+            // FOV widening: if the ideal distance was capped, the far content now subtends more than
+            // the base FOV - widen (up to duelMaxFov) to bring it back in before anything crops.
+            // 武士: idealDistance << effectiveMaxDistance, so _duelFov stays == baseFov, no change.
+            float camToFarAt = distance + (sep - lookAhead);
+            if (idealDistance > distance && camToFarAt > 0.1f)
+            {
+                float neededHalfFov = Mathf.Atan((halfSpanTop * duelFrameMargin) / camToFarAt) * Mathf.Rad2Deg;
+                _duelFov = Mathf.Clamp(neededHalfFov * 2f, baseFov, duelMaxFov);
+            }
+            else
+            {
+                _duelFov = baseFov;
+            }
+
+            float ease = 1f - Mathf.Exp(-duelSmoothSpeed * Time.deltaTime);
+            if (_duelSmoothedDistance < 0f)
+            {
+                _duelSmoothedDistance = distance;
+            }
+            _duelSmoothedDistance = Mathf.Lerp(_duelSmoothedDistance, distance, ease);
+
+            // pitch: aim the camera (riding at camY) at the look-at point
+            float horiz = Mathf.Max(0.5f, _duelSmoothedDistance);
+            float pitchTarget = Mathf.Clamp(Mathf.Atan2(camY - lookAt.y, horiz) * Mathf.Rad2Deg, minPitch, maxPitch);
+
+            if (!_duelSmoothedPitchSeeded)
+            {
+                _duelSmoothedPitch = _pitch;
+                _duelSmoothedPitchSeeded = true;
+            }
+            _duelSmoothedPitch = Mathf.Lerp(_duelSmoothedPitch, pitchTarget, ease);
+
+            if (isLooking)
+            {
+                _pitch = Mathf.Clamp(_pitch, _duelSmoothedPitch - duelPitchMaxDeviation, _duelSmoothedPitch + duelPitchMaxDeviation);
+            }
+            else
+            {
+                _pitch = Mathf.MoveTowards(_pitch, _duelSmoothedPitch, duelYawRecenterSpeed * Time.deltaTime);
+            }
+            _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
+
+            _duelActive = true;
+            _duelDistance = _duelSmoothedDistance;
+            _duelLookOffset = lookAt - target.position;
+        }
+
         // Pure so the positioning math can be verified directly in EditMode tests without a
         // live scene or Play loop.
         public static Vector3 ComputeCameraPosition(Vector3 targetPosition, Quaternion rotation, float distance, Vector3 targetOffset)
@@ -789,6 +1115,11 @@ namespace Live2DAction.CameraSystem
         // PlayerXVisualSetup.cs script uses for the swapped-in character model.
         private void SetOwnVisualHidden(bool hidden)
         {
+            if (target == null)
+            {
+                return; // torn down (OnDisable can call this during play-mode-stop)
+            }
+
             Transform visual = target.Find("Visual");
             if (visual == null)
             {

@@ -61,6 +61,18 @@ namespace Live2DAction.Combat
         // effect). Optional - null just means no visual, doesn't affect damage.
         [SerializeField] private GameObject hitEffectPrefab;
 
+        // 2026-09-01, spec WUSHI_COMBAT_ENGINEERING_SPEC.md §5 (M2 項目 4) - legacy feature flag.
+        // When ON *and* sweptBladeHitbox is wired, ResolveActiveHit stops running the root-anchored
+        // OverlapCapsule/OverlapSphere damage query; PlayerWeaponHitbox owns damage + per-hit VFX for
+        // the whole Active window instead (a swept blade line, matching BossHitbox). This one-shot
+        // call still fires the Hit event (PlayerAttackSfx's swing sound) and the whiff VFX. OFF (the
+        // default) = the original behaviour, byte-for-byte - Enemy / TrainingDummy / 中立者 / the cat
+        // all leave this false. Flip back to false to fully revert.
+        [SerializeField] private bool useSweptBladeHitbox;
+        [SerializeField] private PlayerWeaponHitbox sweptBladeHitbox;
+
+        private bool UseSweptBlade => useSweptBladeHitbox && sweptBladeHitbox != null;
+
         private ComboAttackState _state;
 
         // Resolved on every use rather than cached in Awake(), so assigning inputSource
@@ -70,6 +82,53 @@ namespace Live2DAction.Combat
         public AttackPhase CurrentPhase => _state != null ? _state.Phase : AttackPhase.Idle;
         public int ComboIndex => _state != null ? _state.ComboIndex : -1;
         public float PhaseProgress => _state != null ? _state.PhaseProgress : 0f;
+
+        // 2026-09-01 - the AttackData whose hit query is LIVE this frame (Active window only), or
+        // null. Read by PlayerBladeHitbox to know when to sweep, the player-side equivalent of
+        // BossHitbox reading its BossHitWindow timing.
+        public AttackData CurrentActiveAttack =>
+            _state != null && _state.Phase == AttackPhase.Active ? _state.CurrentAttack : null;
+
+        // The point ResolveActiveHit originates its capsule query from (attackOrigin, or the
+        // transform itself as a fallback - matches Awake).
+        public Transform AttackOrigin => attackOrigin != null ? attackOrigin : transform;
+
+        // 2026-08-29, cat combat design (Docs/CAT_COMBAT_DESIGN.md 3.2/3.3/3.7) - lets
+        // CatAttackPose pick the right procedural pose (swipe vs heavy vs pounce) and lets
+        // CatChargeAttack / CatPounce see whether it's safe to start one.
+        public bool IsOverrideAttackActive => _state != null && _state.IsOverrideAttackActive;
+        public bool IsIdle => CurrentPhase == AttackPhase.Idle;
+        public string CurrentAttackId => _state?.CurrentAttack != null ? _state.CurrentAttack.AttackId : null;
+
+        // Starts a single-shot attack from an AttackData outside the combo array (the cat's
+        // charged heavy / pounce claw). No-op unless Idle and not staggered/dead - same gates
+        // Update() applies to a normal combo start. Returns true if it actually started, so the
+        // caller (CatChargeAttack / CatPounce) knows whether to consume the input.
+        public bool TryStartOverrideAttack(AttackData attack)
+        {
+            EnsureState();
+            if (attack == null) return false;
+            if (stance != null && stance.IsStaggered) return false;
+            if (health != null && health.IsDead) return false;
+            return _state.StartOverride(attack);
+        }
+
+        private void EnsureState()
+        {
+            if (_state == null)
+            {
+                _state = new ComboAttackState(comboAttacks);
+            }
+        }
+
+        // 2026-08-29 - external "attack button pressed this frame" for a character whose melee
+        // input is mediated by another component (the cat's CatChargeAttack). Consumed on the
+        // next Update; drives combo START and combo CHAIN exactly like a real inputSource press.
+        private bool _externalAttackPressed;
+        public void FeedAttackPressed()
+        {
+            _externalAttackPressed = true;
+        }
 
         // 2026-08-13, real bug report ("我已經盡到敵人範圍內，線條從紅色變成黃色，但敵人尚未
         // 作出攻擊") - lets EnemyAI read the actual AttackData it's about to swing with, so its
@@ -129,10 +188,7 @@ namespace Live2DAction.Combat
             // Built lazily rather than in Awake, same reasoning as InputCommand above: tests
             // assign comboAttacks via reflection right after AddComponent, which already runs
             // Awake synchronously.
-            if (_state == null)
-            {
-                _state = new ComboAttackState(comboAttacks);
-            }
+            EnsureState();
 
             // Auto-detect from lock-on, if wired (see lockOnSource's own comment - unset on
             // Enemy, which drives UseSphericalJudgment directly from EnemyAI instead).
@@ -143,7 +199,12 @@ namespace Live2DAction.Combat
             }
 
             IInputCommand inputCommand = InputCommand;
-            bool attackPressed = inputCommand != null && inputCommand.AttackPressed;
+            // _externalAttackPressed (2026-08-29): the cat routes its melee button through
+            // CatChargeAttack (tap = release-triggered swipe, hold = charged heavy), so its own
+            // inputSource is left null and CatChargeAttack calls FeedAttackPressed() instead.
+            // Player/Enemy/dummy keep reading inputSource.AttackPressed exactly as before.
+            bool attackPressed = (inputCommand != null && inputCommand.AttackPressed) || _externalAttackPressed;
+            _externalAttackPressed = false;
             if (stance != null && stance.IsStaggered)
             {
                 attackPressed = false;
@@ -178,17 +239,30 @@ namespace Live2DAction.Combat
             // judgment shape is completely untouched either way.
             Vector3 near = attackOrigin.position;
             Vector3 far = near + attackOrigin.forward * attackData.Range;
-            Collider[] candidates = UseSphericalJudgment
-                ? Physics.OverlapSphere(near, attackData.Range + attackData.Radius)
-                : Physics.OverlapCapsule(near, far, attackData.Radius);
+
             // hitOrigin: the point ResolveHits/effect-spawning treats as "where the attack
             // landed" - the capsule's own tip normally, but a sphere has no meaningful "tip", so
             // its own center (attackOrigin) is used instead.
             Vector3 hitOrigin = UseSphericalJudgment ? near : far;
-            // Applies to every combo step while the ultimate is active - see
-            // UltimateDamageMultiplier's own comment for why this is no longer gated to
-            // PrimaryAttack specifically.
-            var hitPoints = AttackResolver.ResolveHits(hitOrigin, attackData, transform.root, candidates, UltimateDamageMultiplier);
+
+            System.Collections.Generic.List<Vector3> hitPoints;
+            if (UseSweptBlade)
+            {
+                // spec §5: PlayerWeaponHitbox resolved (or is still resolving) damage + impact VFX
+                // across the Active window from the swept blade line. This one-shot call keeps only
+                // the swing-level tail below (whiff VFX + the Hit event), so it reports no hits.
+                hitPoints = new System.Collections.Generic.List<Vector3>();
+            }
+            else
+            {
+                Collider[] candidates = UseSphericalJudgment
+                    ? Physics.OverlapSphere(near, attackData.Range + attackData.Radius)
+                    : Physics.OverlapCapsule(near, far, attackData.Radius);
+                // Applies to every combo step while the ultimate is active - see
+                // UltimateDamageMultiplier's own comment for why this is no longer gated to
+                // PrimaryAttack specifically.
+                hitPoints = AttackResolver.ResolveHits(hitOrigin, attackData, transform.root, candidates, UltimateDamageMultiplier);
+            }
 
             // Per-attack override (e.g. LightAttack3's dedicated slash VFX) takes priority
             // over the shared spark prefab - see AttackData.HitEffectOverride's own comment.
@@ -222,7 +296,31 @@ namespace Live2DAction.Combat
                     Instantiate(effectPrefab, hitOrigin, attackOrigin.rotation);
                 }
             }
+
+            // 2026-08-29, cat combat design (Docs/CAT_COMBAT_DESIGN.md 4) - fired once per
+            // resolved Active step (whiff included, hitCount 0). CatCombatFeedback subscribes for
+            // hitstop / camera shake / SFX; nothing subscribes on Player/Enemy/Boss so their
+            // behaviour is byte-for-byte unchanged. hitPoint is the impact point of the first
+            // landed hit, or hitOrigin on a whiff.
+            Hit?.Invoke(new HitEvent(attackData, hitPoints.Count,
+                hitPoints.Count > 0 ? hitPoints[0] : hitOrigin));
         }
+
+        // See the Hit invocation in ResolveActiveHit.
+        public readonly struct HitEvent
+        {
+            public readonly AttackData Attack;
+            public readonly int HitCount;
+            public readonly Vector3 Point;
+            public HitEvent(AttackData attack, int hitCount, Vector3 point)
+            {
+                Attack = attack;
+                HitCount = hitCount;
+                Point = point;
+            }
+        }
+
+        public event System.Action<HitEvent> Hit;
 
         // 2026-08-12, explicit user request ("如何看到兩個角色的攻擊範圍?") - draws the same
         // capsule ResolveActiveHit actually queries against (near = attackOrigin, far =

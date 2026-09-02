@@ -100,6 +100,30 @@ public class TargetLockUtilityTests
         Object.DestroyImmediate(target);
     }
 
+    // 2026-08-29 ("武士在起飛後...鎖定視角會瞬間丟失") - the break check is horizontal only, so a
+    // locked boss that leaps / flies straight up keeps the lock however high it goes.
+    [Test]
+    public void IsStillValid_TrueWhenTargetIsHighOverhead_HorizontalBreakOnly()
+    {
+        var target = new GameObject("Target");
+        target.transform.position = new Vector3(1f, 30f, 1f); // ~1.4m horizontally, 30m up
+
+        Assert.IsTrue(TargetLockUtility.IsStillValid(Vector3.zero, target.transform, breakRange: 10f));
+
+        Object.DestroyImmediate(target);
+    }
+
+    [Test]
+    public void IsStillValid_FalseWhenHorizontallyFar_EvenIfCloseVertically()
+    {
+        var target = new GameObject("Target");
+        target.transform.position = new Vector3(0f, 0f, 50f);
+
+        Assert.IsFalse(TargetLockUtility.IsStillValid(new Vector3(0f, 2f, 0f), target.transform, breakRange: 10f));
+
+        Object.DestroyImmediate(target);
+    }
+
     [Test]
     public void IsStillValid_FalseWhenTargetDeactivated()
     {

@@ -1,15 +1,17 @@
 using UnityEditor;
 using UnityEngine;
-using Live2DAction.Combat;
 
 namespace Live2DAction.EditorTools
 {
     // Builds a flipbook slash VFX from a user-provided crescent-slash sprite sheet
     // (2026-08-13, explicit user request - "attack3 專用特效"; AI-generated, user's own, no
-    // license concern per Docs/ASSET_LICENSES.md discipline for external art in this project)
-    // and wires it as LightAttack3's HitEffectOverride, so only Attack3's landed hits spawn
-    // this instead of PlayerCombat's shared spark prefab (see AttackData.HitEffectOverride
-    // and PlayerCombat.ResolveActiveHit for the override mechanism itself).
+    // license concern per Docs/ASSET_LICENSES.md discipline for external art in this project).
+    //
+    // 2026-08-31 (追加78): the player's normal-attack VFX were removed (user is reworking the
+    // player's melee from punches to sword-swings). This tool NO LONGER wires anything onto
+    // LightAttack3 - it only rebuilds Attack3SlashEffect.prefab, which is still referenced by
+    // EnemyAttack3 / GiantAttack3 (the enemy/giant third combo hit). Those .asset references
+    // were set once by hand and stay put; re-run this only to regenerate the prefab art.
     //
     // 2026-08-13 revision history: original 5-frame single-row PNG sheet
     // (T_SlashCrescent_Sheet.png, still in the project unused) -> a denser 6x4=24-frame JPG
@@ -36,7 +38,6 @@ namespace Live2DAction.EditorTools
         private const string SourceTexturePath = Attack3SlashBackgroundCleaner.CleanedPath;
         private const string MaterialPath = VfxFolder + "/SlashCrescent.mat";
         private const string PrefabPath = VfxFolder + "/Attack3SlashEffect.prefab";
-        private const string LightAttack3Path = "Assets/_Project/Settings/Combat/LightAttack3.asset";
 
         // Straight from the source sheet's own index.json ("frame_size": 1280x720,
         // "sheet_size": 10240x5760 -> 10240/1280=8, 5760/720=8) - a real pre-built grid this
@@ -59,16 +60,15 @@ namespace Live2DAction.EditorTools
         // source clip's original real-time pacing" call as the previous two sheets.
         private const float Lifetime = 0.6f;
 
-        [MenuItem("Tools/Live2DAction/Add Attack3 Slash Effect")]
+        [MenuItem("Tools/Live2DAction/Rebuild Enemy Attack3 Slash Effect")]
         public static void Apply()
         {
             Attack3SlashBackgroundCleaner.Clean();
             ConfigureTextureImport();
-            GameObject prefab = CreateOrUpdatePrefab();
-            WireToLightAttack3(prefab);
+            CreateOrUpdatePrefab();
 
             AssetDatabase.SaveAssets();
-            Debug.Log("Wired Attack3 slash VFX (" + SourceTexturePath + ") into LightAttack3's HitEffectOverride.");
+            Debug.Log("Rebuilt Attack3SlashEffect.prefab (" + SourceTexturePath + "). It is referenced by EnemyAttack3 / GiantAttack3; nothing is wired onto the player's LightAttack3 (see class comment).");
         }
 
         // Mipmaps and wrap-repeat both bleed neighboring frames into each other at the edges
@@ -286,22 +286,5 @@ namespace Live2DAction.EditorTools
             return material;
         }
 
-        private static void WireToLightAttack3(GameObject prefab)
-        {
-            var attackData = AssetDatabase.LoadAssetAtPath<AttackData>(LightAttack3Path);
-            if (attackData == null)
-            {
-                Debug.LogError("Could not load AttackData at " + LightAttack3Path);
-                return;
-            }
-
-            var so = new SerializedObject(attackData);
-            so.FindProperty("hitEffectOverride").objectReferenceValue = prefab;
-            // 2026-08-13 explicit user request ("打空氣時也有特效出來") - see
-            // AttackData.AlwaysSpawnHitEffect's own comment for why this is scoped to
-            // LightAttack3 specifically rather than a PlayerCombat-wide change.
-            so.FindProperty("alwaysSpawnHitEffect").boolValue = true;
-            so.ApplyModifiedPropertiesWithoutUndo();
-        }
     }
 }

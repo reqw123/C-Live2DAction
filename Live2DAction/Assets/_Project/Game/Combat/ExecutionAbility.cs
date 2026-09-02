@@ -26,6 +26,14 @@ namespace Live2DAction.Combat
         // this file being touched.
         [SerializeField] private float executionAnimationSeconds = 1.5f;
 
+        // 2026-09-01, user request ("PLAYER則做為 F 處決加入" the 連續刺刀 Meshy clip) - the Player
+        // and 中立者1 SHARE the same Maya NewAnimator controller, so its single "Execute" state
+        // (Flying Kick) can't just be repointed at the thrust without also changing 中立者1's
+        // execution. The Player is wired to its own "ExecuteThrust" trigger/state instead; every
+        // other ExecutionAbility (中立者1) keeps the default "Execute"/Flying Kick. EnemyExecutionAbility
+        // is a separate class on a separate controller and is unaffected either way.
+        [SerializeField] private string executeTriggerName = "Execute";
+
         // 2026-08-18, explicit user request ("處決不要改成殺死對方 而是扣除對方總血量50%") -
         // supersedes the original "instant kill" design. Deducted through the normal
         // Health.ApplyDamage pipeline, so if the remaining health happens to be below this
@@ -42,9 +50,18 @@ namespace Live2DAction.Combat
         // now it takes 50% of that remaining 20%, leaving it alive at 10%).
         [SerializeField] private float executionDamagePercentOfCurrentHealth = 0.5f;
 
-        private static readonly int ExecuteTrigger = Animator.StringToHash("Execute");
+        // 2026-09-01, spec item 7 (M4). A target that implements IExecutable (a multi-phase boss with
+        // Deathblow life nodes - BossLifeNodeController) owns its own execution outcome; this ability
+        // just plays the finisher and calls into it. For everything ELSE (ordinary enemies, which
+        // have no IExecutable), the fallback below still runs - by default the 2026-08-18
+        // "扣除當前血量50%" behaviour, unchanged. Flip this on to make a finisher an outright kill for
+        // non-executable targets instead (spec §8.2 "普通敵人處決直接死亡").
+        [SerializeField] private bool instantKillNonExecutableTargets;
+
+        private int _executeTrigger;
 
         private StancePoise _pendingTarget;
+        private IExecutable _pendingExecutable;
         private float _elapsed;
 
         public bool IsExecuting => _pendingTarget != null;
@@ -55,6 +72,9 @@ namespace Live2DAction.Combat
             {
                 attackOrigin = transform;
             }
+
+            _executeTrigger = Animator.StringToHash(
+                string.IsNullOrEmpty(executeTriggerName) ? "Execute" : executeTriggerName);
         }
 
         private void Update()
@@ -97,6 +117,7 @@ namespace Live2DAction.Combat
 
             ResolveExecution(_pendingTarget);
             _pendingTarget = null;
+            _pendingExecutable = null;
         }
 
         private void BeginExecution(StancePoise target)
@@ -104,9 +125,36 @@ namespace Live2DAction.Combat
             _pendingTarget = target;
             _elapsed = 0f;
 
+            // 2026-09-01 (spec item 2): a finisher owns the player fully - drop any guard first so
+            // the guard volume / pose / slowdown don't linger through the execution animation.
+            GetComponent<PlayerGuard>()?.CancelDefenseAction();
+
+            // 2026-09-01, user report ("很像是在打空氣...要先鎖定好目標的方向再進行施展") - the
+            // execution clip (連續刺刀, a directional thrust flurry) played in whatever direction the
+            // player happened to be facing when F was pressed, so it routinely stabbed past a target
+            // standing off to the side. Snap-face the victim (flattened) before the anim starts so
+            // the whole finisher points AT them. The clip is imported in-place (lockRootPositionXZ),
+            // so this rotation is all the aiming it needs.
+            Vector3 toTarget = target.transform.position - transform.position;
+            toTarget.y = 0f;
+            if (toTarget.sqrMagnitude > 0.0001f)
+            {
+                transform.rotation = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+            }
+
+            // spec item 7 - a Deathblow-capable target (boss with life nodes) takes over its own
+            // outcome. Notify it that the finisher has started so it can hold + go invulnerable for
+            // the windup; ResolveExecution below then routes the deathblow into it.
+            var executable = target.GetComponentInParent<IExecutable>();
+            if (executable != null && executable.CanBeExecuted(gameObject))
+            {
+                _pendingExecutable = executable;
+                executable.OnExecutionStarted(gameObject);
+            }
+
             if (animator != null)
             {
-                animator.SetTrigger(ExecuteTrigger);
+                animator.SetTrigger(_executeTrigger);
             }
         }
 
@@ -148,9 +196,19 @@ namespace Live2DAction.Combat
         // actually taking the hit on impact.
         private void ResolveExecution(StancePoise target)
         {
+            // spec item 7 - a Deathblow-capable target consumes a life node and drives its own phase
+            // change / permanent death; it also owns ending its own stagger, so nothing else here.
+            if (_pendingExecutable != null)
+            {
+                _pendingExecutable.ResolveExecution(gameObject);
+                return;
+            }
+
             if (target.TryGetComponent(out Health health) && !health.IsDead)
             {
-                float damage = health.CurrentHealth * executionDamagePercentOfCurrentHealth;
+                float damage = instantKillNonExecutableTargets
+                    ? health.CurrentHealth
+                    : health.CurrentHealth * executionDamagePercentOfCurrentHealth;
                 health.ApplyDamage(new DamageInfo(damage, target.transform.position, Vector3.zero, gameObject));
             }
 

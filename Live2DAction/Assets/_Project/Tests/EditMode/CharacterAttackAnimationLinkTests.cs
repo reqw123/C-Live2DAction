@@ -22,12 +22,18 @@ public class CharacterAttackAnimationLinkTests
     }
 
     [Test]
-    public void TriggerNameForComboIndex_BeyondThirdHit_FallsBackToAttack3()
+    public void TriggerNameForComboIndex_FourthHit_ReturnsAttack4()
     {
-        // Defensive: this project's combo is always 3 attacks (see
-        // GreyboxSceneBuilder.CreateOrLoadComboAttacks), but this keeps any future longer
-        // combo from indexing into a nonexistent trigger name instead of just reusing the
-        // last one.
-        Assert.AreEqual("Attack3", CharacterAttackAnimationLink.TriggerNameForComboIndex(5));
+        // 2026-08-17: a 4th combo step was added (the katana combo is LightAttack1..4). Index 3
+        // maps to its own Attack4 trigger, not a re-fire of Attack3.
+        Assert.AreEqual("Attack4", CharacterAttackAnimationLink.TriggerNameForComboIndex(3));
+    }
+
+    [Test]
+    public void TriggerNameForComboIndex_BeyondFourthHit_FallsBackToAttack4()
+    {
+        // Defensive: the combo is 4 attacks now. Anything past the last step reuses the last
+        // trigger rather than indexing into a nonexistent name.
+        Assert.AreEqual("Attack4", CharacterAttackAnimationLink.TriggerNameForComboIndex(5));
     }
 }

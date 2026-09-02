@@ -80,11 +80,32 @@ namespace Live2DAction.Core
         public event Action<DamageInfo> Damaged;
         public event Action Died;
 
+        // 2026-08-31, user request ("把滑鼠右鍵改成武士刀防禦") - optional pre-damage hooks on this
+        // same GameObject (see IIncomingDamageModifier). Lazily collected, same reasoning as
+        // currentHealth above: a modifier added right after AddComponent (a test, another Awake)
+        // isn't guaranteed to be found from Health.Awake(). Null until first damage; an empty
+        // array (the overwhelmingly common case - nothing implements the interface) then costs a
+        // single length-0 loop per hit.
+        private IIncomingDamageModifier[] _incomingModifiers;
+
         public void ApplyDamage(DamageInfo damageInfo)
         {
             if (IsDead || IsInvulnerable)
             {
                 return;
+            }
+
+            if (_incomingModifiers == null)
+            {
+                _incomingModifiers = GetComponents<IIncomingDamageModifier>();
+            }
+            for (int i = 0; i < _incomingModifiers.Length; i++)
+            {
+                if (_incomingModifiers[i] is Behaviour b && !b.isActiveAndEnabled)
+                {
+                    continue;
+                }
+                damageInfo = _incomingModifiers[i].ModifyIncoming(damageInfo);
             }
 
             CurrentHealth = Mathf.Max(0f, CurrentHealth - damageInfo.Amount);

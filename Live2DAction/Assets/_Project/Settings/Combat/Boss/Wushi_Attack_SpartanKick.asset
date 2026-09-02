@@ -17,17 +17,20 @@ MonoBehaviour:
   minDistance: 0
   maxDistance: 1.7
   maxAngleDegrees: 55
-  cooldownSeconds: 1.8
+  cooldownSeconds: 0.5
   selectionWeightPhase1: 1
   selectionWeightPhase2: 1
   disallowImmediateRepeat: 1
-  maxConsecutiveUses: 1
+  maxConsecutiveUses: 2
   startupSeconds: 0.2
   recoverySeconds: 0.35
+  faceTargetSnapOnStart: 0
+  facingYawOffsetDegrees: 0
   startupTracking: 1
   lateTracking: 0.15
   trackingDropNormalizedTime: 0.3
-  baseHealthDamage: 18
+  healthDamageIsPercentOfTargetMax: 1
+  baseHealthDamage: 5
   basePoiseDamage: 14
   knockbackForce: 4.5
   launchesTarget: 0
@@ -42,7 +45,37 @@ MonoBehaviour:
     startNormalized: 0.58
     endNormalized: 0.75
     damageMultiplier: 1
+    deflectReaction: 1
     measured: 0
+  attackMotion:
+    moveStartNormalized: 0.1
+    moveEndNormalized: 0.5
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
   derivedAttack: {fileID: 0}
   deriveWindowStartNormalized: 0.7
   deriveWindowEndNormalized: 0.95
@@ -53,4 +86,8 @@ MonoBehaviour:
   isMajorAttack: 0
   designNotes: "Placeholder timing - not measured. clip length 1.43s. Katana stays
     in RightHand during this move but weaponHitbox is never activated (only RightFoot
-    window exists), per spec \u4E03 (\"\u8E22\u64CA\u671F\u9593\u6B66\u58EB\u5200\u4ECD\u5728\u53F3\u624B,\u4F46\u5200\u5203Hitbox\u5FC5\u9808\u95DC\u9589\")."
+    window exists), per spec \u4E03 (\"\u8E22\u64CA\u671F\u9593\u6B66\u58EB\u5200\u4ECD\u5728\u53F3\u624B,\u4F46\u5200\u5203Hitbox\u5FC5\u9808\u95DC\u9589\").\n\n2026-08-28,
+    \u4F7F\u7528\u8005\u8981\u6C42 \"\u5927\u62DB\u4EE5\u5916\u7684\u653B\u64CA\u56FA\u5B9A\u6263
+    5%\" \u4E14 \"\u7528\u767E\u5206\u6BD4\u8A2D\u5B9A\" - healthDamageIsPercentOfTargetMax=true,
+    baseHealthDamage=5 (= 5% of the hit target's Health.MaxHealth, resolved in BossHitbox
+    at hit time). isMajorAttack=0 so this counts. Poise/knockback untouched."

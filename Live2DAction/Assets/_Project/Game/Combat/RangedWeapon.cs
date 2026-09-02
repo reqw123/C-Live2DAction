@@ -75,6 +75,26 @@ namespace Live2DAction.Combat
             _attackDistance = GetComponent<RangedAttackDistance>();
         }
 
+        // Disabled mid-aim (e.g. a possession swap to the cat via
+        // CameraPossessionSwitcher.playerControl, or player death) - Update stops running, so the
+        // crosshair / weapon model / tracer it last turned on for aiming would stay on screen with
+        // nothing to turn them back off. Clear them here.
+        private void OnDisable()
+        {
+            if (crosshair != null && crosshair.activeSelf)
+            {
+                crosshair.SetActive(false);
+            }
+            if (weaponVisual != null && weaponVisual.activeSelf && !debugAlwaysShowWeaponVisual)
+            {
+                weaponVisual.SetActive(false);
+            }
+            if (_tracer != null)
+            {
+                _tracer.enabled = false;
+            }
+        }
+
         private void Update()
         {
             IInputCommand input = InputCommand;

@@ -12,6 +12,15 @@ namespace Live2DAction.EditorTools
     // RangedWeapon onto Player: a simple screen-center crosshair (shown only while aiming) plus a
     // LineRenderer tracer, reusing HitEffectSetup's own shared hit-spark prefab so a gunshot's
     // impact reads consistently with melee hits rather than needing a second VFX asset.
+    //
+    // 2026-08-31, user request ("移除射擊系統和步槍資產可以保留到以後"): the shooting system was
+    // RETIRED - right mouse is the katana guard now (PlayerGuardSetup), and PlayerInputProvider
+    // hard-wires AimPressed/FirePressed to false so RangedWeapon.Update never fires. The Player's
+    // RangedWeapon / RangedAttackDistance / tracer LineRenderer / RangedWeaponHud / AK47 hand
+    // instance were stripped from the scene. This menu item is DEFERRED, not deleted: the AK47
+    // FBX + RangedWeapon.cs live on for a future weapon. Running it again re-adds everything, but
+    // you'd also need to restore an AimPressed/FirePressed binding in PlayerInputProvider for it
+    // to actually shoot.
     internal static class RangedWeaponSetup
     {
         private const string ScenePath = "Assets/_Project/Scenes/GreyboxTest.unity";

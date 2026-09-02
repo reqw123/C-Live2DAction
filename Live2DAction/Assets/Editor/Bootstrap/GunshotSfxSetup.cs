@@ -39,7 +39,11 @@ namespace Live2DAction.EditorTools
             RangedWeapon rangedWeapon = player.GetComponent<RangedWeapon>();
             if (rangedWeapon == null)
             {
-                Debug.LogError("Player has no RangedWeapon component - cannot wire the gunshot SFX to it.");
+                // 2026-08-31: the shooting system was retired (right mouse is the katana guard
+                // now, PlayerGuardSetup). The AK47 asset + RangedWeapon.cs are kept on disk; run
+                // "Add Ranged Weapon To Player" first if you're bringing it back, then this.
+                Debug.LogWarning("GunshotSfxSetup: Player has no RangedWeapon (shooting system retired) - " +
+                                 "nothing to wire. Skipped.");
                 return;
             }
 

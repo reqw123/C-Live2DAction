@@ -15,18 +15,22 @@ MonoBehaviour:
   attackId: PunchCombo1
   clipName: PW2_PunchCombo1
   minDistance: 0
-  maxDistance: 0.98
+  maxDistance: 2.5
   maxAngleDegrees: 60
   cooldownSeconds: 2
   selectionWeightPhase1: 50
   selectionWeightPhase2: 40
   disallowImmediateRepeat: 1
-  maxConsecutiveUses: 1
+  maxConsecutiveUses: 2
   startupSeconds: 0.35
   recoverySeconds: 0.65
+  faceTargetSnapOnStart: 1
+  facingYawOffsetDegrees: 0
+  attackPitchDegrees: 0
   startupTracking: 1
   lateTracking: 0.15
   trackingDropNormalizedTime: 0.3
+  healthDamageIsPercentOfTargetMax: 0
   baseHealthDamage: 12
   basePoiseDamage: 10
   knockbackForce: 2
@@ -37,27 +41,69 @@ MonoBehaviour:
   useRootMotion: 0
   rootMotionStartNormalized: 0
   rootMotionEndNormalized: 1
+  rootMotionScale: 1
+  rootMotionAimAtTarget: 0
+  rootMotionAimGapMeters: 1.4
+  rootMotionAimMaxMeters: 6
+  rootMotionClipForwardMeters: 1
   hitWindows:
   - part: 0
     startNormalized: 0.25
     endNormalized: 0.34
     damageMultiplier: 1
+    deflectReaction: 0
     measured: 1
   - part: 1
     startNormalized: 0.35
     endNormalized: 0.44
     damageMultiplier: 1
+    deflectReaction: 0
     measured: 1
   - part: 0
     startNormalized: 0.45
     endNormalized: 0.54
     damageMultiplier: 1
+    deflectReaction: 0
     measured: 1
   - part: 1
     startNormalized: 0.55
     endNormalized: 0.64
     damageMultiplier: 1.15
+    deflectReaction: 0
     measured: 1
+  attackMotion:
+    moveStartNormalized: 0.05
+    moveEndNormalized: 0.55
+    forwardDistance: 0
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  lungeDistanceFromTargetGap: 1
+  lungeTargetGapMeters: 0.7
+  lungeMaxMeters: 2.5
+  cancelClipBodyDrift: 0
   derivedAttack: {fileID: 0}
   deriveWindowStartNormalized: 0.7
   deriveWindowEndNormalized: 0.95
@@ -65,6 +111,7 @@ MonoBehaviour:
   deriveChancePhase2: 0
   halveDeriveChanceOnFullMiss: 1
   deriveCooldownSeconds: 5
+  isMajorAttack: 0
   designNotes: Measured via SampleAnimation (2026-08-25). 4-hit alternating combo,
     real forward reach ~0.87-0.91m (not the spec's 1.8m guess) - maxDistance set
     conservatively to the measured value.

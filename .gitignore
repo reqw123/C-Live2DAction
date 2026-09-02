@@ -34,3 +34,10 @@ crashlytics-build.properties
 # MCP for Unity screenshot captures
 Live2DAction/Assets/Screenshots/
 Live2DAction/Assets/Screenshots.meta
+_catview/
+
+# Meshy 原始高面數內嵌貼圖 FBX（單檔 >100 MB，超過 GitHub 上限；不用 Git LFS）
+# 只擋 .fbx 網格本身——同資料夾的貼圖 PNG / .mat / 減面 .mesh 仍進版控。
+# 詳見 Docs/LARGE_ASSETS.md
+Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx
+Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx.meta

@@ -10,15 +10,25 @@
 
 ![reference](ReferenceMockup.png)
 
-## 目前已接的兩個實例
+## 目前已接的實例
 
 | 使用者 | 類型 | 場景路徑 | 建置工具 |
 |---|---|---|---|
 | 玩家 (Player) | 螢幕空間 (Screen Space Overlay) | `PlayerCornerHud/Panel/生命Track` | `Tools/Live2DAction/Add Player Health Bar FX` |
-| 076（火焰人 Live2D 看板） | 世界空間 (World Space)，浮在頭頂並持續面向攝影機 | `076_DoNotShip/HealthBarCanvas` | `Tools/Live2DAction/Add 076 Health Bar (Reference Art)` |
+| 076（火焰人 Live2D 看板） | 世界空間，浮頭頂、面向攝影機 | `076_DoNotShip/HealthBarCanvas` | `Tools/Live2DAction/Add 076 Health Bar (Reference Art)` |
+| 屁孩王 (Boss) | 世界空間，血量 + 架勢 + 能量三條 | `屁孩王/HealthBarCanvas`、`.../StanceBarCanvas`、`.../EnergyBarCanvas` | `Tools/Live2DAction/Add PiHaiWang Health Bar (Reference Art)`（血量）+ 架勢/能量條為手接/複製 |
+| 武士 (Boss) | **螢幕空間（隻狼式）**，頂部置中三條（架勢/血量/LeapSlam 能量） | `WushiBossHud/武士_架勢`、`.../武士_生命`、`.../武士_能量` | `Tools/Live2DAction/Add Wushi Bars (Sekiro-style Boss HUD + LeapSlam Energy)` |
 
-兩者共用完全相同的 6 張烘焙美術素材、同一顆 Shader/Material，以及同一個 `PlayerHealthBarFx` 元件——差別只在
-Canvas 的 `renderMode`、尺寸單位（像素 vs 公尺）、要不要開 `billboardToCamera`。
+全部共用同一組 6 張烘焙美術 + Shader/Material + `PlayerHealthBarFx`/`StancePoiseBarFx`/`UltimateEnergyBarFx` 元件——
+差別只在 Canvas 的 `renderMode`、尺寸單位、`billboardToCamera`。
+
+**武士走「螢幕 HUD」路線**（`WushiBarsSetup.cs`，2026-08-28 追加15 改）：武士體型太大（4x），頭頂世界空間條在正常鏡頭下常
+超出畫面，改成固定螢幕 HUD（像《隻狼》的 boss 血量條）。做法：`Object.Instantiate` **`PlayerCornerHud` 的三個螢幕空間
+track**（`架勢Track`/`生命Track`/`必殺Track`——已經是 pixel 單位、`billboardToCamera=false`）到新的 `WushiBossHud`
+（ScreenSpaceOverlay、CanvasScaler 1920×1080），頂部置中堆疊、子美術層寬度撐到 boss 寬，再把 Fx 的
+`health`/`stance`/`energy` 重新指向武士（Instantiate 已自動 remap 內部參照）。武士的能量條配的是 LeapSlam 能量
+（`UltimateEnergy` max 100 / 5-per-1s = 20 秒滿）。下一個大型 boss 要螢幕 HUD 直接複製 `WushiBarsSetup.cs` 改 `BossName`
++ `Bars[]` 常數即可。
 
 畫面正中央另外還有一個**放大版視覺測試**（`HealthBarPreview_TEMP`），目前已停用但保留在場景裡，作為「這套系統長什麼樣子」的
 快速參考——需要再看一次的話，直接在 Hierarchy 把它打開，或重新執行

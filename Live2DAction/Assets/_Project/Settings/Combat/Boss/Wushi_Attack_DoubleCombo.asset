@@ -1,0 +1,131 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c0fcc61c1101a47a601a0a39655055, type: 3}
+  m_Name: Wushi_Attack_DoubleCombo
+  m_EditorClassIdentifier: 
+  attackId: DoubleCombo
+  clipName: Wushi_DoubleCombo
+  minDistance: 0
+  maxDistance: 3
+  maxAngleDegrees: 60
+  cooldownSeconds: 1
+  selectionWeightPhase1: 2.5
+  selectionWeightPhase2: 2.5
+  disallowImmediateRepeat: 1
+  maxConsecutiveUses: 2
+  startupSeconds: 0.35
+  recoverySeconds: 0.4
+  faceTargetSnapOnStart: 0
+  facingYawOffsetDegrees: 0
+  startupTracking: 1
+  lateTracking: 0.15
+  trackingDropNormalizedTime: 0.25
+  healthDamageIsPercentOfTargetMax: 1
+  baseHealthDamage: 5
+  basePoiseDamage: 12
+  knockbackForce: 0
+  launchesTarget: 0
+  interruptible: 1
+  superArmorDuringActiveWindows: 0
+  incomingDamageMultiplierWhileGuarding: 1
+  useRootMotion: 0
+  rootMotionStartNormalized: 0
+  rootMotionEndNormalized: 1
+  hitWindows:
+  - part: 6
+    startNormalized: 0.24
+    endNormalized: 0.32
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  - part: 6
+    startNormalized: 0.61
+    endNormalized: 0.68
+    damageMultiplier: 1
+    deflectReaction: 1
+    measured: 1
+  attackMotion:
+    moveStartNormalized: 0.3
+    moveEndNormalized: 0.64
+    forwardDistance: 2.5
+    movementCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    stopOnDeflectRecoil: 1
+  derivedAttack: {fileID: 0}
+  deriveWindowStartNormalized: 0.7
+  deriveWindowEndNormalized: 0.95
+  deriveChancePhase1: 0
+  deriveChancePhase2: 0
+  halveDeriveChanceOnFullMiss: 1
+  deriveCooldownSeconds: 5
+  isMajorAttack: 0
+  designNotes: "2026-08-28, explicit user request (\u52A0\u5165 Meshy_AI_Parkside_Portrait_biped
+    (9).zip \u7684 Double_Combo_Attack) - clip 'Wushi_DoubleCombo' ('Scene' take,
+    without_skin FBX 206KB, 85 frames / 2.833s). A genuine two-hit downward combo
+    - UNLIKE the two removed Meshy attacks (AdvancingCuts / LungeSlash), both swings
+    here actually sweep DOWN through the PlayerHurtbox height at speed with real
+    forward reach. Measured offline via AnimationMode.SampleAnimationClip retargeted
+    onto the live 4x \u6B66\u58EB (same methodology as SwordJudgment / OverheadSlam),
+    reading BladeHitbox world Y + speed + blade-forward-of-hips (chest.forward):\n 
+    - Hit 1 (nt 0.23-0.31): blade crashes Y 4.32 -> 1.22 -> 0.52 across nt 0.23-0.27,
+    speed peak 72 u/s at nt 0.25, blade 2.0-2.4 units forward of body core at contact
+    - clean diagonal downcut through the hurtbox.\n  - Hit 2 (nt 0.60-0.66): blade
+    descends Y 4.54 -> 2.07 -> 0.68 across nt 0.61-0.65, speed peak 45 u/s, blade
+    ~1.9 units forward at the nt 0.62-0.64 contact (retracts toward the body by nt
+    0.67). damageMultiplier 1.15 (the committed second hit).\n\nLive in-Play test
+    (frames WERE advancing this time): hit 1 landed exactly -14 on a glued Player
+    at 1.8 units (nt ~0.27, dead in the window) - BUT connection is marginal: at
+    2.0+ units without root motion it whiffed, and even at 1.7 one run registered
+    nothing. The clip is authored so the character STARTS ~3 units behind its root
+    and walks FORWARD to it over the combo; with useRootMotion=0 the visible body
+    (and blade) lags behind the boss's actual position, so the reach the offline
+    hips-relative numbers imply is not all there at the boss's real transform. Compromise
+    for this first pass: maxDistance 2.5 (down from 3.3) so the boss only commits
+    to it when close enough that hit 1 has a real chance. If it still whiffs a lot
+    in real play, OR reads as 'no lunge' (the LungeSlash feedback), the proper fix
+    is useRootMotion=1 - which in a quick test (window 0-0.55, distance 2.2) DID
+    make both hits land (-46) - PLUS clearing _currentAttack when LeapSlam/Breakdance
+    interrupt an attack (CHANGELOG's flagged 'root-motion attack trap'); left for
+    a follow-up rather than done blind here.\n\n2026-08-28, \u4F7F\u7528\u8005\u8981\u6C42
+    \"\u5927\u62DB\u4EE5\u5916\u7684\u653B\u64CA\u56FA\u5B9A\u6263 5%\" \u4E14 \"\u4E0D\u8981\u786C\u7DE8\u78BC\u8840\u91CF
+    \u800C\u662F\u767E\u5206\u6BD4\u8A2D\u5B9A\" - healthDamageIsPercentOfTargetMax=true,
+    baseHealthDamage=5 (read as 5% of the hit target's Health.MaxHealth, resolved
+    in BossHitbox at hit time - not a baked 25). Both hit windows' damageMultiplier
+    normalised to 1 (2nd was 1.15) so every hit is exactly 5%. Note: 2 windows =>
+    both landing = 10% total; if the user wants the whole ATTACK capped at 5%, drop
+    a window or set baseHealthDamage 2.5.\n\nTuning (health 5% of max per hit, poise
+    12, knockback 3, cooldown 2.8s, non-major, no derive) sits mid-pool. No derivation
+    wired - keep it self-contained for the first pass. keepOriginalPositionY=true
+    on the clip import (the AdvancingCuts sink lesson) - BakeMesh sweep in Play confirmed
+    lowest mesh vertex stays 0.64-0.67, above ground ~0.5, no sinking."

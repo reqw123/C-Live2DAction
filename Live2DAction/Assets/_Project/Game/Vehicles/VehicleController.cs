@@ -49,26 +49,41 @@ namespace Live2DAction.Vehicles
         [SerializeField] private float maximumReverseSpeed = 35f;
 
         [Header("Steering")]
-        [SerializeField] private float maximumSteeringAngle = 32f;
+        // 2026-08-29, user report ("感覺car有點難操控" -> "轉向太靈敏/容易過彎過度、甩尾"). Calmed the
+        // turn-in: less lock (32->24), the speed falloff starts biting much sooner (70->45 km/h)
+        // and the ramp to a new angle is a touch more progressive (120->90 deg/s). Paired with more
+        // sideways grip + angular damping below.
+        [SerializeField] private float maximumSteeringAngle = 24f;
         [Tooltip("Speed (km/h) at which max steering angle has decayed to minSteeringAngleFraction (spec 十).")]
-        [SerializeField] private float steeringSpeedFalloffReference = 70f;
+        [SerializeField] private float steeringSpeedFalloffReference = 45f;
         [SerializeField, Range(0f, 1f)] private float minSteeringAngleFraction = 0.35f;
         [Tooltip("Degrees/second the actual steering angle can change - smooths 0->target instead of snapping (spec 十).")]
-        [SerializeField] private float steeringSmoothSpeedDegrees = 120f;
+        [SerializeField] private float steeringSmoothSpeedDegrees = 90f;
 
         [Header("Mass / center of mass")]
         [SerializeField] private float vehicleMass = 950f;
         [Tooltip("Lowered below the model's own geometric center to resist rollover (spec 二).")]
         [SerializeField] private Vector3 centerOfMassOffset = new Vector3(0f, -0.45f, 0f);
 
+        // 2026-08-29, user report ("容易打滑/原地打轉") - Unity's Rigidbody angular drag default
+        // (0.05) is near-zero, so once the chassis started yawing (a kerb, a hard turn, a bump) it
+        // just kept spinning with nothing to settle it - the "原地打轉" symptom. Applied in Awake/
+        // OnValidate like mass/centerOfMass so it's one place with the rest of the vehicle tuning.
+        [Tooltip("Rigidbody angular drag - higher settles a chassis yaw/spin faster (0.05 = Unity default, basically none).")]
+        [SerializeField] private float angularDamping = 0.5f;
+
         [Header("Wheel friction (spec 十一)")]
         [SerializeField] private WheelFrictionCurve forwardFriction = new WheelFrictionCurve
         {
             extremumSlip = 0.4f, extremumValue = 1f, asymptoteSlip = 0.8f, asymptoteValue = 0.5f, stiffness = 1.8f,
         };
+        // 2026-08-29, user report ("容易打滑/原地打轉/甩尾") - more lateral grip so the rear doesn't
+        // break loose so readily, and it holds grip further into a slide (asymptoteSlip 0.5->0.7,
+        // asymptoteValue 0.75->0.85) instead of dropping to a low tail-happy value the moment the
+        // slip peak is passed.
         [SerializeField] private WheelFrictionCurve sidewaysFriction = new WheelFrictionCurve
         {
-            extremumSlip = 0.3f, extremumValue = 1f, asymptoteSlip = 0.5f, asymptoteValue = 0.75f, stiffness = 1.6f,
+            extremumSlip = 0.3f, extremumValue = 1f, asymptoteSlip = 0.7f, asymptoteValue = 0.85f, stiffness = 2.2f,
         };
 
         [Header("Suspension (spec 二 / 十二)")]
@@ -149,6 +164,42 @@ namespace Live2DAction.Vehicles
         public bool FrontRightGrounded => frontRight != null && frontRight.isGrounded;
         public bool RearLeftGrounded => rearLeft != null && rearLeft.isGrounded;
         public bool RearRightGrounded => rearRight != null && rearRight.isGrounded;
+        public bool AnyWheelGrounded => FrontLeftGrounded || FrontRightGrounded || RearLeftGrounded || RearRightGrounded;
+
+        // 2026-08-30, vehicle flight (VehicleFlightController) - while true, the flight controller
+        // owns the Rigidbody directly (velocity written each FixedUpdate, gravity off). Beyond
+        // skipping steering/motor/brake in FixedUpdate, the transition also:
+        //   - DISABLES the 4 WheelColliders: an enabled WheelCollider still runs its own
+        //     suspension raycast + applies spring force the moment it grazes any geometry, which
+        //     PhysX-kicks the chassis and fights the hard-set flight velocity = the "空中抖動" the
+        //     user reported. Off entirely while flying, back on for the landing.
+        //   - switches Rigidbody.interpolation to Interpolate: with None (the ground default) the
+        //     visual pose only updates at the 50 Hz physics rate, which reads as jitter on a
+        //     smoothly-moving airborne body.
+        private bool _flightModeActive;
+        private RigidbodyInterpolation _groundInterpolation;
+        public bool FlightModeActive
+        {
+            get => _flightModeActive;
+            set
+            {
+                if (_flightModeActive == value) return;
+                _flightModeActive = value;
+                if (_rigidbody == null) _rigidbody = GetComponent<Rigidbody>();
+                WheelCollider[] wheels = { frontLeft, frontRight, rearLeft, rearRight };
+                if (value)
+                {
+                    _groundInterpolation = _rigidbody.interpolation;
+                    _rigidbody.interpolation = RigidbodyInterpolation.Interpolate;
+                    foreach (var w in wheels) if (w != null) w.enabled = false;
+                }
+                else
+                {
+                    _rigidbody.interpolation = _groundInterpolation;
+                    foreach (var w in wheels) if (w != null) w.enabled = true;
+                }
+            }
+        }
 
         // 2026-08-26, explicit user request ("駕駛時SHIFT觸發期間給予特效設計") - read-only exposure
         // of the private input flag so VehicleBoostEffects (particles + post-process) can react to
@@ -160,6 +211,7 @@ namespace Live2DAction.Vehicles
             _rigidbody = GetComponent<Rigidbody>();
             _rigidbody.mass = vehicleMass;
             _rigidbody.centerOfMass = centerOfMassOffset;
+            _rigidbody.angularDamping = angularDamping;
             ApplyWheelTuning();
 
             _lastSafePosition = transform.position;
@@ -176,7 +228,13 @@ namespace Live2DAction.Vehicles
         // keep quietly coasting/rolling forever with nobody driving it. Parking brake on exit
         // avoids that; re-applied on enable too in case Reset()/prefab defaults left stale values.
         private void OnEnable() => ApplyParkingBrake(0f);
-        private void OnDisable() => ApplyParkingBrake(brakeTorque);
+        private void OnDisable()
+        {
+            // Dismounted mid-flight - restore the wheels / interpolation the flight setter changed
+            // (VehicleFlightController also ends flight next frame, this just closes the 1-frame gap).
+            FlightModeActive = false;
+            ApplyParkingBrake(brakeTorque);
+        }
 
         private void ApplyParkingBrake(float brake)
         {
@@ -196,6 +254,7 @@ namespace Live2DAction.Vehicles
             {
                 _rigidbody.mass = vehicleMass;
                 _rigidbody.centerOfMass = centerOfMassOffset;
+                _rigidbody.angularDamping = angularDamping;
             }
             ApplyWheelTuning();
         }
@@ -281,17 +340,31 @@ namespace Live2DAction.Vehicles
 
             CurrentSpeedKmh = _rigidbody.linearVelocity.magnitude * 3.6f;
 
-            ApplyBoostFriction();
-            ApplySteering();
-            ApplyMotorAndBrakes();
-            ApplyHandbrake();
+            if (FlightModeActive)
+            {
+                // VehicleFlightController is flying the Rigidbody - wheels stand down. Clear any
+                // torque so a re-land doesn't inherit stale throttle/brake from before liftoff.
+                // Skip the visual sync too: it pins each wheel bone to WheelCollider.GetWorldPose,
+                // which on a DISABLED collider returns the stale ground pose - the bone would stay
+                // on the ground while the chassis flies off, stretching the mesh between them.
+                // Not syncing = the wheel bones keep their liftoff local pose and just ride the
+                // chassis, which is what we want in the air.
+                ApplyParkingBrake(0f);
+            }
+            else
+            {
+                ApplyBoostFriction();
+                ApplySteering();
+                ApplyMotorAndBrakes();
+                ApplyHandbrake();
 
-            // Sync visuals from the exact physics step that just ran, not Update's own timing -
-            // see WheelVisualSync.SyncVisual's own comment on why this avoids a frame of lag.
-            frontLeftVisual?.SyncVisual();
-            frontRightVisual?.SyncVisual();
-            rearLeftVisual?.SyncVisual();
-            rearRightVisual?.SyncVisual();
+                // Sync visuals from the exact physics step that just ran, not Update's own timing -
+                // see WheelVisualSync.SyncVisual's own comment on why this avoids a frame of lag.
+                frontLeftVisual?.SyncVisual();
+                frontRightVisual?.SyncVisual();
+                rearLeftVisual?.SyncVisual();
+                rearRightVisual?.SyncVisual();
+            }
 
             UpdateSafePoseSnapshot();
         }

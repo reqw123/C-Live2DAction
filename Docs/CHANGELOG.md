@@ -873,3 +873,3190 @@
 - 新增 `WorldSpaceEnergyBar.cs`（藍色，疊在既有紅色血條正上方）與 `UltimateAbilitySetup.cs`（`Tools/Live2DAction/Add Ultimate Ability (Blue Energy Bar + R Skill)`）把上述元件掛到 Player 身上並接好血條。
 - 84 個 EditMode + 59 個 PlayMode 測試都跑過，PlayMode 2 個失敗是既有已記錄的 flaky（`JumpTests`、`EnemyAttackRangeSceneTests`），跟改動前一致，沒有新增任何失敗。
 - **仍待使用者本人 Play 一次確認**：滿能量按 R 的視覺效果（武器變大、下一次 Attack1 傷害是否明顯變高）是否符合預期；能量條位置（血條正上方）是否會跟頭髮/其他裝飾重疊。
+
+## 2026-08-27 — 修正：武士 LeapSlam（每 20 秒定時落地劈砍）沒有完全著地／落地位置浮空
+
+使用者回報「關於每20秒的非空落地攻擊 武士似乎沒有完全著地」，第一版修正後仍回報「落地位置仍然不對 / 還是浮空 沒踩到地」。共三個根因，全部只動程式碼（`BossStateMachine.cs` + `BossTuning.cs`）：
+
+1. **整段 LeapSlam 都停掉重力**：`ApplyMotion()` 之前在整個 `LeapSlam` 狀態期間都關掉重力與 `isGrounded` 貼地夾制（理由是這招的垂直高度由 `UpdateLeapSlam` 的 script height arc 自己每幀驅動 `_verticalVelocity`）。但 arc 在 normalized 0.53 回到 0 後，還有約 1.4 秒的落地定格＋起身動畫完全沒有向下的力，任何觸地殘差都沒東西修正。→ 新增 `_leapSlamArcAirborne` 旗標，只在 arc 還在抬升/收尾（`targetExtraHeight > 0 || _leapSlamPrevExtraHeight > 0`）時關重力，其餘時間（起跳前蹲伏、落地後定格/起身）交還給正常重力＋貼地夾制。
+2. **arc 收尾 delta 被丟掉**：第一版用 `normalized < fallEnd` 當判斷，導致最後一幀到 fallEnd 之間那段（可能 1～6 單位）的下降 delta 直接被吃掉，root 停在半空。→ 改成等 `_leapSlamPrevExtraHeight` 真的歸零才交棒，telescoping 一定把 root 帶回鎖定的落地 Y。
+3. **落地砸在玩家頭上**：`TryEnterLeapSlam` 直接傳送到玩家「精確 XZ」，武士垂直落下時 CharacterController 對 CharacterController 相撞，`isGrounded` 在離地約一個玩家身高的位置就變 true，武士整段落地動畫就懸在那。→ 新增 tuning `leapSlamLandingOffset`（預設 2 世界單位），沿「玩家→武士起跳點」方向落在玩家前方一小段；落地 AOE 半徑 3.0 仍足夠涵蓋玩家（見 `Wushi_Attack_LeapSlam` designNotes）。設 0 可回到正中央落地。
+4. **落地 Y 沿用「當下高度」會累加**（使用者回報「變得比剛剛還上面了」）：`landingPos.y = transform.position.y`，只要有一跳沒回到地面，下一跳就把那個浮空高度當基準，越跳越高。→ 改成從落點往下 raycast 打真正的地面，加上「膠囊底到 transform 原點」的固定偏移（實測 ≈0.123，地面 y=0.50 → 落地 transform y=0.623）。
+5. **crossfade 第一幀 stale normalizedTime 讓 arc 一幀彈高 30**（per-frame probe 抓到：某跳進場時 Animator 還回報上一個 clip 的 nt≈0.30 → 高度曲線算出滿值 30 → root 一幀被拉高 30）：→ 新增 `_leapSlamClipConfirmed`，必須先確認 `normalized` 真的低到 clip 起點（或夠多真幀後 < peak）才允許啟動高度曲線，之前維持貼地。
+- **實機 per-frame 驗證（play 中反射觸發 + `EditorApplication.update` 逐幀取樣）**：修正後兩次自然觸發的 LeapSlam 都是 起跳 y=0.623 → 最高 y≈30 → 落地 y=**0.623**、之後 `isGrounded=True` 全程穩定。（第 5 點的 stale-frame 保護是新加的，待 play 重啟後再驗一次。）
+- `validate_script` standard 兩檔皆無錯誤。沒有動 tuning 資產（`Wushi_Tuning.asset` 沿用新欄位預設值）、動畫、場景。
+- **仍待使用者本人 Play 一次確認**：落點跟玩家的相對位置是否合理、劈砍還是有打中玩家、進場那一幀有沒有殘留的彈跳抽動。
+
+## 2026-08-27 — 新增「守望者」高空觀察者 ＋ ViewFocusDirector 視角轉換
+
+使用者要求：「有一個角色紫色頭髮穿著泳裝（= Maya 佔位），讓他在空中(本地正上方)待著，在他身上掛攝影機，提供一個方式把視角從 player 轉向守望者」。追加確認：按鍵 + 程式 API 都要；框法是守望者自己的 POV 往下看戰場；位置要能框到武士 LeapSlam 起跳最高點。
+
+追加需求：按鍵 + 程式 API 都要；框法是守望者自己的 POV 往下看戰場；「太高了」→ 守望者 Y 45→40→**33**；守望者視角要能 **W/A/S/D + 滑鼠 控制攝影機**；**玩家駕駛車輛時 T 也要能切**；**守望者本人要隨攝影機一起飛，但保留現有攝影機參數**。
+
+- 新增 `Assets/_Project/Game/Camera/ViewFocusDirector.cs`（`Live2DAction.CameraSystem`，`[DefaultExecutionOrder(200)]`）：掛在獨立 `ViewDirector` 物件上（**不掛在相機上**，這樣車輛進出把相機 SetActive 切換時 director 仍持續運作）。
+  - 同時接「步行相機」（Main Camera + `ThirdPersonCameraController`）與「車輛相機」（`VehicleCamera` + `VehicleCameraController`）。每幀取「當下 active 的那顆」來驅動，所以 **T 在步行或駕駛狀態都有效**。若守望者視角期間相機被 SetActive 換掉（中途上/下車），自動還原 controller、退回玩家視角。
+  - 守望者視角期間把 active 相機的 controller `enabled=false`、自己每幀寫 transform；切回時先 re-enable controller（它已算好本幀玩家鏡頭 pose），再從守望者 pose eased-lerp 過去，交棒無縫。不引入 CinemachineBrain。
+  - `suspendWhileWatching[]`：守望者視角期間停用的元件（玩家 `CharacterMovement` + 車輛 `VehicleController`），這樣 W/A/S/D + 滑鼠只控制攝影機、**不會同時操控角色/車**。
+  - **移動的是整個「守望者」root（Maya + Viewpoint 子物件一起飛/轉）**，Viewpoint 子物件自己的 local offset(0,1.62,0.25)/pitch 72° 與 director 的 FOV 都不碰 —— 「保有現有攝影機參數設定」。切回玩家視角時（`resetViewOnFocus`=true）root 還原回掛載點。
+  - W/A/S/D 沿當前 yaw 的地面方向飛、E/Q 世界上下（`panSpeed`/`verticalPanSpeed`）；滑鼠 = 自由轉視角（`watcherMouseLook`、`mouseLookSensitivity`；yaw 帶動 root 轉向，pitch 只動相機、夾在 `watcherMinPitch`/`watcherMaxPitch` = -80/85，Maya 保持直立）。進守望者視角自動鎖游標、切回釋放。
+  - 觸發：按鍵（預設 `T`，可設 None）＋公開 `FocusWatcher()` / `FocusPlayer()` / `Toggle()`。
+  - 其他欄位：`blendDuration`（1.5s，0=硬切）、`blendEase`、`watcherFieldOfView`（70，0=不動 FOV）、`startFocusedOnWatcher`。
+  - 純函式 `BlendPose(from,to,t)` 拆出來給 EditMode 測。
+- 新增 `Assets/Editor/Bootstrap/WatcherSetup.cs`（可重複執行，`Tools/Live2DAction/Add Watcher (Sky Observer + View Focus)`）：
+  - 放 Maya prefab 當「守望者」的 `Visual` 子物件（紫髮泳裝佔位，CC-BY，出貨需標註，已列 `ASSET_LICENSES.md`），沿用 `PlayerMayaVisualSetup` 的 rig 清除 + 移除 Maya prefab 自帶的 2 個 missing script。無 collider、無 Rigidbody，懸空 idle。
+  - 位置 `(0, 33, 0)`（本地 30×30 場地正中央正上方；武士 LeapSlam root 最高點 ~y30.6，33 讓武士幾乎升到守望者眼前）。
+  - 子物件 `Viewpoint`：disabled Camera 當 pose marker + 框景輔助。local pos `(0,1.62,0.25)`、pitch 72°、FOV 70。
+  - 建 `ViewDirector` 物件，接好步行/車輛兩組相機 + `suspendWhileWatching`（自動找 `Player` 的 `CharacterMovement` 與場上所有 `VehicleController`）。舊版若把 director 掛在 Main Camera 上，重跑 tool 會清掉。
+- 新增 `Assets/_Project/Tests/EditMode/ViewFocusDirectorTests.cs`（7 個，全過）。
+- **實機驗證（play 中反射 + `EditorApplication.update` 逐幀）**：
+  - 步行：`FocusWatcher()` → 相機到 Viewpoint、FOV 70、`ThirdPersonCameraController` 與 `CharacterMovement` 皆 disabled；`FocusPlayer()` → 兩者 re-enable。
+  - 車輛（模擬 Main Camera off / VehicleCamera on）：`FocusWatcher()` → **車輛相機**移到 Viewpoint、`VehicleCameraController` 與 `VehicleController` 皆 disabled；`FocusPlayer()` → re-enable。
+  - rig 跟隨：守望者視角注入 yaw 90° + fly(8,3,-5) → root 移到 (8,36,-5)、yaw 90、**Maya(Visual) world 同步到 (8,36,-5)**、相機在 root + 隨 yaw 旋轉後的 Viewpoint 偏移處、pitch 維持 72；`FocusPlayer()` → root 還原回 (0,33,0)。
+  - 截圖確認 y=33 時武士 LeapSlam 到最高點幾乎頂到鏡頭、整個場地在框內。守望者 renderer 在 POV 期間自動隱藏、切回後還原。
+- EditMode 全套（含新 7 個）通過；既有無關失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3`（預期 Attack3 得 Attack4，Attack4 連段先前加入所致）未處理。
+
+## 2026-08-28 — 守望者放大3倍 ＋ 存檔視角 ＋ WASD 誤操控車輛修正 ＋ 武士 LeapSlam 著地Y
+
+- **守望者放大 3 倍**：`WatcherSetup` 把「守望者」root scale 設 `(3,3,3)`（Maya + Viewpoint 一起放大，相機停在放大後的頭部，世界高度 ~34.6→~37.9）。位置維持 `(0,33,0)`。
+- **存檔守望者視角**（"要能保存守望者視角中攝影機的變更設置" → "不能自動保存" → 自動存）：
+  - 新增 `WatcherViewConfig` ScriptableObject（`Assets/_Project/Settings/WatcherViewConfig.asset`）—— SO 的寫入撐得過離開 Play 模式。
+  - 守望者視角新增：**滾輪 = 縮放（FOV）**、`K` = 手動存、`autoSaveView`（預設開）= 離開守望者視角（按 T / 停 Play / 上下車）時自動把當前 fly 位置 / yaw / pitch / FOV 存進 config。之後 `FocusWatcher()` 從存檔開始。
+  - 重置：取消勾選 `WatcherViewConfig.hasSavedView`（或刪 asset）。commit 只在編輯器寫檔，build 內按 K 只影響本 session。
+  - 欄位：`commitViewKey`(K)、`autoSaveView`、`scrollZoomStep`(4)、`watcherMinFov`/`MaxFov`(15/110)。
+- **修正真實 bug（"非駕駛模式時控制w/a/s/d時會玩家連同car一直做移動控制"）**：`ViewFocusDirector.SetSuspended` 在離開守望者視角時**盲目把 `suspendWhileWatching` 全部 `enabled=true`**，導致 Buggy 的 `VehicleController`（步行時本來被 `VehicleEntrySystem` 關著）被打開 → 停著的車跟玩家一起吃 W/A/S/D。改成 suspend 時快照每個元件的實際 enabled 狀態、restore 時還原成快照值（本來關的維持關）。
+- **武士 LeapSlam 著地 Y 從 0.623 改成 0.5**（"武士飛空後著地y座標從0.623改為0.5"）：
+  - 新增 tuning `leapSlamLandingGroundedOffset`（`BossTuning`，預設 **0**）：`landingPos.y = 地面raycast命中 + 這個offset`。舊版是自動算的 ~0.123（讓膠囊貼齊地面）。
+  - 高度曲線跑完後 `UpdateLeapSlam` 直接把 transform.y 釘在 `_leapSlamLandingY`（暫時關 CharacterController 來設，因為 0.5 讓膠囊陷地、`_controller.Move` 碰地到不了），`ApplyMotion` 這期間整個跳過 `_controller.Move`。
+  - **已知取捨**：LeapSlam 結束回 Idle 後，正常物理把陷地的膠囊推出 → transform.y 從 0.5 回 ~0.623（1~2 幀，+0.123 的小彈跳）。要永久停 0.5 得改 CharacterController center（CLAUDE.md 標記為手調權威值，未動），或把武士 Visual 子物件往下偏 0.123（transform 維持 0.623、視覺腳在 0.5、無彈跳）—— 待使用者決定。
+- **武士參數/邏輯檢查發現**：
+  - `Wushi_Tuning.asset` 只序列化到 `breakdanceTriggerSeconds`，之後加的欄位（全部 `leapSlam*`、`tooCloseDistance/DurationSeconds`、`leapSlamLandingGroundedOffset`）都跑 `BossTuning.cs` 的 code default，asset 裡看不到也改不到，直到有人在 Inspector 開一次並存檔。目前生效值：leapSlamTriggerSeconds=20、leapSlamExtraHeight=30、rise/peak/fallEnd=0.05/0.30/0.53、leapSlamLandingOffset=2、leapSlamLandingGroundedOffset=0。
+  - LeapSlam `baseHealthDamage=500` = 玩家滿血一擊必殺，每 20 秒觸發一次。是先前明確要求，但對「定時小技能」偏重，flag 給使用者。
+  - `vanishTriggerSeconds=999999` → 整個 Vanish→DiveAttack 循環永不觸發（既有的 disabled 狀態，LeapSlam 現在借用它的 `landingAoeHitbox`）。
+  - `postureBreakDurationMin/Max` 都是 3（無隨機）。
+  - LeapSlam/Breakdance 打斷可中斷的普通攻擊時不清 `_currentAttack`；因為武士所有攻擊 `useRootMotion=0`，唯一會讀到 stale 值的路徑（ApplyMotion root motion）不會做事，目前無害，但加 root-motion 攻擊時是陷阱。
+  - 清掉：已無用的 `_leapSlamArcAirborne` flag；修了 `TryEnterLeapSlam` 一段還在描述最初「不動 root、直接在玩家身上起 clip」舊實作的過時註解。
+- EditMode 158/159 過（唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關）。
+- **待使用者 focus Unity 後實機驗證**：WASD 不再誤動車、LeapSlam 著地 y=0.5、守望者自動存檔往返。
+
+## 2026-08-28 (追加) — 守望者顯示修正 ＋ 縮 2 倍 ＋ 圍牆開洞
+
+- **守望者放大改 2 倍**（"將守望者放大2倍"）：`WatcherSetup.WatcherScale` 3→2。
+- **修正："守望者能記住攝影機位置 但玩家視角看不見他"**：`SetWatcherVisualHidden` 之前只在狀態轉場事件時切 renderer，各種路徑（auto-save commit、停 Play、相機被換）會 desync。改成 `LateUpdate` 每幀宣告式呼叫 `SetWatcherVisualHidden(IsFocusedOnWatcher)` —— 只有在看她自己的 POV（Watcher / 轉入中）才隱藏，其餘一律顯示（含轉回玩家的整段 blend，讓你看著相機從她身邊拉開）。她停在自動存檔的位置、可見。
+- **圍牆開洞**（"目前圍牆是封死的，提供一個比車身大1.2倍的洞口"）：新增 `Assets/Editor/Bootstrap/VehicleWallOpeningSetup.cs`（可重複執行，`Tools/Live2DAction/Add Vehicle Wall Opening (Buggy gap in a BoundaryWall)`）：
+  - 在 `BoundaryWall_South` 正中央切一個**全高、車寬 × 1.2** 的缺口。車寬用 Buggy 的輪距 + 輪半徑實測（1.52 + 2×0.33 = 2.18），× 1.2 = **2.62 寬**，`GapMinWidth` 下限 2.4。
+  - 做法：移掉牆原本的實心 + trigger BoxCollider，換成左右兩段實心 collider；停用牆自己的 MeshRenderer，parent 兩個 `WallSegment_L/R` cube 視覺（同材質）讓缺口看得見；停用這面牆的 `BoundaryBlockEffect` 並關掉 `RippleEmitter` 子物件（不然會在缺口冒一根白柱），其餘三面牆不動。
+  - Raycast 驗證：x=-8~-2 與 x=4~8 被擋、x=-1~1 貫穿到外面。缺口 ~2.62 寬、full height。
+  - 洞口在 x=0；車 ~2.18 寬 → 每邊約 0.22 餘裕，偏緊但可過（"1.2倍"）。要放寬改 `GapWidthMultiplier`/`GapMinWidth`。畫面上缺口附近那根白色光柱是既有的 `Updraft_MainArea/WindColumn`（飛行上升氣流），跟開洞無關。
+- 4 檔編譯無錯。CHANGELOG 已更新。
+- **待使用者 focus Unity 實機驗證**（累積 3 項）：WASD 不再誤動停著的車、LeapSlam 著地 y=0.5、守望者切回玩家視角後看得見且在存檔位置、Buggy 能開出南牆缺口。
+
+## 2026-08-28 (追加2) — 守望者角色本身不見了：根因是壞掉的存檔視角
+
+- **症狀**：守望者（Maya 模型）在玩家視角完全看不到 —— 不是位置太遠，是模型本身不見。
+- **根因**：`WatcherViewConfig.asset` 存了一組壞掉的視角，`rootPosition.y = -3.08`（**在地面下**）。`autoSaveView` + `resetViewOnFocus` 讓守望者每次都被 seed 到那個地下座標 → 看不見。壞值來自這次開發過程中我用反射跑的自動測試 hook（灌了測試用的 `_flyOffset` 再呼叫 `CommitCurrentView`），寫進了真的 asset。
+- **修正**：
+  - 清掉 config（`hasSavedView = false`），守望者回到 `(0,33,0)` 可見。
+  - `WatcherSetup` 重跑現在會**重置 config**（重跑本來就是「回到預設框法」的動作，也能救壞掉的存檔）。
+  - 新增 `ClampWatcherPos`（`ViewFocusDirector`）：把守望者 rig 的世界 Y 夾在 `watcherMinHeight`（預設 1.5）以上、水平距離掛載點 `watcherMaxFlyRadius`（預設 120）以內。**config 載入時、每幀 `ApplyWatcherRig`、`CommitCurrentView` 寫檔前都夾一次** —— 壞掉的存檔或失控的 W/A/S/D 飛行再也不能把守望者弄到地下 / 飛出地圖。
+- 編譯無錯。CHANGELOG 已更新。
+
+## 2026-08-28 (追加3) — 守望者放大5倍 ＋ 車道通行
+
+- **守望者放大 5 倍**：`WatcherSetup.WatcherScale` 2→5。Viewpoint 是 root 子物件，相機座標自動跟著到 `(0, 41.1, 1.3)`；俯角 72°、FOV 70、WASD 速度、滑鼠靈敏度都不受 scale 影響、不用改。
+- **`VehicleWallOpeningSetup` 擴充成「開洞 + 鋪路」**，選單改名 `Tools/Live2DAction/Add Vehicle Wall Opening + Road`：
+  - **洞口加寬 1.5 倍**：`GapWidthMultiplier` 1.2 → 1.8（= 原本「比車身大1.2倍」× 後來「寬度增加1.5倍」）。實測缺口 2.62 → **3.92 寬**（車 ~2.18 × 1.8）。
+  - **新增 `VehicleRoad`**：一片薄板（collider + 視覺），置中對齊缺口，從場地邊緣（z=-15）往外鋪 65 單位到 z=-80，寬度 = 缺口 + 2 ≈ 5.9，頂面在 y≈0.505（比地面高 5mm 免 z-fighting）。**layer=Default**（WheelCollider 打得到）。
+  - 為什麼要 collider：`BackgroundTerrain`（300×300）**本身沒有 collider**，車開出缺口後外面沒地板會掉下去 —— `VehicleRoad` 就是外面的可行駛面。
+  - 新建材質 `Assets/_Project/Environment/Materials/RoadSurface.mat`（深灰 URP/Lit）。
+  - Raycast 驗證：z=-10~-15 打到 Ground、z=-16~-80 打到 VehicleRoad、缺口貫穿。
+- 編譯無錯、場景已存檔。
+- **待使用者 focus Unity 開 Buggy 實測**：能不能從場地開出南牆缺口、沿路行駛不掉出去。
+
+## 2026-08-28 (追加4) — 清掉 Console 缺失腳本錯誤
+
+- 症狀：`The referenced script on this Behaviour (Game Object 'Visual'/'') is missing!` 在載入/進 Play 時洗版。
+- 根因：`MayaAnime/Prefabs/Maya.prefab` 與 `ArisaAnime/Prefabs/Arisa.prefab` 各掛了 3 個第三方角色控制器腳本（ThirdPersonController 類的 `playerCamera/turnSmoothing`、移動 `walkSpeed/jumpHeight`、攝影機 `player/pivotOffset` + MainCamera 子物件上一個），這些腳本的 GUID 整個 repo（含 PackageCache）都找不到——來自未匯入的付費資源包。Maya 被 `TrainingDummy` 當視覺、Arisa 被 `Enemy`（場景 `Arisa.prefab` 實例）當視覺。
+- 修法：`PrefabUtility.LoadPrefabContents` + `GameObjectUtility.RemoveMonoBehavioursWithMissingScript` 逐一清掉，各移除 3 個。
+- 驗證：全專案 `.prefab`/`.unity` 掃描已無未解析的 script GUID；重進 Play，Console 全清（0 error / 0 warning）。
+
+## 2026-08-28 (追加5) — 武士「進步連斬」(AdvancingCuts)：加入後同日移除
+
+- 使用者要求導入 `Meshy_AI_Parkside_Portrait_biped (7).zip` 作為武士普通進攻池第五招（中距離、可派生）。已完整接上：FBX（Humanoid，clip `Wushi_AdvancingCuts`）、`Wushi.controller` +1 state、`Wushi_Attack_AdvancingCuts.asset`（`BossAttackDefinition`，派生 → OverheadSlam）、`normalAttackPool` 4→5。
+- 過程中修掉：clip import `keepOriginalPositionY` 沒對到 sibling 導致 Play 裡半身陷地（改 True）；`maxDistance` 2.8 太窄實戰幾乎選不到（改 3.2）。
+- **使用者實測後回報「不好用」，要求移除。** 已完整回退：`normalAttackPool` 回到原本 4 招、`Wushi.controller` 移除該 state（byte-identical 回 HEAD）、刪除 `Wushi_AdvancingCuts.fbx` + `Wushi_Attack_AdvancingCuts.asset`、`GreyboxTest.unity` 直接 `git checkout` 丟掉存檔時 Cubism ArtMesh 的重序列化雜訊。Console 無錯。
+- 另發現、尚未處理：武士 LeapSlam「偶爾飛天後消失沒下來」（見 `KNOWN_ISSUES.md`，疑似既有問題，非本次改動造成）。
+
+## 2026-08-28 (追加6) — 移除武士「前衝斬」(LungeSlash)
+
+- 使用者實測回報：「似乎沒有前衝，展擊也不夠圓弧」，要求移除。
+- 診斷：clip 動畫裡有 Hips 相對 root 前移 ~2 單位的撲步，但 asset `useRootMotion: 0`（武士所有招都關），那個位移沒轉成實際位置移動 → 看起來沒前衝。要加前衝得開 root motion（clip root 是斜左前、4x 放大會歪）或改程式加正前方衝刺（動 `BossStateMachine.cs`）。揮砍軌跡是 Meshy clip 烘死的下劈、非橫向圓弧，程式改不了。使用者選擇整招移除。
+- 完整移除：`normalAttackPool` 4 → **3 招**（SwordJudgment / SpartanKick / OverheadSlam）、`Wushi.controller` 移除 `Wushi_LungeSlash` state（7 states）、刪除 `Wushi_Attack_LungeSlash.asset` + `Wushi_LungeSlash.fbx`。無其他資產引用（已 grep 確認）。
+- `AttackReadinessDistance` 仍是 1.7（SpartanKick 的 maxDistance，未受影響）。Console 無錯。
+- 場景 diff 帶 Cubism ArtMesh 重序列化雜訊（存檔必然，非本次造成）；pool 移除是唯一功能變更。
+
+## 2026-08-28 (追加7) — 武士新增普通攻擊「雙重連段」(DoubleCombo)
+
+- 使用者要求加入 `Meshy_AI_Parkside_Portrait_biped (9).zip` 的 `Double_Combo_Attack`（注意：檔名的 `(9)` 只是 Meshy 下載計數，跟先前 LeapSlam 用的 `(9).zip` 是不同動畫；這次是 `without_skin` 206KB 純動畫）。
+- 新增檔案：
+  - `Animations/Wushi_DoubleCombo.fbx`（+meta，Humanoid、clip `Wushi_DoubleCombo` 裁 1–86 幀、`keepOriginalPositionY=true` —— AdvancingCuts 陷地的教訓）
+  - `Animator/Wushi.controller` +1 state `Wushi_DoubleCombo`
+  - `Settings/Combat/Boss/Wushi_Attack_DoubleCombo.asset`（`BossAttackDefinition`）
+  - `GreyboxTest.unity` `normalAttackPool` 3 → **4**
+- **這個 clip 幾何上比前兩個被移除的好**：兩段揮砍都真的往下掃過 PlayerHurtbox 高度（刀世界 Y：4.3→0.5、4.5→0.7），有前伸。離線量測 + Play 實測都做了（這次 Play 沒凍結）。
+- **但命中偏 marginal**：Player 貼 1.8 單位時 hit 1 實測 -14（正中窗），但 2.0+ 就打空。原因：clip 把角色動畫成「起手時比 root 後退 3 單位、連段中往前走到 root」，`useRootMotion=0` 時可見身體/刀落後 boss 實際座標。
+  - 折衷：`maxDistance` 3.3 → **2.5**，讓 boss 只在夠近時才選這招。
+  - 之後若還是常打空 / 或嫌「沒前衝」→ 正解是 `useRootMotion=1`（快測 window 0–0.55、距離 2.2 時兩段都命中 -46）＋ 修「LeapSlam/Breakdance 打斷攻擊時清 `_currentAttack`」（CHANGELOG 標記過的 root-motion 陷阱）。留待後續、不盲改。
+- 調校值：health 14（第二段 ×1.15）、poise 12、knockback 3、cooldown 2.8s、非 major、無派生。hit windows nt 0.23–0.31 / 0.60–0.66。
+- 驗證：Play 實跑進 `Wushi_DoubleCombo` state、播完回正常 FSM、BakeMesh 逐格量最低頂點 0.64–0.67（不陷地）、Console 無錯。
+- **待使用者實機打感確認**：命中率、要不要前衝、窗要不要調。全部數值在 asset，`designNotes` 有完整量測。
+## 2026-08-28 (追加8) — 武士非大招攻擊改為「目標最大血量的 5%」百分比傷害
+
+- 使用者要求：大招以外的攻擊固定扣 5% 血量，**且不要硬編碼血量數字、要用百分比設定**。
+- **`BossAttackDefinition` 新增欄位 `healthDamageIsPercentOfTargetMax`（bool）**：開啟時 `baseHealthDamage` 被讀成「目標最大血量的百分比」（5 = 5%），命中當下用目標的 `Health.MaxHealth` 換算，不是固定 HP 數字。玩家最大血量之後改動也不用再改這些 asset。
+- **`BossHitbox.TryResolveHit`**：命中時若 `pctMode` 開，`GetComponentInParent<Health>()`（命中的通常是子 hurtbox collider，如 PlayerHurtbox）取 `MaxHealth`，`healthDamage = MaxHealth * (baseHealthDamage/100) * damageMultiplier`；抓不到 Health 就退回當作固定值。poise 不受影響。
+- 套用（`isMajorAttack: 0`）：
+  - `Wushi_Attack_SpartanKick`：`healthDamageIsPercentOfTargetMax: 1`、`baseHealthDamage: 5`
+  - `Wushi_Attack_DoubleCombo`：同上，兩段 hit window `damageMultiplier` 都是 1
+  - → 對玩家（maxHealth 500）每擊 = 25，但由程式在命中時算出，不寫死
+- 大招不動（`pctMode: false`、flat）：SwordJudgment 32、OverheadSlam 28、LeapSlam 500。
+- 驗證：編譯無錯；EditMode 158/159 過（唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關）；Play 裡確認 `GetComponentInParent<Health>` 從 PlayerHurtbox 能取到 Player 的 Health、`MaxHealth=500` → 5% = 25（Play Mode 這次 frame-frozen 無法實射，但傷害計算路徑已逐段確認）。
+- **flag（同前）**：DoubleCombo 有 2 段判定，兩段都中 = 10%。要「整招」封 5% 再說。
+- 範圍只有武士。
+
+## 2026-08-28 (追加9) — 武士攻擊欲望調高（使用者「攻擊欲望太低」）
+
+純調校值下修（無程式改動），讓武士出招更頻繁、減少站著「伸懶腰」的空檔：
+
+**`Wushi_Tuning.asset`：**
+| 欄位 | 舊 | 新 |
+|---|---|---|
+| globalRestPhase1 Min/Max | 0.35 / 0.5 | 0.15 / 0.3 |
+| globalRestPhase2 Min/Max | 0.25 / 0.4 | 0.1 / 0.2 |
+| majorAttackExtraRest Min/Max | 0.5 / 1.0 | 0.25 / 0.55 |
+| attackReadinessBuffer Min/Max | 0.2 / 0.35 | 0.1 / 0.2 |
+| decisionIntervalPhase1 Min/Max | 0.25 / 0.45 | 0.12 / 0.25 |
+| decisionIntervalPhase2 Min/Max | 0.15 / 0.3 | 0.06 / 0.15 |
+
+**攻擊 cooldown（4 招裡有 2 招是 major、cd 長 → 常常「沒招可用」是站著不動的主因）：**
+| 招 | 舊 cd | 新 cd |
+|---|---|---|
+| SwordJudgment | 2.5 | 1.6 |
+| SpartanKick | 1.8 | 1.0 |
+| OverheadSlam | 2.5 | 1.8 |
+| DoubleCombo | 2.8 | 1.6 |
+
+- 出招間隔約砍半（rest + decision + readiness buffer 全部 ~×0.5），加上 cooldown 大幅下修讓 `PickAttack()` 幾乎不會回 null。
+- `maxConsecutiveUses` 維持 1（不讓 boss 連續刷同一招，觀感會變差）、`disallowImmediateRepeat` 不動。
+- CLAUDE.md 標記這些是手調權威值——這次是使用者明確要求「調高攻擊欲望」才動，全部集中在上表，要往回收很容易。
+- **待使用者實機確認節奏**：太兇的話把 globalRest / cooldown 往回加。
+
+## 2026-08-28 (追加10) — 武士攻擊欲望再往上（使用者「再激進」）
+
+在追加9 的基礎上再砍一輪（仍純調校值）：
+
+**`Wushi_Tuning.asset`：**
+| 欄位 | 追加9 | 追加10 |
+|---|---|---|
+| globalRestPhase1 Min/Max | 0.15 / 0.3 | 0.05 / 0.15 |
+| globalRestPhase2 Min/Max | 0.1 / 0.2 | 0.03 / 0.08 |
+| majorAttackExtraRest Min/Max | 0.25 / 0.55 | 0.1 / 0.3 |
+| attackReadinessBuffer Min/Max | 0.1 / 0.2 | 0.05 / 0.12 |
+| decisionIntervalPhase1 Min/Max | 0.12 / 0.25 | 0.05 / 0.12 |
+| decisionIntervalPhase2 Min/Max | 0.06 / 0.15 | 0.03 / 0.08 |
+| approachDecelerationDistance | 0.5 | 0.35 |
+
+**cooldown：** SwordJudgment 1.6→**1.0**、SpartanKick 1.0→**0.5**、OverheadSlam 1.8→**1.1**、DoubleCombo 1.6→**1.0**
+
+**`maxConsecutiveUses`：** 兩個非大招（SpartanKick、DoubleCombo）1 → **2**（可連續刷 2 次才被 `disallowImmediateRepeat` 擋，大招維持不可重複）
+
+- 出招間隔實質剩 ~0.2–0.5s + 該招 recovery。cooldown 0.5–1.1 + 4 招池 + 非大招可連 2 → `PickAttack()` 基本不會 null，boss 幾乎不會有站著的空檔。
+- **這一輪幅度很大**，可能過兇。要收的話優先加 `globalRestPhase1` 跟各 cooldown。全部值集中在上兩表。
+
+## 2026-08-28 (追加11) — 武士「不夠快」：加快攻擊動畫 + 移動速度
+
+追加9/10 已把休息/cooldown 砍到近乎 0，剩下的慢是**攻擊動作本身太長**（每招 clip 2.5–3.3s）＋ **Phase 1 用走的（walkSpeed 3）追不上玩家**。
+
+**Animator state m_Speed（`Wushi.controller`，hit window 是 normalized、會跟著等比縮放）：**
+| state | 舊 | 新 | 實際時長 |
+|---|---|---|---|
+| Wushi_SwordJudgment | 1.0 | 1.35 | 3.30s → 2.44s |
+| Wushi_SpartanKick | 1.0 | 1.4 | 1.27s → 0.90s |
+| Wushi_OverheadSlam | 1.0 | 1.4 | 2.53s → 1.81s |
+| Wushi_DoubleCombo | 1.0 | 1.4 | 2.83s → 2.02s |
+
+（LeapSlam 不動——它的高度 arc 綁 normalizedTime，加速會弄壞落地。PostureKneel/Death 不動。）
+
+**`Wushi_Tuning.asset`：**
+- `walkSpeed` 3 → **5.5**（Phase 1 approach 用這個；`ResolveMoveSpeed` 只在 `UpdateApproach` 呼叫，不影響別的）
+- `runSpeed` 6 → **7.5**（Phase 2）
+- `rotationSpeedDegrees` 360 → **520**（轉向對準玩家更快）
+
+- 已知取捨：clip 加速 → BladeHitbox 的實際啟用秒數變短（normalized 窗不變但秒數 = 窗×新時長），已量測會命中的 SwordJudgment/OverheadSlam 應仍 OK，DoubleCombo 本來就 marginal 可能更容易揮空。真的常揮空就把該 state speed 收回 1.2 或把窗調寬。
+- Play Mode 這次仍 frozen 無法實測，麻煩使用者打一場。
+
+## 2026-08-28 (追加12) — 文件：武士攻擊節奏模型寫進 TECHNICAL_DESIGN.md
+
+- 使用者要求把「技能本身時長 vs 出招間隔」用表格 + 文字寫進說明文件。
+- `TECHNICAL_DESIGN.md` 新增「武士 Boss：攻擊節奏模型」一節：
+  - A. 技能本身時長 = clip 長度 ÷ AnimatorState `m_Speed`；FSM 播到 normalized 0.98 才結束，收招 pose 也算在內
+  - B. 出招間隔 = globalRest + majorAttackExtraRest + decisionInterval + (需要時) approach + readinessBuffer + (沒招可用時) 等 cooldown，逐項對照表 + 目前值
+  - ⚠️ `startupSeconds` / `recoverySeconds` 是死欄位（BossStateMachine 不讀，改了沒用）
+  - 「想改什麼 → 動哪裡」快速對照表
+  - 順手在「敵人 AI」段加註：實作的武士 Boss 用 `BossStateMachine`、不用 NavMesh，跟 Phase 0 草案不同
+- `KNOWN_ISSUES.md` 武士段加了指向該節的一行。
+
+## 2026-08-28 (追加13) — 武士新增普通攻擊「衝刺斬」(ChargeCut)
+
+- 使用者要求加入 `Meshy_AI_Parkside_Portrait_biped (10).zip`（fresh without_skin 生成，MD5 跟已移除的 LungeSlash 那個 (10).zip 不同）。clip `Wushi_ChargeCut`（61 幀 / 2.03s，最短的武士攻擊 clip）。
+- 新增：`Wushi_ChargeCut.fbx`(+meta，keepOriginalPositionY=true)、`Wushi.controller` +state（m_Speed 1.3 → 1.56s）、`Wushi_Attack_ChargeCut.asset`、`normalAttackPool` 4 → **5**。
+- **1 個 hit window（nt 0.19–0.29）**：刀從 Y 3.19 砸到 1.15，速度峰 **88 u/s（全武士最快的單幀）**，刀前伸 ~2.5（相對 root），在正常近戰距離不靠 root motion 就命中。
+- clip 後半（nt 0.4–1.0）是大幅前撲（Hips 前移 ~6 單位）+ 第二下劈，**沒接**——`useRootMotion=0` 時 boss 不動、第二下的刀落在 root 前方 6–8 單位，一般距離打不到。要用完整前撲得開 `useRootMotion`（同 DoubleCombo，需配 `_currentAttack` 清除修正）。
+- 傷害：非大招 → 照「大招以外固定 5%」規則，`healthDamageIsPercentOfTargetMax=1`、`baseHealthDamage=5`。cooldown 1.0、knockback 3.5。
+- **⚠️ 已知小瑕疵**：低姿前撲斬的姿勢（nt 0.20–0.42，正好蓋住 hit window）會讓 boss 最低網格頂點掉到 Y~0.34，地面在 Y 0.50 → 約 0.16 單位的腳/小腿穿地約 0.4 秒。`keepOriginalPositionY` / `heightFromFeet` 都試過修不掉（烘進 clip 的深蹲）。裁不掉——穿地的幀就是命中的幀。**待使用者判斷**：當成前撲攻擊的視覺瑕疵接受，或整招移除。
+- Play Mode 這次又 frozen 無法實射，命中/穿地都是 AnimationMode 離線量的。
+
+## 2026-08-28 (追加14) — 武士 LeapSlam 前搖蹲下 + 血量/架勢條 + 能量觸發
+
+三項使用者要求一起做（動了 `BossState.cs` / `BossStateMachine.cs` / `BossTuning.cs`，事前有摘要確認）。
+
+### 1. LeapSlam 前搖蹲下 1 秒
+- 新增 `BossState.LeapSlamWindup`。`TryEnterLeapSlam` 現在先進這個 state：站定、面向玩家、把 `Wushi_LeapSlam` clip 用 `animator.Play(..., 0.09)` + `speed=0` 凍在自己的開場蹲姿，撐 `BossTuning.LeapSlamWindupSeconds`（預設 1.0）。
+- 撐完 → 消耗能量（見 3）→ `CommitLeapSlamLanding()`（原本 inline 在 `TryEnterLeapSlam` 的瞬移/鎖定，抽成方法，現在在**蹲完之後**才跑，所以玩家看到的是原地蹲下、不是先瞬移再蹲）→ `ChangeState(LeapSlam)`。
+- `_leapSlamFromWindup` 旗標讓 `OnEnterState(LeapSlam)` 不重播 clip——`OnExitState` 把 `animator.speed` 還原成 1，同一段 clip 從 0.09 無縫接飛天。
+- `BossTuning` 新增 `leapSlamWindupSeconds`(1.0) / `leapSlamWindupPoseNormalized`(0.09)。⚠️ `Wushi_Tuning.asset` 只序列化到 `breakdanceTriggerSeconds`，這兩個跑 code default，要調得在 Inspector 開一次存檔。
+- `TryEnterTooCloseKick` 的 block list 補上 `LeapSlamWindup`/`LeapSlam`（本來漏了 LeapSlam，貼身踢會切斷飛空）。
+
+### 2. 武士血量條 / 架勢條（+ 能量條）
+- 新增 `Assets/Editor/Bootstrap/WushiBarsSetup.cs`（選單 `Tools/Live2DAction/Add Wushi Bars`）：直接 `Instantiate` 屁孩王已完成的 `HealthBarCanvas`/`StanceBarCanvas`/`EnergyBarCanvas`（reference-art 版，含 spark FX）到武士身上，依 4x 體型 rescale（canvas localScale 0.55 → 世界 scale 2.2、bar 寬 ~2.18m ≈ 體寬 60%），重新指向武士的 `Health`/`StancePoise`/`UltimateEnergy`（Instantiate 已自動 remap 所有指向複製體內部的參照）。
+- 三條浮頭頂、面向鏡頭，world Y 5.5 / 5.15 / 4.8（武士實際網格頂 ~4.6）。
+
+### 3. LeapSlam 改能量觸發（100 能量 / 20 秒滿）
+- `BossStateMachine` 新增 `[SerializeField] UltimateEnergy leapSlamEnergy`。`UpdateCombatTimer` 的觸發判定：wired 時看 `leapSlamEnergy.IsFull`，unwired 時退回舊的 `LeapSlamTriggerSeconds` 計時（其他 boss 不受影響）。
+- 武士加 `UltimateEnergy`：`maxEnergy=100`、`regenAmount=5`、`regenIntervalSeconds=1` → 5/秒 → 20 秒滿。
+- 能量在 `UpdateLeapSlamWindup` 蹲完的 commit 點 `Consume()` 歸零（跟 `UpdateUltimatePrepare` 一致，蹲到一半被架勢破防打斷則能量保留）。
+
+### 驗證
+- 編譯無錯；EditMode 158/159 過（唯一失敗 `FallsBackToAttack3` 既有無關）。
+- Play Mode frozen 無法實跑，改用 reflection 逐段驗（HealthBar README 記載的手法）：設能量=100 → `IsFull` → `UpdateCombatTimer` 設 `_leapSlamPending`；`TryEnterLeapSlam` → `LeapSlamWindup`、animator 凍在 `Wushi_LeapSlam` nt 0.09 speed 0；`UpdateLeapSlamWindup`(t=2) → 能量歸 0、武士瞬移到玩家旁 y=0.5、state=LeapSlam、animator nt 0.09 speed 1（不重播）。三條 bar 的 Fx `Update()` 都跑得動、fillAmount 正確追值（HP 1.0 / Energy 0 / Stance 0）。截圖確認三條在頭頂。
+- **待使用者實機確認**：bar 大小/位置手感、前搖姿勢好不好看、能量節奏。
+- LeapSlam「偶爾飛天不下來」的既有 bug 沒動到、也沒修（見 KNOWN_ISSUES）。
+
+## 2026-08-28 (追加15) — LeapSlam 前搖改站姿 + 武士 HUD 改隻狼式螢幕條
+
+追加14 的兩點修正。
+
+### 1. 前搖不蹲下，站在原地
+- `OnEnterState(LeapSlamWindup)` 從「凍結 LeapSlam clip 在蹲姿」改成 `PlayState(Locomotion)`（idle 站姿）。tell = boss 停止移動/攻擊 1 秒，沒有蹲。
+- 拿掉 `_leapSlamFromWindup` 旗標和 `BossTuning.leapSlamWindupPoseNormalized`（不再需要無縫接續，`LeapSlam` state 正常 CrossFade from 0）。
+- reflection 驗證：`TryEnterLeapSlam` → `LeapSlamWindup` 播 Locomotion speed 1；t=2 → `LeapSlam`、能量歸 0。
+
+### 2. 武士血量/架勢/能量條：世界空間頭頂 → 螢幕空間頂部（隻狼式）
+- 使用者回報武士太大、頭頂的條看不見。改成固定螢幕 HUD。
+- `WushiBarsSetup.cs` 改寫：不再複製屁孩王的世界空間 canvas，改複製 **`PlayerCornerHud` 的三個螢幕空間 track**（`架勢Track`/`生命Track`/`必殺Track`，pixel 單位、billboard off、reference-art）到新的 `WushiBossHud`（ScreenSpaceOverlay、sortingOrder 1、CanvasScaler 1920×1080）。
+  - 頂部置中堆疊：架勢 (y-42, w760) / 生命 (y-70, w760) / 能量 (y-98, w560)，高度 ×1.7。
+  - 每個 track 的子美術層寬度撐到 boss 寬、EdgeGlow 移到新右緣；Fx 的 `health`/`stance`/`energy` 重新指向武士。
+  - 選單改名 `Tools/Live2DAction/Add Wushi Bars (Sekiro-style Boss HUD + LeapSlam Energy)`；重跑會先刪掉舊的頭頂 canvas + 舊 HUD。
+- 武士頭上的 `HealthBarCanvas`/`StanceBarCanvas`/`EnergyBarCanvas` 已移除。
+- 驗證：Play 裡 reflection 灌值 + pump Fx `Update()`，三條 fillAmount 正確追值（生命 220/1000=0.22、能量 72/100=0.72、架勢 tracking），無例外。截圖確認三條在螢幕頂部置中。
+- 編譯無錯、EditMode 158/159 過。
+- **待使用者實機確認**：HUD 大小/位置/粗細、要不要加 boss 名字、前搖 1 秒的節奏。
+
+## 2026-08-28 (追加16) — 武士 HUD:血量置頂 + 只在戰鬥時顯示
+
+追加15 的兩點回饋。
+
+### 1. 血量條第一順位
+`WushiBarsSetup.Bars[]` 重排：生命 (y-42, w760) → 架勢 (y-70, w700) → 能量 (y-96, w560)。血量在最上面。
+
+### 2. 只在戰鬥狀態顯示
+- 新增 `Assets/_Project/Game/UI/WushiBossHudVisibility.cs`（掛在 `WushiBossHud` 上）：`Awake` 先把 `Canvas.enabled=false`（載入時隱藏），`LateUpdate` 依 `BossStateMachine.CurrentState` 切換——「戰鬥中」= 不是 `Dormant`/`Dead`/`Victory`（跟 BossStateMachine 驅動 `CombatActive` animator bool 同一條件）。
+- 切 `Canvas.enabled` 而非 `SetActive`，子 `*BarFx` 的 Update 繼續跑、重現時不會 snap-in。
+- `WushiBarsSetup` 建 HUD 後自動加這個元件並把 `boss` 指向武士的 BossStateMachine。
+- reflection 驗證：Awake → enabled false；state=Alert/Idle → true；state=Dormant → false。
+- 編譯無錯、EditMode 158/159 過。
+
+## 2026-08-28 (追加17) — LeapSlam 兩個 bug:攻擊幀外溢 + 能量沒及時清空連觸發兩次
+
+### 1. 「飛空前到飛空後這一整段不該有攻擊幀」
+LandingAOE hitbox 會在自己的窗（nt 0.32–0.56）之外開啟：
+- **前**：`LeapSlamWindup` 播 Locomotion，接 `LeapSlam` CrossFade 進 leap clip 時，`AnimatorNormalizedTime()` 頭幾幀讀到「外送 Locomotion clip」的 stale normalizedTime，剛好落在 0.32–0.56 → boss 還在地上/上升就開刀。
+- **後**：leap clip 非 looping，`normalizedTime` 過 1 之後 `% 1f` wrap 回來，在著地保持姿勢/起身那段又掃過窗。
+- 修法（`UpdateLeapSlam`）：hit windows 只在 `_leapSlamClipConfirmed`（確認 clip 真的在播、不是 crossfade 殘影）時才跑（擋前），一旦 `normalized` 越過最後一個窗的 `endNormalized` 就 latch `_leapSlamHitWindowsDone=true` 永久關閉這次 leap 的判定（擋後 + wrap）。
+- reflection 驗證：nt 0.10/0.25 → AOE 關；0.40/0.50 → AOE 開；0.60 → latch、AOE 關；0.75/0.90 → 關；latch 後回到 nt 0.45（模擬 wrap）→ 仍關。
+
+### 2. 能量沒及時清空 → 必殺被連續觸發兩次
+- 根因：`leapSlamEnergy.Consume()` 原本在蹲完/前搖結束的 commit 點（~1 秒後）才呼叫。那 1 秒內 `UpdateCombatTimer` 每幀看到 `IsFull` 還是 true → 重新 `_leapSlamPending=true` → 第一次 LeapSlam 一結束馬上又觸發第二次。
+- 修法：`Consume()` 移到 `TryEnterLeapSlam`（進 windup 的當下就清）。另外 `UpdateCombatTimer` 加 `leapInProgress`（`CurrentState` 是 LeapSlamWindup/LeapSlam 時）guard 當保險（也涵蓋 timer-based fallback）。
+- 取捨：前搖被架勢破防打斷也會花掉能量——對一個全程被 telegraph 的必殺是合理的（committed）。
+- reflection 驗證：`TryEnterLeapSlam` 後能量立刻 = 0；windup 期間 5× `UpdateCombatTimer` `_leapSlamPending` 維持 False;強制把能量灌回 100 中途 + `UpdateCombatTimer` 仍 False（leapInProgress guard）。
+
+編譯無錯、EditMode 158/159 過。
+
+## 2026-08-28 (追加18) — 武士能對屁孩王造成傷害
+
+- 根因：`BossStateMachine.Awake` 把 `BossHitbox.Configure` 的 attacker team **寫死成 "Boss"**，而每個 boss 的 `BossTeamMember.team` 也都是預設 "Boss" → `BossHitbox.TryResolveHit` 的友軍傷害判定（`teamMember.Team == _attackerTeam`）擋掉所有 boss 對 boss 的傷害。
+- 修法：
+  - `BossStateMachine.Awake` 改讀自己的 `BossTeamMember.Team`（沒掛的話 fallback "Boss"）當 attacker team。
+  - `GreyboxTest.unity` 武士的 `BossTeamMember.team` "Boss" → **"武士"**（屁孩王維持 "Boss"）。
+- 效果：武士（team 武士）打屁孩王（team Boss）→ 不同隊 → 傷害生效。**對稱**：屁孩王也能打武士。自己打自己的 hurtbox 仍被擋（`transform.root == _attackerRoot` 先判）。武士打玩家不受影響（玩家 team "Player"）。
+- 注意：屁孩王沒有武士那種分部位 hurtbox，只有 root CharacterController 膠囊（上面直接掛 Health）——武士的刀刃 trigger 撞到那個膠囊就會造成傷害。
+- 驗證：Play 裡 `BladeHitbox.Activate(SwordJudgment)` + 反射呼叫 `TryResolveHit(屁孩王 root collider)` → 屁孩王 HP 1000 → 968（-32 = SwordJudgment `baseHealthDamage`）。編譯無錯、EditMode 158/159 過。
+
+## 2026-08-28 (追加19) — 鎖定黃色圓圈某些視角會消失
+
+- 根因：lock-on ring 是 world-space UGUI Image，用預設 UI shader → 會跟場景幾何做深度測試。低視角、或被鎖定目標的身體/地面擋在圓圈跟攝影機之間時，圓圈被遮擋而消失。（同一類問題也在 KNOWN_ISSUES 的空島草地剔除那節出現過。）
+- 修法：
+  - 新增 `Assets/_Project/Rendering/Shaders/UIAlwaysOnTop.shader`（`Live2DAction/UIAlwaysOnTop`）—— 就是 stock `UI/Default` 加 `ZTest Always` + `Queue = Overlay`，其餘 UGUI 行為（tint、sprite atlas、RectMask2D、alpha clip）不變。URP 相容。
+  - 新增 `Assets/_Project/VFX/Materials/UILockOnRing.mat`（用該 shader）。
+  - `LockOnIndicatorSetup` 建圓圈時把這個 material 指到 Ring image（`EnsureRingMaterial()`，重跑會自動建/修）。
+- 驗證：Play 裡把圓圈埋進敵人身體正中央（正常 UI 會被完全遮住），截圖確認黃圈仍畫在角色之上。編譯無錯、EditMode 158/159 過。
+
+## 2026-08-28 (追加20) — 鎖定大型 boss 的隻狼式對決攝影機
+
+使用者要求:鎖定武士(大型 boss)時,畫面要同時清楚看到玩家與 boss 的動作,依兩者體積來框。事前有摘要確認。
+
+### `LockOnTarget` 新欄位
+- `useDuelCamera`(bool)— 開啟後這個目標被鎖定時走專用對決框景,覆蓋舊的 `cameraDistanceMultiplier`/`cameraFrameBias`(那兩個留給一般小怪 fallback)
+- `duelTargetHeight`(float)— 目標完整站高(武士量測 3.87,設 4.1)
+
+### `ThirdPersonCameraController.UpdateDuelCamera()`(新)
+只在「第三人稱 + 鎖定 + 目標有 useDuelCamera + 非瞄準 + Play」時啟用,`_duelActive` 以外的路徑一行不動。每幀:
+- **yaw**:滑鼠靜止時以 `duelYawRecenterSpeed` 回正到「玩家背後對準 boss」;滑鼠可甩 `duelYawMaxDeviation`(35°)偏移
+- **distance**:取三個約束的最大值再夾在 `[duelMinDistance 5, duelMaxDistance 12]`:(a) boss 頭頂 + margin 塞進垂直 FOV;(b) 近端玩家不超過 `duelPlayerMaxFrameFraction`(0.5)畫面;(c) 玩家腳底不掉出下緣(`duelPlayerBottomMargin` 0.08)。看向點的「前伸」`duelLookMaxAhead`(1.3)絕對上限,避免遠距時玩家掉出下緣
+- **look-at**:玩家→boss 連線上 `duelLookBiasToBoss`(0.35,受上限夾)、高度 `duelLookHeightBias`(0.4)—— 玩家推向下緣、boss 佔畫面主體
+- **pitch**:攝影機騎在玩家頭頂 ↔ span 頂之間(`duelCamHeightBias` 0.35),瞄準 look-at;滑鼠可 `duelPitchMaxDeviation`(18°)微調、放開回正
+- yaw/pitch/distance 全部 smoothing(`duelSmoothSpeed` 6),鎖定當下不硬切
+
+### 驗證(reflection,Play frozen)
+- 各分離距離 2/3.5/5/7/10 單位:玩家腳底 viewport Y 穩定在 ~0.21、玩家中心 ~0.30、boss 頭頂 0.68–0.81 —— 全部框內,不 clip
+- yaw 從 20° / pitch -5° 起 → 回正到 yaw 0 / pitch 6.2°
+- 截圖確認:武士全身置中佔主體、玩家在下前方可見(隻狼式)
+- gating:無鎖定 / 鎖一般小怪 / 第一人稱 → `_duelActive=False`,一般攝影機行為零改動
+- 編譯無錯、EditMode 158/159 過
+
+**待使用者實機微調**:距離/pitch/玩家在畫面的高度、yaw 回正速度手感。全部值在 Main Camera 的 `ThirdPersonCameraController` 的「Locked-duel camera」區 + 武士的 `LockOnTarget`。
+
+## 2026-08-28 (追加21) — 對決攝影機自適應化(未來更大體積 / 全螢幕 boss)
+
+使用者問「往後放入更大體積 BOSS 或全螢幕怪物需要調整甚麼,有辦法自適應嗎」→ 確認後把追加20 的三個寫死上限改成隨 boss 體積推導。**先 git 同步(追加20 已 push 為 `002ecba`),再做本次改動,並確認武士現有框景零改動。**
+
+### `LockOnTarget` — 高度自動量測
+- `duelTargetHeight` 預設由 `2` 改為 `0`(= 自動)。`≤ 0` 時 `DuelTargetHeight` 惰性量測子物件 renderer bounds 的 Y 聯集,結果 sanity-clamp(`< 0.3` 或 `> 60` → fallback 2)。新 boss 掛上 `useDuelCamera` 就能用,不必手填數字。
+- 武士維持顯式 `4.1`(手驗值優先於自動量測)。
+
+### `ThirdPersonCameraController` — 三個上限改成隨體積推導
+- **`duelMaxDistancePerHeight`(4)**:有效拉遠上限 = `max(duelMaxDistance 12, bossHeight × 4)`。15 單位高的 boss 攝影機能退到 ~60 而不被 12 卡住。
+- **`duelMaxFov`(85)**:當「有效上限距離仍塞不下」時,垂直 FOV 從基礎值(65)放寬到最多 85 來補,寧可先廣角再談裁切。武士 `idealDistance ≪ 有效上限` → `_duelFov` 恆等於 65,零改動。
+- **`duelMaxVisibleAboveLook`(7)**:對決攝影機最多保證 look-at 之上 7 個單位入鏡。超過此高度的巨物(colossus / 全螢幕怪)頭部裁切出上緣,而不是攝影機無限後退 —— 玩家與 boss 具威脅性的下半身維持可讀。設高(如 20)即恢復「永遠框全身」。
+- FOV apply 改:`_duelActive ? _duelFov : 原第三人稱 FOV`。
+
+### 驗證(reflection,Play frozen)
+| bossHeight | dist | pitch | FOV | 玩家腳底 viewport Y | boss 頭頂 | 結果 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **4.1(武士)** | **5.8** | **6.2°** | **65** | 0.21 | 0.77 | 與追加20 逐位元相同 |
+| 8 | 8.5 | 2.9° | 65 | 0.15 | 0.86 | 全身框內 |
+| 15 | 13.2 | 0.4° | 65 | 0.11 | 0.95 | 全身框內(攝影機自動退到 13.2) |
+| 30 | 23.4 | -1.6° | 65 | 0.07 | 1.03 | 頭部裁切(巨物 fallback) |
+
+- 編譯無錯、Console 乾淨、EditMode 158/159 過(唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項)。
+- 三個新欄位已寫進 `GreyboxTest.unity` 的 Main Camera(`duelMaxDistancePerHeight: 4` / `duelMaxFov: 85` / `duelMaxVisibleAboveLook: 7`);武士 `LockOnTarget` 的 `useDuelCamera:1 / duelTargetHeight:4.1` 不動。
+
+## 2026-08-28 (追加22) — 武士 LeapSlam 落地前追蹤玩家位置
+
+使用者要求「Wushi_LeapSlam 落地前我想要讓他能追蹤玩家位置 然後落地」。**反轉**先前「落地 xz 起跳時鎖死、飛行中不 homing」的設計(那條 comment 是 2026-08-27 使用者自己定的)。
+
+### 行為
+- `CommitLeapSlamLanding()`(前搖結束)仍做**粗略首次定位**:傳送到玩家附近(退 `LeapSlamLandingOffset` 2 單位,避免疊在玩家膠囊上)。
+- `UpdateLeapSlam()` 新增 **homing 區塊**:`_leapSlamClipConfirmed` 且 `normalized < LeapSlamTrackUntilNormalized`(0.45)期間,每幀把 `_horizontalVelocity` 導向玩家**當下**位置(同樣退 offset),並 `FaceTarget(1f)` 重新面向玩家、每幀重打落地 Y raycast。移動速度 = 剩餘距離 ÷ 剩餘時間(用 `_stateTimer / normalized` 推總時長),上限 `LeapSlamMaxTrackSpeed`(30 u/s),不會瞬移。
+- `normalized ≥ 0.45` → `_leapSlamLandingLocked` latch,`_horizontalVelocity` 歸零,剩下的下墜是**已鎖定的直線落下** —— 這段是玩家最後一刻的閃避窗。
+- 高度弧在 `LeapSlamHeightFallEndNormalized`(0.53)後把 transform pin 死、ApplyMotion 不再 Move,所以 homing 一定在那之前結束(tuning tooltip 有註明 `TrackUntil < FallEnd`)。
+
+### 新 tuning 欄位(`BossTuning`,`Wushi_Tuning.asset` 目前吃程式碼預設)
+| 欄位 | 預設 | 意義 |
+| --- | --- | --- |
+| `leapSlamTrackUntilNormalized` | 0.45 | 追到這個 normalized clip time 就鎖定,之後直線落下 |
+| `leapSlamMaxTrackSpeed` | 30 | 空中 homing 速度上限(u/s),玩家狂奔逃離時武士是「可見地追」而非瞬移 |
+
+### 驗證
+- 編譯無錯、Console 乾淨、EditMode 158/159 過(唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 既有無關項)。
+- 兩個 tuning 資產(`Wushi_Tuning` / `PW2_Tuning`)確認讀得到新屬性:`trackUntil=0.45 < fallEnd=0.53`。
+- **homing 實際手感待使用者實機測**(Play Mode 失焦凍結,無法互動觸發 20 秒能量條 + 中途操控玩家跑位)。若尾段有頓挫感 → 調低 `leapSlamMaxTrackSpeed`;想給更大閃避窗 → 調低 `leapSlamTrackUntilNormalized`。
+
+## 2026-08-29 (追加23) — 匯入貓角色 ＋ 專屬低視線攝影機 ＋ C 鍵切換視角
+
+使用者要求「導入這個模型(Meshy AI 生成的貓)，向玩家一樣提供他攝影機視角並且可將視角切換到他身上，注意他視線較低，與先前攝影機風格不同」。事前有摘要 + 確認(貓可 WASD 控制、C 鍵、放本地出生區、Meshy 付費方案有商用權)。
+
+### 匯入
+- `Assets/_Project/Characters/Cat/Cat.glb`(42 MB,gltfast 匯入,同鳥居/寶塔的 `.glb` 路徑)。單一 SkinnedMeshRenderer + 1 材質 + 3 貼圖,43 根 Meshy auto-rig 骨頭,**0 個動畫 clip**。
+- 材質保留 gltfast 的 `Shader Graphs/glTF-pbrMetallicRoughness`(URP 相容,實機算圖確認有貼圖、無粉紅)。
+- glb 的 SkinnedMeshRenderer 序列化 bounds 是退化的 (0,0,0)(同 KNOWN_ISSUES 鳥居那節的 glTF 匯入坑)→ 設 `updateWhenOffscreen = true`,執行期每幀由骨頭重算,不會被視錐剔除。
+
+### 場景(全部由 `CatCharacterSetup.cs` 產生,可重跑)
+- **`Cat`**:本地出生區 `(-2.5, _, 2.0)`,`CharacterController`(h 0.76 / r 0.2 / step 0)+ **共用玩家的 `CharacterMovement`**(rule 8:玩家與 AI 共用輸入介面)+ 自己的 `PlayerInputProvider`。`moveSpeed 3`,dodge/stance/health/flight/lock-on 全部留 null(`CharacterMovement` 每個讀取都有 null 保護)。Visual 縮 0.45 →站高 ~0.77、視線 ~0.45(玩家 ~1.08 的一半 → 「視線較低」)。
+- **`CatCamera`**:複製整個 Main Camera rig(Camera + URP data + `ThirdPersonCameraController`),retarget 到貓並**重調低視線風格**:`targetOffset (0, 0.5, 0)`(玩家 0.5,0.5,0)、`distance 1.9`(玩家 2)、`initialPitch 11`、`minPitch -12 / maxPitch 70`(大多往下看地面生物)。`lockOnSource`/`inputSource`/`ultimateAbility` 清空、`enableDescendAutoPitch` 關。起始 inactive、tag `MainCamera`。
+- **`CameraPossession`**:`CameraPossessionSwitcher`(新,`Live2DAction.CameraSystem`)。`C` 鍵 + `FocusCat()`/`FocusPlayer()` API。SetActive 切換兩台 Camera(比照 `VehicleEntrySystem`)+ 硬切「一邊 `CharacterMovement` on、另一邊 off」,所以 WASD 只會動你正在看的那隻。`OnDisable` 防呆:中途被拆掉時把控制權還給玩家。
+
+### 驗證
+- 編譯無錯、Console 乾淨、EditMode **162/163**(新增 `CameraPossessionSwitcherTests` 4 個全過;唯一失敗仍是既有無關的 `CharacterAttackAnimationLinkTests...FallsBackToAttack3`)。
+- Play mode 實機算圖(失焦凍結,用 reflection 驅動):`FocusCat()` → Main Camera inactive、CatCamera 成為唯一 live camera(`Camera.main=CatCamera`)、貓 `CharacterMovement` on、玩家 off;截圖確認貓有貼圖、低視線俯看框景。`FocusPlayer()` → 完全還原玩家視角(Maya + 武士 + 綠色鎖定圈)。
+- **待使用者實機微調**:`CatCharacterSetup` 的 `CatScale` / `CatCam*` 常數(距離、pitch、貓在畫面的高度),重跑選單即套用。
+- **已知**:貓也會跟著跳(Space→`CharacterMovement`)。佔位可接受,見 `KNOWN_ISSUES.md`。
+
+## 2026-08-29 (追加24) — 貓的四肢程序化行走(依移動速度驅動)
+
+使用者:「這個GLB應該是有骨架的 尤其是四肢，能否將四肢參照貓咪行走姿態來對應移動控制」。glb 有 43 根 auto-rig 骨頭但 0 個 clip,把外來四足 rig retarget 到 generic 骨架又很脆,所以直接**程序化驅動四條腿**。
+
+### `CatProceduralWalk.cs`(新,`Live2DAction.Characters`)
+- 從 `Cat.glb` 的 live BakeMesh + 骨樹 dump 認出四條腿:前腿 `Bone_034/032`(FL)、`Bone_042/040`(FR);後腿 `Bone_018/016`(BL)、`Bone_023/021`(BR)。`Bone_000` = 骨盆,`Bone_004-008` = 尾巴。
+- 每條腿:**肩/髖骨** fore-aft 擺(`cos(相位)`,相位 0 最前、0.5 最後)+ **肘/膝骨** 只在擺動半週(腳離地往前收)彎(`max(0, -sin(相位))`,`bendSign` 讓前肘與後膝反向折)。→ 每隻腳「往後移時著地推進、往前移時抬起收腿」。
+- 對角小跑步態:FL+BR 同相位(0)、FR+BL 差半週(0.5)。四個 `phaseOffset` / `bendSign` 都是 serialized,可改 4-beat walk。
+- 旋轉是繞**貓 root 的 right 軸**、換算到每根骨的 parent space 再套:`bone.localRotation = AngleAxis(度, 右軸@parent空間) * 靜止localRotation`。跟 generic 骨頭各自的朝向無關。
+- 幅度隨 `CharacterMovement.CurrentHorizontalSpeed`(同 `CharacterAnimatorLink` 讀的速度訊號)縮放,`_gaitBlend` 在起步/停下時 ease in/out。靜止 → 回靜止姿勢。
+- 在 `LateUpdate` 跑(貓身上沒有 Animator,沒東西跟它搶骨頭)。
+
+### tuning 預設(全部 serialized)
+`speedForFullStride 3`(= `CatMoveSpeed`)、`strideFrequency 1.7`、`swingDegrees 16`、`bendDegrees 30`、`blendSpeed 9`、`bodyBobDegrees 0`(選配,掛在 `Bone_000`)。
+
+### 驗證
+- 編譯無錯、Console 乾淨、EditMode **165/166**(新增 `CatProceduralWalkTests` 3 個全過;唯一失敗仍是既有無關項)。
+- Play mode(這次 Editor 有焦點、真 frame 有跑):`FocusCat` + 灌入移動 → `CurrentHorizontalSpeed` 上升、`_gaitBlend→1`、`_phase` 循環;量測四隻腳趾骨相對貓身的 z(前後)/y(高度)確認會隨相位在對角模式下位移;側視算圖(phase 0.15 / 0.40)確認四肢有前後擺、腳貼近地面、無抽搐/反折。
+- **步態手感待使用者實機微調**(程序化 gait 一定要看著動的才調得準):`CatProceduralWalk` 上調 `swingDegrees` / `bendDegrees` 加大擺幅、`strideFrequency` 調步頻、`bodyBobDegrees` 加身體起伏;想換 4-beat walk 就改四個 `phaseOffset`。`CatCharacterSetup` 重跑會重建並重新抓骨頭。
+
+## 2026-08-29 (追加25) — C 鍵切換:診斷 log ＋ 解掉 C 鍵衝突
+
+使用者回報「C按鍵並沒有對應在貓身上」。查證:`CameraPossessionSwitcher` 的切換邏輯完全正確——play mode 強制驗證 C 鍵路徑(合成 C 事件 → `switcher.Update()` → `Current` Player→Cat)、合成 W → **貓移動 (0,0,0.99)、玩家不動 (0,0,0)**、貓 `CharacterMovement` on / 玩家 off。committed 場景的 `CameraPossession`(active、enabled、`toggleKey:17`=C、四個參照都解析得到)也沒問題。
+
+無法在程式面重現,推測是環境問題(Game view 沒 focus / 沒注意到切換 / 舊 build)。改動:
+- **`CameraPossessionSwitcher.Update()`**:C 鍵被偵測到時印一行 `[CameraPossession] C pressed -> switching to Cat/Player`。使用者按 C 看 Console 就知道「按鍵有沒有被吃到」——有 log = 有效(WASD 這時控制貓、攝影機變低);沒 log = focus / 場景問題。
+- **`SwordDisplayAdjuster`**:縮放鍵從 `C`/`V` 改成 `,`/`.`(逗號/句號)。`C` 本來被這支 dev 工具吃去縮放劍展示組(`V` 也跟 `PlayerInputProvider` 的第一人稱切換撞),不影響 `CameraPossessionSwitcher` 的偵測(兩者各自讀鍵盤),但是個該解的衝突。移動鍵 `Z`/`X` 不變。
+
+編譯無錯、Console 乾淨、EditMode 165/166(唯一失敗仍是既有無關項)。純程式碼改動,場景不變。
+
+## 2026-08-29 (追加26) — 貓的飛行 ＋ 衝刺(接線,參照玩家)
+
+使用者:「想讓此貓做出攻擊動作」→ 決定分三個切片(1 飛行+衝刺 → 2 程序化攻擊 → 3 飛行/衝刺姿態)。本則是**切片 1**。
+
+關鍵事實:飛行 / 飛行 boost / 地面衝刺(dodge)的邏輯**本來就全部寫在 `CharacterMovement`**(null-safe、靠 serialized 欄位 opt-in),就是貓已經掛的那顆元件;貓 2026-08-28 的初版是刻意沒接(`dodgeData` / `flightEnergy` 留 null)。按鍵也早就共用(貓用同一個 `PlayerInputProvider`):按住 Ctrl 飛、按住 Shift 下降、按住 Q boost、點 Shift 衝刺。CatCamera 是玩家攝影機 rig 的複製,`ThirdPersonCameraController` 已會讀 `IsFlying`/`CurrentBankRollDegrees`/`IsDescending`。所以切片 1 = 純接線,不寫新移動碼。
+
+### `CatCharacterSetup.cs` — 新增 `WireFlightAndDash()`
+- `cat.AddComponent<UltimateEnergy>()` 當飛行體力(同 `FlightSetup` 對玩家的做法),設 `maxEnergy 500 / regenAmount 30 / regenInterval 1 / regenIdleDelay 3`(**與玩家場景值一致**)。
+- 產生 `Assets/_Project/Settings/Movement/Cat/CatDodgeData.asset`(`CreateOrLoadCatDodgeData`,再跑不覆蓋;`EnsureFolder` 遞迴補資料夾):`distance 1.6`(玩家 3,約 2 個貓身長)、frame 12/12/20 與玩家相同。
+- 寫進貓 `CharacterMovement`:`flightEnergy`、`dodgeData`、`flightMoveSpeed 7`(玩家 9)、`flightAscendSpeed/DescendSpeed 5`(玩家 6)。其餘(boost 1.8、drain、dive、bank)留 `CharacterMovement` 預設 = 玩家值。
+- 這些「比玩家小」的數字是照貓 0.45 縮放 + 地面速度已是 3 抓的**起點值**,同 `CatCam*` 一樣待實機手調,重跑選單即套用。
+
+### `CatProceduralWalk.cs` — 飛行時腿不要空踩
+- 飛行時 `CurrentHorizontalSpeed` 是(較快的)飛行巡航速度,會把 gait 開到滿、看起來像貓在空中狂奔。新增 `ComputeGaitTarget(flying, speedNorm)`(pure,可測):飛行時 gait target 強制 0,腿 ease 回靜止姿勢。真正的「收腿飛行姿態」是切片 3。
+
+### 驗證
+- **選單已跑(MCP 重連後)**:`Tools/Live2DAction/Add Cat Character + Camera` 執行成功,場景已存。確認貓 `CharacterMovement`:`flightEnergy` → 貓身上的 `UltimateEnergy`(max 500 / regen 30 / idleDelay 3)、`dodgeData` → 新產生的 `Assets/_Project/Settings/Movement/Cat/CatDodgeData.asset`(distance 1.6 / 12 frames)、`flightMoveSpeed 7` / `flightAscendSpeed 5`。`catMovement.enabled=False`(附身才啟用,正確)。
+- **EditMode:實跑通過**。168 tests,唯一失敗是既有無關項 `CharacterAttackAnimationLinkTests.TriggerNameForComboIndex_BeyondThirdHit_FallsBackToAttack3`(Attack4 vs Attack3,與本次無關)。含 `CatProceduralWalkTests` 的 `ComputeGaitTarget_*`(飛行→0、地面隨速度)。
+- **PlayMode:尚未實跑** —— Test Runner 在 Editor 短暫失焦後 wedge(`tests_running` 卡住,見 KNOWN_ISSUES「Unity MCP PlayMode tests can wedge the Test Runner」)。需使用者點回 Editor 或重啟後重跑 `CatFlightAndDashTests`(0.45 縮放 rig:按住 Fly → `IsFlying` 真 / 體力降 / 爬升;放開 Fly 仍懸停;點 Dodge → `DodgePhase.Dodging` + 無敵 + 位移 + 回 Idle)。
+- **待使用者實機**:貓沒有飛行體力條 UI(切片 3)、體力初值 0(同玩家,附身後 regen 到 30 才能起飛,約 1 秒);飛行/衝刺數值手感。按 C 附身 → 等 1 秒 → 按住 Ctrl 飛 / 點 Shift 衝刺。
+
+## 2026-08-29 (追加27) — 修:第一人稱下按 C 切貓,玩家角色消失只剩劍
+
+使用者回報:「有時用 C 會切換不到貓咪視角,而是卡在玩家……玩家消失了 只剩一把大劍裝飾品」。
+
+### 根因
+`ThirdPersonCameraController` 在第一人稱(按住右鍵瞄準 **或** V 鍵 toggle)時,每個 `LateUpdate` 都呼叫 `SetOwnVisualHidden(true)`——關掉玩家 `Visual` 底下**所有 Renderer**,只留 `firstPersonVisibleWeapon`(那把劍)。`CameraPossessionSwitcher` 按 C 切貓時用 `SetActive(false)` 關掉玩家攝影機,那顆 `ThirdPersonCameraController` 的 `LateUpdate` 就停了,先前關掉的 Renderer **永遠不會被重新開啟**;`OnDisable` 當時只還原鼠標鎖,沒管 visual。→ 附身貓期間玩家整隻隱形,只剩劍浮在原地。「有時」= 只在切 C 前處於第一人稱時才會。
+
+### 修法(`ThirdPersonCameraController.cs`)
+- 新增 `_firstPersonHideApplied` 旗標,`LateUpdate` 末尾記錄目前是否套用了隱藏。
+- `OnDisable`:若旗標為真,呼叫 `SetOwnVisualHidden(false)` + `SetAccessoryHidden(firstPersonHiddenAccessory, false)` 還原,並清旗標。切回玩家時仍在第一人稱 → `LateUpdate` 自然會再隱藏一次(正確、自洽)。
+- `SetOwnVisualHidden` 加 `target == null` 防護(play-mode-stop 拆場景時 `OnDisable` 可能在 target 已銷毀後跑)。
+
+### 驗證
+- **EditMode:實跑通過**(MCP 重連後,168 tests,失敗項同上述既有無關項)—— 編譯無誤,`ThirdPersonCameraController` 改動沒造成 regression。
+- **PlayMode:尚未實跑** —— 新檔 `CameraPossessionFirstPersonRestoreTests`(第一人稱下 `FocusCat()` → 玩家 body Renderer 重新開啟,劍本來就沒關;切回玩家仍第一人稱 → body 再次隱藏)跟 `CatFlightAndDashTests` 一起卡在 Test Runner wedge,待使用者點回 Editor 重跑。
+- **另註**:使用者「切換不到貓咪視角」的部分,若清 body 隱藏後仍覺得沒切到,多半是貓出生點離玩家僅 2m + 0.45 縮放,CatCamera 視野裡塞滿(現在可見的)玩家;把貓開遠一點再切 C 對照。真的沒切到就看 Console 有無 `[CameraPossession] C pressed`(沒有 = Game view 失焦,見 KNOWN_ISSUES 的 Play Mode 失焦凍結)。
+
+## 2026-08-29 (追加28) — 貓空中衝刺無感:CatDodgeDistance 1.6 → 3(數值微調)
+
+使用者實機回報:「貓咪視角時 空中沒法衝刺 且衝刺時沒特效」。
+
+### 空中衝刺無感 —— 已調
+- 診斷:貓 dodge 其實有觸發(位移、無敵、回 Idle 都正常),但 `CatDodgeDistance 1.6` → dash speed `1.6 / 0.2s = 8`,只比飛行巡航 `flightMoveSpeed 7` 快 **1.14x**,在空中/地面都讀不出「衝」的感覺。玩家是 `3 / 0.2s = 15` vs 飛行 9 = **1.67x**。
+- 修法:`CatCharacterSetup.CatDodgeDistance` **1.6 → 3**(與玩家一致)。現在 dash speed 15 vs 貓飛行巡航 7 = **2.14x**,空中衝刺明顯。frame timing(12/12/20)不變。
+- `CreateOrLoadCatDodgeData` → 改名 `CreateOrUpdateCatDodgeData`:**每次重跑選單都把 `Cat*` 常數重寫進 `CatDodgeData.asset`**(舊版「asset 已存在就原樣回傳」→ 改 `CatDodgeDistance` 重跑選單其實沒作用)。跟 flight 數值一樣的「改常數、重跑選單即套用」契約。此 asset 無人手調,由 setup script 擁有。
+- `CatFlightAndDashTests.CreateCatDodgeData()` 的 stub 值 1.6 → 3 保持一致。
+
+### 衝刺沒特效 —— 未做,留切片 3
+- 貓沒有 `Health` 元件,也沒掛 `InvulnerabilityRippleEffect`(玩家衝刺無敵時的世界空間銀白漣漪,靠 `Health.IsInvulnerable` 驅動;`CharacterMovement` 只在 `health != null` 時同步 `IsDodgeInvulnerable → health.IsInvulnerable`)。
+- 使用者選擇本次只調數值,特效歸切片 3(飛行/衝刺姿態 + 飛行體力條 UI + 數值微調)。切片 3 要嘛給貓加 `Health` + `InvulnerabilityRippleEffect`(可能重用 `InvulnerabilityRippleSetup`),要嘛做輕量版直接讀 `CharacterMovement.CurrentDodgePhase`。
+
+### 驗證
+- 選單重跑成功,確認 `CatDodgeData.asset` distance=3 / speed=15、貓 `CharacterMovement.dodgeData` 指向它、場景已存。
+- EditMode 實跑 168 tests 通過(唯一失敗仍是既有無關的 `CharacterAttackAnimationLinkTests…FallsBackToAttack3`)。
+- PlayMode(`CatFlightAndDashTests` 等)仍卡 Test Runner wedge,待使用者實機。使用者實測空中衝刺手感。
+
+## 2026-08-29 (追加29) — 貓咪戰鬥機制:完整設計文件（切片 2 規劃）
+
+使用者:「接下來是貓咪普通攻擊的部分,先探討作法,我要做完整機制大項目」。經一輪探討 + AskUserQuestion 定案,產出 **`Docs/CAT_COMBAT_DESIGN.md`**(照 `FLIGHT_SYSTEM_DESIGN.md` 格式)。
+
+### 範圍(使用者定案)
+三段連段 ＋ 蓄力重擊 ＋ 撲擊 pounce ＋ 空中攻擊 ＋ 命中反饋(hitstop ＋ 螢幕震動 ＋ 擊退 ＋ 音效)＋ 敵貓,全部要做,分 7 個切片交付。
+
+### 關鍵調查結論
+- **可複用**:`PlayerCombat`(主動 `OverlapCapsule`/`OverlapSphere`,攻擊端不需 collider)、`ComboAttackState`、`AttackData`、`AttackResolver`、`EnemyAI`(已 `IInputCommand` + `ICharacterSpeedSource`)。
+- **要全新做**:蓄力機制(`ComboAttackState` 只有連點推進、`AttackData` 無 charge 欄位、`IInputCommand` 無 held 信號)、通用命中反饋(hitstop/knockback/screenshake 只有 Boss 專屬版)、音效/震動基礎設施(只有 `RangedWeapon` 有 `AudioSource`)、撲擊、多骨頭 procedural pose(`AttackPoseVisualizer` 單骨頭已停用)、貓的 `Health`/`Hurtbox`。
+- 玩家目前是 **3 段** combo、**無真正蓄力**(所謂「續力」= 連點續段)。
+
+### 操作定案(AskUserQuestion)
+- 蓄力重擊 = 按住左鍵 ≥0.35s 放開(取代普攻起手);點放 = 連段。
+- 撲擊 = 地面移動中點左鍵(移動中無法原地揮爪,已接受);靜止點左鍵 = 原地連段。
+- hitstop **只在貓附身時**啟用 —— 不碰玩家/Boss 戰的 `Time.timeScale`,附身切回玩家立即還原 1。
+- 攻擊時自由移動(不鎖腳)、攻擊朝身體正面(不給貓 lock-on)、空中用 `PlayerCombat.UseSphericalJudgment`。
+
+### 切片順序
+2-1 骨架+單招 → 2-2 三段連段 → 2-3 `CatAttackPose` → **2-4 命中反饋(提前)** → 2-5 蓄力重擊 → 2-6 撲擊 → 2-7 貓承傷+敵貓。
+
+尚未寫任何實作碼。下一步:開工切片 2-1。
+
+## 2026-08-29 (追加30) — 貓咪近戰機制:切片 2 全部 7 項一次實作
+
+使用者:「開始動工 一次全部做完再回報」。7 個子切片一次做完(設計見 `Docs/CAT_COMBAT_DESIGN.md`)。
+
+### 共用碼改動(全部 additive,177 EditMode tests 中 176 綠、唯一失敗是既有無關的 `CharacterAttackAnimationLinkTests…FallsBackToAttack3`)
+- **`ComboAttackState`**:加 `StartOverride(AttackData)` / `IsOverrideAttackActive` —— 連段陣列外的單發招(蓄力重擊 / 撲擊),跑同一套 Startup/Active/Recovery,`ComboIndex` 全程留 -1,不串連段。既有 12 個 `ComboAttackStateTests` 不受影響。
+- **`AttackData`**:加 `knockbackForce` / `knockbackLaunches`(預設 0/false → 既有所有 asset 行為不變)。
+- **`AttackResolver.ResolveHits`**:`DamageInfo.Direction` 從 `Vector3.zero` 改成「遠離攻擊者的水平單位向量」(`StancePoise` 不讀 Direction,既有無影響);命中且 `KnockbackForce > 0` 且目標有 `IKnockbackReceiver` 時派發擊退。
+- **`PlayerCombat`**:加 `TryStartOverrideAttack` / `FeedAttackPressed`(外部輸入路徑,`_externalAttackPressed` 預設 false → Player/Enemy/dummy 不受影響)/ `IsIdle` / `IsOverrideAttackActive` / `CurrentAttackId` / `Hit` 事件(命中/揮空各發一次,只有 `CatCombatFeedback` 訂閱)。
+- **`PlayerInputProvider`**:加 `AttackHeld`(**非** `IInputCommand` 成員,player-only —— 不動任何 AI stub / 介面實作)。
+- **`CharacterMovement`**:未動 `Update`(撲擊改用既有 `ApplyDash`);切片 2-1 只多接了貓的 `health` 欄位。
+
+### 新 runtime 元件
+- `CatAerialJudgment`(飛/滯空 → `UseSphericalJudgment`)、`CatChargeAttack`(按住左鍵放開 → 重擊,tap → 連段)、`CatPounce`(移動中點左鍵 → `ApplyDash` 前衝 + 撲擊招,order -8 先於 charge)、`CatAttackPose`(多骨頭 procedural,`ComputeSwing` pure,LateUpdate order 20,疊在 `CatProceduralWalk` 上,出招時 `SetAttackSuppression(1)`)。
+- `HitStopController`(scene-single,`Time.timeScale` dip;只有 `CatCombatFeedback` 在貓附身時呼叫,切回玩家 `CancelAndRestore`)、`CameraShake`(掛雙相機,order 100)、`CombatSfx`(clip 待補,wired-but-silent)、`CatCombatFeedback`(訂 `PlayerCombat.Hit` → hitstop/shake/sfx,自己 gate 附身狀態)、`MeleeKnockback`(通用擊退:`CharacterMovement`/`CharacterController`/transform 三種目標)。
+- `CatProceduralWalk`:加 `SetAttackSuppression` hook(乘 gait 幅度)。
+
+### Editor
+- `CatCharacterSetup.WireCombat()`:貓 root 掛整套 melee stack、產 `Settings/Combat/Cat/CatSwipe1-3 + CatHeavy + CatPounce.asset`、`AttackOrigin` 子物件(嘴前)、`catControl` 加 PlayerCombat/CatChargeAttack/CatPounce/CatAerialJudgment、`HitStopController` 掛 `CameraPossession`、`CameraShake` 掛雙相機。**已跑,場景已存,execute_code 逐項確認接線正確。**
+- 新選單 `Tools/Live2DAction/Add Enemy Cat (AI-driven)`:`EnemyCat`(EnemyAI + PlayerCombat[CatEnemySwipe] + CatProceduralWalk[speedSource=EnemyAI] + CatAttackPose + Health + MeleeKnockback),GreyboxTest (6,6)。**已跑。**
+
+### 測試
+- **EditMode 實跑通過**:新增 `CatCombatTests`(8:ComputeSwing/LeadPaw/StartOverride×3/LungeSpeed/DecayFactor)+ `CatProceduralWalkTests` 的 suppression clamp。177 total,176 綠。
+- **PlayMode `CatMeleeCombatTests`(6:打假人扣血 / 出界不中 / combo 續段 / 球判側擊 / 重擊override+擊退 / hitstop dip+cancel)已寫、compile 過、尚未實跑** —— MCP 下 Play mode 失焦凍結,測試 coroutine 卡在第一個 yield(見 KNOWN_ISSUES)。待使用者點著 Editor 跑。
+- **待使用者實機**:所有 pose 角度/軸(generic auto-rig 骨頭方向未知)、frame data 手感、hitstop 長度、撲擊距離、震動強度、敵貓難度、SFX clip。
+
+### 追加30 修正 — 「有時普通攻擊也會衝刺」
+使用者回報:貓站著揮爪有時會變成撲擊(前衝)。兩個原因:
+1. **輸入讀取晚了一幀**:`CatPounce` 在 order -8 讀 `PlayerInputProvider.MoveInput`,但 `PlayerInputProvider` 在 order 0 才更新 → 讀到上一幀的 `MoveInput`,玩家已放開方向鍵、撲擊卻還用舊值觸發。修:`PlayerInputProvider` 加 `[DefaultExecutionOrder(-100)]`,所有 consumer(movement/combat/camera/CatPounce/CatChargeAttack)都讀到當幀輸入。Input System 的 `wasPressedThisFrame` 依事件時間軸判定、不看 poll 順序,提前 poll 不會漏 edge 或重複消費。179 EditMode tests 無迴歸。
+2. **觸發門檻太鬆**:原本「按住任一方向鍵 + 點左鍵」就撲擊 → 站著微調位置手還在鍵上就誤觸。修:`CatPounce.ShouldPounce`(新 pure 函式,`CatCombatTests` +2 鎖行為)現在要求**同時**有方向輸入**且**實際水平速度 ≥ `moveSpeed × 0.7`(貓 3 → 2.1)。站著、貼牆、剛起步加速中、放鍵滑行 → 全部維持普通揮爪;真的在跑 + 點左鍵才撲擊。
+選單已重跑,`pounceMinSpeedFraction=0.7` 已套用,場景已存。
+
+### 追加30 續 — 貓咪 5 秒復活 ＋ 場上兩隻敵貓
+使用者:「1.貓咪死後5秒復活 2.場上有第二隻貓咪」。
+
+- **新 `RespawnWiring`**(Editor 共用 helper):在 `GameManager` 上找/建/回收一顆 `RespawnController` 指向某角色,同 `EnemyRespawnSetup` / `MechaRespawnSetup` 的 reclaim-orphan 模式。in-place 復活、delay 5s(全場景一致)。
+- **玩家貓**:`CatCharacterSetup` 現在也給 `Cat` 掛 `RespawnController`(5s)。附身狀態下貓死掉時控制/視角會凍 5s —— 同玩家自己的 `RespawnController` 既有取捨(最簡死亡處理,無 game-over 畫面)。
+- **`CameraPossessionSwitcher` 加 `catHealth`**:附身貓時貓死掉 → 自動 `FocusPlayer()` 把控制/視角交還玩家(否則會卡在關掉的 CatCamera 看黑畫面 5s);貓復活後再按 C 重新附身。null-safe,`CameraPossessionSwitcherTests` 無迴歸。
+- **敵貓 ×2**:`EnemyCatSetup` 改成一次產 `EnemyCat` @ (6,6) ＋ `EnemyCat2` @ (-6,6),各自掛 `RespawnController`(5s)。選單改名 `Tools/Live2DAction/Add Enemy Cats (AI-driven, x2, respawn)`。re-runnable(先移除舊 RC 再 destroy+rebuild)。
+- 選單已重跑:`GameManager` 上 Cat/EnemyCat/EnemyCat2 各一顆 RC(health 已接、delay 5、0 orphan),兩隻敵貓就位,`switcher.catHealth` 已接,場景已存。EditMode 179 tests 178 綠(唯一失敗仍是既有無關項)。
+
+### 追加30 再修 — 敵貓移除 ＋ 脖子骨頭確認
+使用者:「場上仍然有兩隻貓 請排除」(→ AskUserQuestion:兩隻敵貓都刪)、「貓咪不是有脖子骨頭嗎 幫我操控看看效果」。
+
+- **敵貓移除**:`EnemyCat` / `EnemyCat2` 從場景刪除,它們的 `RespawnController` 一併移除(`GameManager` 剩 9 顆:8 原有 + `Cat`)。刪掉 `EnemyCatSetup.cs` 與 `CatEnemySwipe.asset`。切片 2-7 的「敵貓」部分**取消**(使用者規劃時說要、實際看到後決定不要)。`CatAttackPose` / `CatProceduralWalk` / `MeleeKnockback` 保留(玩家貓在用)。場景現在只有一隻可附身的 `Cat`,戰鬥標靶用現有 `TrainingDummy` / `Enemy`。
+- **脖子骨頭確認 + 微調**:解 glb 骨樹確認脖子鏈是 `Bone_028`(頸根,接肩胸 Bone_011)→ `Bone_027`(頸中)→ `Bone_026`(頭尾端,leaf)。繞各自 local X 軸 pitch → 頭乾淨地上下擺(截圖驗證:35° 明顯低頭、25°×2 是強力咬擊下探、20°×2 抬頭)。大角度時頸部有可見擠壓但可接受。據此把 `CatAttackPose` 的頭部 pose 從「只有 Bone_027、strike 16°(幾乎看不出)」改成「Bone_028 + Bone_027、strike 合計 ~32° 下探 / windUp ~18° 抬頭」。選單已重跑套用。
+- 玩家貓 5 秒復活、`CameraPossessionSwitcher.catHealth` 自動交還控制 —— 保留(使用者要的)。
+- EditMode 179 tests 178 綠(同既有無關失敗)。
+
+### 追加30 再修2 — player / 守望者 / cat 三視角互切
+使用者:「讓 player 守望者/cat 三者可以互相切換視角」。之前 `ViewFocusDirector`(T 鍵,守望者)只認得 `onFootCamera`(Main Camera)/ `vehicleCamera`,附身貓時(CatCamera active、Main Camera inactive)按 T 沒反應。
+
+- **`ViewFocusDirector` 加 `catCamera` / `catController`**:`ActiveCamera()` / `ControllerFor()` 多一個候選。T 現在接管「當下 active 的那台相機」——不管你附身 player 還是 cat。
+- **`suspendWhileWatching` 加貓的控制組**(`CharacterMovement` / `PlayerCombat` / `CatChargeAttack` / `CatPounce` / `CatAerialJudgment`)。守望者視角下 W/A/S/D 只平移攝影機、不會驅動貓。director 的 snapshot-restore 機制自動處理「你是 player 時貓控制早就 disabled」的情況。
+- **`CameraPossessionSwitcher` 加 `viewDirector`**：守望者視角中按 C —— 追加初版是「忽略」，但使用者回報「可以從 c 轉回 t 但反過來不行」（按 C 想回角色卻沒反應）。改成 **C 在守望者視角中 = 離開守望者，回到你剛剛附身的角色**（跟 T 一樣）；再按一次 C 才 player↔cat 切換。（不做「離開+切換」一鍵完成：`ViewFocusDirector` 的返回路徑會在 LateUpdate 還原 pre-Watcher 的控制 snapshot，會蓋掉同一幀在 Update 做的附身切換。）
+- 新 `WatcherCatWiring`(Editor 共用 helper)雙向接線,`CatCharacterSetup` 與 `WatcherSetup` 結尾都呼叫(哪個選單後跑哪個補完)。
+- **操作**：C = player ↔ cat 附身；T = 守望者視角開關（從 player 或 cat 都行，回來時回到你剛剛附身的那個）；**守望者視角中 C 和 T 都能離開**。三視角任意兩者間 ≤2 鍵可達。
+- Play mode 反射驗證：cat→watcher→（C 或 T）離開 → 貓控制正確 restore、附身狀態保留；player 同理。相機 active、`catMove.enabled` 逐步確認正確。EditMode 179 tests 178 綠（同既有無關失敗）。
+
+## 2026-08-29 (追加31) — 新區域「學校」greybox（新城市 第 1 步）
+
+使用者:「接下來我要製作新城市。本地不是有一個洞口給車出去嗎，出去有一條通道，通道頂端再銜接建立一個像 ground 一樣的土地，命名為'學校'」。
+
+- **新選單 `Tools/Live2DAction/Add School Area (學校 ground + walls)`**(`SchoolAreaSetup.cs`,re-runnable delete+rebuild)。
+- **`學校`**:30×30 的 Cube 地板(同 `GreyboxSceneBuilder.CreateGround` 慣例:`Ground_StoneFloor` 材質、上表面 y=0.5)。位置:北緣**貼齊 `VehicleRoad` 南端**(讀 live collider `bounds.min.z`,現況 z=-80,fallback -80)→ 中心 (0, 0, -95),z 範圍 [-110, -80]、x [-15, 15]。與道路無縫接(實測 `學校` 北緣 z = 道路南端 z = -80.0)。
+- **三面邊界牆** `SchoolWall_South` / `_East` / `_West`(BoxCollider + 灰色 `GreyboxWall.mat` visual,高 6、厚 1、跨 32,鏡射 `GreyboxSceneBuilder.CreateBoundaryWalls`)。**北面留空給道路**。
+- 選單已跑、場景已存、compile 乾淨。截圖確認:本地 → 道路 → 學校 三段相連、地板齊平。
+
+### 追加31 續 — 學校圍牆改成單洞口(不同顏色)＋ car 面向本地洞口
+使用者:「1.學校的圍牆要跟本地一樣只留一個洞口 圍牆用不同顏色 2.car 的位置改為 面向本地的洞口出口」。
+
+- **學校圍牆改成完整周界 + 單一洞口**(跟本地南牆同形狀):`SchoolAreaSetup` 現在建 5 段 —— `SchoolWall_South`/`_East`/`_West` 全牆 + `SchoolWall_NorthLeft`/`_NorthRight` 夾住北面路口。洞口置中 x=0(對齊道路)、寬 = 道路寬 + 0.6 ×2 ≈ 7.2(讀 live road collider)。
+- **圍牆改用 `SchoolWall.mat`(teal 青綠)** —— 明顯區別於本地南牆的橘色、和 greybox 灰。(舊 `GreyboxWall.mat` 不再使用。)
+- **Buggy 移到 (0, 1.2, −10)、朝向 y=180**(forward = −Z),正對本地南牆洞口(z=−15.5,5.5m 前方),往前開就直接穿洞口上道路。清掉 rigidbody 殘留 velocity。場景已存。
+- **待辦(新城市後續)**:建築 / 生成點 / 傳送點 / 道路正式併入 `學校`;`學校`/`SchoolWall` 目前沒有 `BoundaryBlockEffect` 撞牆 FX、背景地形沒延伸過去。
+
+## 2026-08-29 (追加32) — 武士加 leash(警備範圍)
+
+使用者:「武士感覺警備範圍怪怪的 明明玩家離得很遠」。根因:`BossStateMachine` 完全沒有 leash —— 一旦 `alertRange`(5) 內觸發交戰,`Approach`/`Attack` 就無止境追玩家,沒有「放棄」距離,會一路追過整張地圖。
+
+- **`BossStateMachine` 新增 `leashRange`(預設 14)＋ `returnHomeSpeedFraction`(0.6)**。leash 從**駐點**(`_homePosition`,Awake 時的位置)量,不是 boss 當下被追到的位置。
+- **新 `TryLeashReset()`** 進 `Update` 優先序(HitReaction 之後):任何非終止狀態下,**玩家離駐點 > `leashRange`** → 立刻 `ChangeState(Dormant)`、清速度。terminal 狀態(Dead/Victory)＋ 相位轉換演出不受影響。`leashRange = 0` = 停用(回到舊的無限追擊)。
+- **`UpdateDormant()`** 現在會「走回駐點」——被 leash 拉回 / 被打飛離開駐點後,Dormant 狀態下朝 `_homePosition` 移動 + 轉向,回到 0.6m 內才停。玩家回到 `alertRange` 內照樣重新 Alert。
+- Play mode 反射驗證:玩家瞬移到 z=-30(離駐點 30m)→ boss 從 `Attack` 轉 `Dormant`;玩家回 spawn(離駐點 2.5m)→ boss 轉 `Alert`。EditMode 179 tests 178 綠(同既有無關失敗)。
+- **`武士` 移到本地北端** (0, 0.6, 11)、面向南(forward −Z,朝玩家來的方向)—— 使用者選的。離玩家 spawn 11.3m(> `alertRange` 5、< `leashRange` 14),所以一進 Play 是 Dormant、`WushiBossHud` 隱藏;往北走 ~6m 進 alertRange 才交戰;往南跑離駐點 >14m boss 放棄走回北端。Play mode 反射驗證這三段都對。
+
+## 2026-08-29 (追加33) — 車輛操控:降低轉向靈敏度 ＋ 加抓地/角阻尼(治甩尾與原地打轉)
+
+使用者:「感覺car有點難操控」→(AskUserQuestion)「轉向太靈敏/容易過彎過度、甩尾」＋「容易打滑/原地打轉」。
+
+`VehicleController` 調校(code default ＋ 場景 Buggy 兩邊都改,`OnValidate`/`Awake` 會套用):
+- **轉向收斂**:`maximumSteeringAngle` 32°→**24°**;`steeringSpeedFalloffReference` 70→**45 km/h**(速度一起來轉向權限就明顯下降,不會高速還大打方向);`steeringSmoothSpeedDegrees` 120→**90**(轉入更漸進)。
+- **側向抓地**:`sidewaysFriction` `stiffness` 1.6→**2.2**、`asymptoteSlip` 0.5→**0.7**、`asymptoteValue` 0.75→**0.85**(車尾不那麼容易脫出,而且滑動中還能保有抓地力,不會過峰值就掉到很低)。
+- **角阻尼**:新增 `angularDamping` 欄位(套到 Rigidbody,`Awake`/`OnValidate`),Unity 預設 0.05 → **0.5** —— 這是治「原地打轉」的關鍵:底盤一旦開始偏航(路緣、急彎、顛簸)以前幾乎沒有阻尼收斂它。
+- 極速 90km/h、馬力 3500、重心 −0.45 不動(使用者沒選「太快/翻車」)。
+- EditMode 179 tests 178 綠(同既有無關失敗)。Play 進去確認 `Awake` 有套用(rb.angularDamping=0.5、輪子 sidewaysFriction stiffness=2.2)。**實際手感待使用者實機**。
+
+## 2026-08-29 (追加34) — 武士 leash 5m ＋ 起飛時鎖定丟失/視角亂轉修復
+
+使用者:「1.武士警備距離改為5m 2.武士在起飛後 玩家如果是鎖定視角會瞬間丟失 並且視角不規則轉向」。
+
+### 1. leash 5m
+`BossStateMachine.leashRange` 14 → **5**(＝ `alertRange`)。加 `leashGraceSeconds`(0.35):玩家離駐點 > leashRange 要**持續 0.35s** 才 disengage —— 避免 leash 跟 alert 同距離時在邊界 Dormant↔Alert 每幀跳。
+
+### 2. 起飛時鎖定丟失 + 視角亂轉
+根因兩個:
+- **`TargetLockUtility.IsStillValid` 用 3D 距離對 `breakRange`(20)**:武士 leap slam / dive 起飛往上竄 15-20m,3D 距離就破 20 → 鎖定瞬間消失。→ **改成只算水平距離**。往上飛不管多高都不丟鎖(隻狼式);真的水平跑遠 >20m 才丟。既有 `TargetLockUtilityTests` 4 個(地面目標)不受影響,+2 新測(頭頂高空保持鎖定 / 水平遠丟鎖)。
+- **`ThirdPersonCameraController.UpdateDuelCamera`(武士的隻狼決鬥鏡頭)拿 boss 真實 Y 算垂直 span/看向點/pitch**:boss 20m 高時 span 變成 ~24m,鏡頭猛拉遠 + pitch 打到天上,boss 在頭頂繞圈時 `centerYaw` 亂跳 → 鏡頭亂轉。修:
+  - 新 `duelMaxBossHeightAbovePlayer`(4.5):框景用的 boss 高度封頂在「玩家 +4.5m」,起飛時鏡頭穩定微仰追 boss 的**水平位置**,落地恢復完整框景。鎖定準心照樣顯示 boss 真實位置。
+  - 新 `duelOverheadSeparation`(3):boss 水平距離 < 3m(近乎頭頂)時 yaw 停止追它(方向雜訊會讓鏡頭轉圈),保持上一個穩定朝向。
+- Play mode 反射驗證:boss 瞬移到 y=25(水平 0.7m)→ 仍鎖定;boss 水平 30m+高 25m → 丟鎖(正確);boss 20m 頭頂時鏡頭 pitch=0.7°(以前會打到 minPitch)。
+- EditMode 181 tests 180 綠(同既有無關失敗)。場景 `leashRange` 已設 5、已存。
+
+## 2026-08-29 (追加35) — 武士 leash 6m ＋ Enemy 移到 NW 牆角
+
+使用者:「1.武士警備距離改為6m 2.enemy移動到另一邊的圍牆上方(90度夾角處)→(AskUserQuestion)西北角 NW (-15, 7, 15)」。
+
+- **`BossStateMachine.leashRange` 5 → 6**(code default ＋ 場景)。稍微大於 `alertRange`(5),邊界更不會抖。
+- **`Enemy`(076/Arisa,棲息在圍牆上,有 `PerchRejector`)從北牆正中偏東 (5, 7.08, 15.5) 移到西北角 (-15.5, 7.08, 15.5)** —— 北牆 × 西牆的 90° 夾角上方,rot y=135 面向本地中央。距武士 17.4m、距玩家 spawn 21.1m(`EnemyAI.detectionRange` 8,所以平時在角落待命,玩家靠近西北才啟動)。截圖確認站在牆角交會處。純場景座標調整,沒動 `EnemyAI`/`PerchRejector` 邏輯。
+- EditMode 181 tests 180 綠(同既有無關失敗)。場景已存。
+
+## 2026-08-29 (追加36) — 修:武士飛空技能失效(leash 太緊)＋ 警備距離釐清
+
+使用者:「武士的飛空技能失效 只會待在原地做出像是重複動作」＋「列出武士/enemy/屁孩王的警備距離」。
+
+**根因**:追加34/35 把 `leashRange`(從駐點量的「放棄追擊」半徑)縮到 5→6m。但一場正常戰鬥裡玩家閃避拉開很容易就離駐點 >6m → `TryLeashReset` 觸發 → `ChangeState(Dormant)` 把 leap slam / dive 的起跳**打斷**、掉出戰鬥 → 走回駐點 → 玩家又靠近 → 再交戰 → 再被打斷……在駐點附近來回 = 「重複動作待在原地」。**「警備距離」(guard/alert range) 應該是 tuning 的 `alertRange`,不是 leash** —— 之前幾次把它當 leash 改是誤解。
+
+- **`leashRange` 6 → 30**(武士 ＋ 屁孩王,code default ＋ 場景)。30m 從駐點 (0,11) 涵蓋整個本地(駐點到最遠牆角 ~29m),只有玩家真的**穿過車庫洞口往道路/學校**才會 disengage。
+- **`TryLeashReset` 加特殊狀態排除**:`Vanishing`/`DiveAttack`/`LeapSlamWindup`/`LeapSlam`/`Ultimate*`/`DodgeCounter`/`Breakdance`/`PostureBroken`/`HitReaction` 期間永不 leash-abort(鏡射 `TryEnterTooCloseKick` 的排除集)—— 起跳中的攻擊一定讓它打完。
+- **`Wushi_Tuning.alertRange` 5 → 6**(這才是使用者要的「武士警備距離 6m」)。
+- **`Enemy` 加 `EnemyPerchPad`**(隱形 3.5×3.5 collider,牆角上方 top y=6.9):CharacterController + 重力站在 1m 寬牆頂會慢慢滑下去(play 8000 幀後掉到地面),給它一塊穩定平台。Enemy 移到 (-15, 7.5, 15) 站在 pad 上。
+- EditMode 181 tests 180 綠(同既有無關失敗)。**飛空實機驗證待使用者**(MCP 下 play mode 凍幀,無法跑真實戰鬥時序)。
+
+### 警備距離一覽（追加36 當下）
+| 角色 | 警備距離（進入交戰的偵測半徑）| 放棄追擊 leash |
+| --- | --- | --- |
+| 武士 | **6m**（`Wushi_Tuning.alertRange`）| 30m（`BossStateMachine.leashRange`）|
+| 屁孩王 | 5m（`PW2_Tuning.alertRange`）| 30m |
+| Enemy / 076 | 8m（`EnemyAI.detectionRange`）| 無（`EnemyAI` 沒有 leash）|
+
+## 2026-08-29 (追加37) — 修:武士返回走路姿勢異常(改瞬移) ＋ Enemy/屁孩王 出門口即脫離
+
+使用者:「1.有時武士丟失目標後返回時走路姿勢不正常 2.設定 enemy 屁孩 無論當下警備距離和追擊距離是否滿足,只要玩家出了門口(他們出不了牆) 視為丟失玩家目標,回歸原位(武士不受此限,屬於 boss;enemy 屬於普通怪物;屁孩王屬於精怪)」。
+
+### 1. 武士返回走路姿勢異常 → 改「瞬移回駐點」
+**根因**:`UpdateDormant()` 之前會讓 boss 在 Dormant 狀態下**走回駐點**。但 Dormant 的 animator state 是靜態 pose、不是 locomotion blend → 一邊移動一邊放靜止動畫 = 腳底打滑/姿勢怪。
+- **`UpdateDormant()` 移除走回駐點的位移/轉向碼**(連同 `returnHomeSpeedFraction` 欄位),現在 Dormant 恆為真正靜止。
+- **新 `SnapToHome()`**:leash 觸發時 `_controller.enabled = false` → `transform.SetPositionAndRotation(_homePosition, _homeRotation)` → 還原 —— 直接瞬移。觸發當下玩家離駐點 30m+ 或已出本地,看不到 boss,瞬移無破綻。
+- Awake 多存 `_homeRotation`(以前只存 `_homePosition`)。
+
+### 2. Enemy(普通怪物)/ 屁孩王(精怪)出門口即脫離
+新增純靜態盒判定 `Live2DAction.AI.ArenaBounds.IsOutside(pos, centerXZ, halfExtent)`(軸對齊方形,忽略 Y;鏡射 `TargetLockUtility` 的純函式風格)。
+- **`EnemyAI`** 新增 `returnHomeWhenPlayerLeavesArena`(預設 false)/`arenaCenterXZ`(原點)/`arenaHalfExtent`(15.5)。`Update` 在 `target == null` 檢查後:旗標開 ＋ 玩家在本地方形外 → 清 MoveInput/AttackPressed/速度、`CurrentState = Idle`、瞬移回 Awake 時的 spawn(`_controller` 停用/還原),`return`。無視 `detectionRange`。
+- **`BossStateMachine`** 新增 `leashOnLeaveArena`(預設 false)/`arenaCenterXZ`/`arenaHalfExtent`。`TryLeashReset` 內:旗標開 ＋ 玩家出本地 → **免 grace 立即** disengage(仍受特殊狀態排除保護,不會砍飛行中的 leap)。
+- **場景設定**:`屁孩王` `leashOnLeaveArena = true`;`Enemy` `returnHomeWhenPlayerLeavesArena = true`;**`武士` 兩個旗標都維持 false**(boss 不受門口限制,只吃 30m 距離 leash)。
+- 新測 `ArenaBoundsTests`(6 個:中心/邊緣內/X 外/Z 外穿門口/Vector3 忽略高度/非零中心=學校)。EditMode **187 tests 186 綠**(唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項)。
+- 武士飛行時序、Enemy/屁孩王 實際脫離行為**待使用者實機驗證**(MCP 下 play mode 凍幀)。
+
+### 警備距離一覽（追加37 當下,無變動）
+| 角色 | 分類 | 警備距離（偵測半徑）| 脫離條件 |
+| --- | --- | --- | --- |
+| 武士 | boss | 6m（`Wushi_Tuning.alertRange`）| 玩家離駐點 > 30m（`leashRange`）|
+| 屁孩王 | 精怪 | 5m（`PW2_Tuning.alertRange`）| 玩家離駐點 > 30m **或玩家出本地門口**（`leashOnLeaveArena`）|
+| Enemy / 076 | 普通怪物 | 8m（`EnemyAI.detectionRange`）| **玩家出本地門口**（`returnHomeWhenPlayerLeavesArena`）|
+
+## 2026-08-29 (追加38) — Enemy/屁孩王 移動速度 ×1.5 ＋ 腳步同步(治腳滑) ＋ Enemy 解除門口限制
+
+使用者:「1. enemy 和屁孩王移動速度太慢了 *1.5 倍,腳步要配合 2. enemy 解除城牆內限制」。
+
+### 1. 移動速度 ×1.5
+- **Enemy**:`EnemyAI.moveSpeed` 2 → **3**(場景值。空中 `aerialHorizontalSpeed` 2.4 不動 —— 它綁定「1.2× 玩家飛行速度」的設計註解,而且使用者講的是走路慢)。
+- **屁孩王**:`PW2_Tuning` `walkSpeed` 2→**3**、`runSpeed` 4.5→**6.75**、`unsteadyWalkSpeed` 1.2→**1.8**。(存檔時 SO 順帶把先前用預設值、沒寫進資產的欄位補序列化出來 —— 值全等 `BossTuning.cs` 的 code default,`alertRange`/`reviveDelaySeconds` 等未變。)
+
+### 2. 腳步同步(foot-sync,治腳滑)
+兩邊的 Locomotion blend tree 頂端 clip(NewRun / PW2_Running)是照「特定速度」做的動作;把角色實際位移速度推過那個值,參數只會 clamp、跑步 clip 維持原本步頻 → 身體滑過去(腳滑)。新增「超速時等比例加快 Animator 播放速率」:
+- **`CharacterAnimatorLink`**(Enemy 用):新 `syncStrideToGroundSpeed`(opt-in,場景在 Enemy 上勾)＋ `maxStrideRate`(2.5)。著地且非飛行時 `animator.speed = clamp(實際速度 / maxAnimatorSpeed, 1, maxStrideRate)`。攻擊/僵直/待機時速度為 0 → 比值自然回 1,攻擊 clip 不會被加速。**玩家不受影響**(旗標預設關,且玩家 moveSpeed 剛好等於 blend tree 頂端)。
+- **`BossStateMachine`**(屁孩王用):新 `locomotionAuthoredSpeed`(0=停用,屁孩王設 **2** ＝ PW2_Running 原本的速度)。**只在 `Approach` 狀態**套用 `animator.speed = clamp(實際速度 / locomotionAuthoredSpeed, 0.6, 2.5)`;`OnExitState` 本來就會把 `animator.speed` 歸 1,所以離開 Approach 立刻復原(也不會蓋掉 PostureBroken 的 speed=0)。武士留 0(不同 rig / controller,且不在這次需求內)。
+- 純函式 `CharacterAnimatorLink.ComputeStrideRate` / `BossStateMachine.ComputeStrideRate` 各 4 個 EditMode 測試。
+
+### 3. Enemy 解除門口限制
+`Enemy` 的 `returnHomeWhenPlayerLeavesArena` 追加37 剛設 true → 這次改回 **false**。使用者定調:只有 **屁孩王(精怪)** 受「玩家出本地門口即脫離」限制,**Enemy(普通怪物)不受限**,可依 `detectionRange`(8m)一路追出門口。`ArenaBounds` 及 `EnemyAI` 的欄位保留(旗標關著,隨時可再開)。
+
+- EditMode **195 tests 194 綠**(唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項)。
+- **腳步同步的實際觀感、×1.5 後的追擊/命中手感待使用者實機**(MCP 下 play mode 凍幀)。
+
+### 移動/脫離一覽（追加38 當下）
+| 角色 | 分類 | 地面移動速度 | 出本地門口即脫離？ |
+| --- | --- | --- | --- |
+| 武士 | boss | walk 5.5 / run 7.5（`Wushi_Tuning`）| ❌（只吃 30m 距離 leash）|
+| 屁孩王 | 精怪 | walk 3 / run 6.75（`PW2_Tuning`）| ✅ `leashOnLeaveArena` |
+| Enemy / 076 | 普通怪物 | 3（`EnemyAI.moveSpeed`）| ❌（追加38 改回不受限）|
+
+## 2026-08-29 (追加39) — 被限制角色改「走到門口觀望」，不再碰邊界就瞬移回家
+
+使用者:「被限制城牆內移動的角色,一旦碰到邊界時不要直接傳回原本位置,而是判斷是否有目標在警備範圍內(追擊距離同理),一直在門口觀望著目標」。
+
+追加37/38 的行為:玩家一出本地方形,被限制的角色(屁孩王)立刻 `SnapToHome` + Dormant。太突兀。改成:
+
+### 共用純函式（`ArenaBounds`）
+- `ClassifyTarget(aiPos, targetPos, center, halfExtent, watchRange)` → `Inside` / `OutsideNearby`(出了牆但離 AI 還在 watchRange 內)/ `OutsideFar`(出了牆又走遠)。watchRange 從 **AI 當下位置**量(牠站在門口),不是駐點。
+- `ClampInside(worldPos, center, halfExtent)`:把世界座標拉回方形(Y 不動),soft-confine CharacterController。
+- +5 個 EditMode 測試(共 `ArenaBoundsTests` 11 個)。
+
+### 屁孩王（`BossStateMachine`）
+- 欄位 `leashOnLeaveArena` → **`confineToArena`**(`[FormerlySerializedAs]` 自動搬移場景值);新增 `gateWatchRange`(0=用 `tuning.AlertRange`,屁孩王設 **10**)。
+- 新狀態 **`BossState.GateWatch`**:走到邊界(沿著往玩家的方向,`ApplyMotion` 的 arena clamp 讓牠停在牆邊),然後面向玩家站定,**完全不攻擊**(`TryLeashReset` 在此狀態每幀回 true → 整條下層 cascade Ultimate/Vanish/LeapSlam/TooCloseKick/DodgeCounter 全跳過)。
+- `TryLeashReset` 重寫:`OutsideNearby` → 進/維持 GateWatch;`OutsideFar` → `SnapToHome` + Dormant;`Inside` 且在 GateWatch → 回 Idle 讓正常 cascade 重新交戰。特殊狀態排除(飛行中的 leap/dive/ultimate)移到最前面,永不被 GateWatch 打斷。距離 leash(駐點 30m)邏輯保留在後段。
+- `ApplyMotion` 尾端:`confineToArena` 時每幀 `transform.position = ArenaBounds.ClampInside(...)`。
+- `OnEnterState` / foot-sync(追加38)/ `RunCurrentState` 都補上 GateWatch(當 Locomotion blend tree 處理,走路時腳步同步)。
+
+### Enemy（`EnemyAI`，目前場景關著,保持一致）
+- `returnHomeWhenPlayerLeavesArena` → **`confineToArena`**(`[FormerlySerializedAs]`)。
+- 玩家出本地:`flat.magnitude > detectionRange` 才瞬移回 spawn;否則照常追到邊界、面向玩家,`_playerOutsideArena` 時強制 `AttackPressed = false`(不隔牆揮擊)。`_controller.Move` 後 `ClampInside`。
+
+### 場景
+`屁孩王` `confineToArena=1` / `gateWatchRange=10`;`武士` + 兩個 `EnemyAI` 都 `confineToArena=0`。`GateWatch` 插在 enum 第 4 位(Approach 之後),其後 ordinal 各 +1 —— 沒有資產序列化 BossState 的 int,CrossFade 全走狀態名,無影響。
+
+- EditMode **200 tests 199 綠**(唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項)。
+- **GateWatch 實際觀感、走到門口的位置準不準、watchRange 10 是否合適、玩家回門內重新交戰,全待使用者實機**(MCP 下 play mode 凍幀)。
+
+### 脫離規則一覽（追加39 當下）
+| 角色 | 分類 | 出本地門口後 |
+| --- | --- | --- |
+| 武士 | boss | 不受限（只吃駐點 30m 距離 leash）|
+| 屁孩王 | 精怪 | 走到門口 `GateWatch` 觀望;玩家離牠 >10m 才 `SnapToHome` 回駐點 |
+| Enemy / 076 | 普通怪物 | `confineToArena` 關 → 一路追出門口都可以（旗標與邏輯保留，隨時可開）|
+
+## 2026-08-29 (追加40) — 修:屁孩王還是一碰邊界就瞬移回原位（追加39 的 give-up 太早）
+
+使用者:「現在屁孩王還是一碰到邊界就瞬間回到初始位置」。
+
+**根因**:追加39 的 `ClassifyTarget` 從 **boss 當下位置** 量「玩家還在不在 watchRange 內」。但屁孩王駐點在遠角 (12,12)、門口在 (0,-15.5),相距 ~30m —— 玩家一出門口,boss 還在半路(甚至還在駐點附近),距離遠 > watchRange(10) → 判成 `OutsideFar` → 立刻 `SnapToHome`。等於沒修。
+
+**修**:
+- 移除 `ArenaBounds.ClassifyTarget` / `ArenaTargetStatus`(連同 3 個測試)—— 「該不該放棄」不是純幾何問題,取決於 boss 有沒有真的走到牆邊。
+- `TryLeashReset`:玩家一出方形 → **無條件進 `GateWatch` 並開始走向門口**,絕不在這裡放棄。
+- `UpdateGateWatch` 現在自己管 give-up:只有在 **(a) boss 已經抵達牆邊**(往玩家方向探 0.5m 已出界)**且 (b) 玩家離 boss > watchRange 持續 `gateWatchGiveUpSeconds`(1.5s)** 才 `SnapToHome` + Dormant。還在走去門口的路上永不放棄。
+- 新欄位 `gateWatchGiveUpSeconds`(1.5,離開觀望範圍後的緩衝,一個「多看你一眼」的滯留)。
+- `EnemyAI` 同樣的錯也修了(給 `confineToArena` 加 `atWall` 前置條件才 teleport home),雖然場景 Enemy 仍 `confineToArena=0`。
+
+- EditMode **197 tests 196 綠**(唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項)。
+- **實機驗證仍待使用者**:屁孩王從駐點走到門口 ~28m @ WalkSpeed 3 ≈ 9 秒(但正常情況牠是追在玩家後面、出門口時已在門邊,不會從駐點起步);走到門口後面向玩家站定不攻擊;玩家離門口 >10m 撐 1.5s 才回駐點;玩家回門內立刻回 Idle 重新交戰。
+
+## 2026-08-29 (追加41) — 釐清:GateWatch 改動只影響屁孩王,武士零變動 ＋ 撤掉 EnemyAI 的死碼
+
+使用者:「屁孩王是屁孩王、boss 是 boss,彼此獨立,不該互相干擾(但仍然有傷害機制)。前面修正回覆裡提到 boss 讓我覺得奇怪,我要做的改動應該只跟屁孩王有關係」。
+
+**釐清**:屁孩王和武士**共用同一個 `BossStateMachine` 腳本**,所以追加39/40 的 commit / 回覆文字會出現「boss」字眼 —— 但每一行新增邏輯都掛在 `confineToArena` 這個**逐 instance 的序列化 bool** 後面:
+- 屁孩王:`confineToArena = true`、`gateWatchRange = 10`、`locomotionAuthoredSpeed = 2`(追加38 腳步同步)
+- 武士:`confineToArena = false`、`gateWatchRange = 0`、`locomotionAuthoredSpeed = 0`
+
+驗證武士行為**逐位元相同**:
+- `TryLeashReset` 的 `if (confineToArena) { ... }` 整塊武士直接跳過,落到原本的「離駐點 > `leashRange`(仍是 30) → SnapToHome」邏輯,和追加39 之前完全一致(唯一的 reordering —— 特殊狀態排除移到 `leashRange<=0` 早退之前 —— 對 leashRange=30 的武士是 no-op)。
+- `ApplyMotion` 的 arena clamp、`UpdateGateWatch`、foot-sync 全部 `confineToArena`/`locomotionAuthoredSpeed` 為假 → 武士不執行。
+- `BossState.GateWatch` 插在 enum 第 4 位造成 ordinal 位移 —— 查過 `Wushi` AnimatorController **沒有任何 int-equality transition**(只有 `Phase` 0/1、`AttackID`,都不是 BossState),CrossFade 全走狀態名。零影響。
+- **傷害機制不受影響**:武士↔屁孩王的 HP 傷害、架勢累積、擊飛全部照舊(`BossTeamMember` 兩隊不同 —— 武士='武士'、屁孩王='Boss' —— friendly-fire guard 放行;這次沒動任何 hitbox / Health / StancePoise 程式)。使用者確認要「HP + 架勢/擊飛都保留」。
+
+**撤掉死碼**:追加37/39/40 給 `EnemyAI` 也加了一份平行的 arena-confine 邏輯(`confineToArena` 欄位 + clamp + watch),但場景 Enemy 是 `confineToArena=0`(追加38 使用者定調不受限),整段是 inert dead code。`git checkout` 把 `EnemyAI.cs` 還原成 commit 版,場景 EnemyAI 元件上殘留的 `confineToArena: 0` 等欄位重存後已清掉。arena-confine 現在**只存在於 `BossStateMachine`**,`ArenaBounds` 註解也改成「目前只有屁孩王」。
+
+- EditMode **197 tests 196 綠**(唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項)。
+
+## 2026-08-29 (追加42) — 屁孩王加兩招普攻：PW2_LeapSmash（跳躍重砸）＋ PW2_ChargeSlam（衝刺掌擊）
+
+使用者:「新增這兩個動作到屁孩王身上」（`Meshy_AI_Man_in_Black_at_the_P_biped (1).zip` ＋ `.zip`，各一個 `Animation_<guid>_without_skin.fbx`）→（AskUserQuestion）「兩招都加進普通攻擊池 normalAttackPool」＋「給合理預設值,你之後實機調」。
+
+- **匯入 ＋ retarget**：兩個 without_skin FBX 複製進 `PiHaiWangV2/Animations/`，改名 `PW2_LeapSmash.fbx`（3.07s）/`PW2_ChargeSlam.fbx`（2.03s），`animationType=Human`、`keepOriginalPositionY=1`（防沉地，AdvancingCuts 教訓）、motion 抽出不烘進 pose（＝所有已上線 boss 招式的做法）。retarget 到 `PiHaiWangV2Avatar` 成功（`humanMotion=true`）。
+- **Animator**：`PiHaiWangV2.controller` 加兩個獨立 state（`PW2_LeapSmash` m_Speed 1.25、`PW2_ChargeSlam` m_Speed 1.2），比照現有 PW2 招式（無 transition，靠 `PlayState` CrossFade 進、`EndAttack` 回 Locomotion）。
+- **`BossAttackDefinition`（ScriptableObject，rule 7）**：新建 `PW2_Attack_LeapSmash.asset` / `PW2_Attack_ChargeSlam.asset`，加入場景 `屁孩王` 的 `normalAttackPool`（3→5 招）。
+  - **LeapSmash**：跳躍過頭雙手重砸。hit window t=0.50–0.60（雙手，Y 2.6→1.4 掃過受擊框，`clip.SampleAnimation` 實測）。30 HP / 24 poise / 擊飛 / knockback 7 / cooldown 6 / `isMajorAttack`（多休息）。`maxDistance` 1.3（保守）。
+  - **ChargeSlam**：前衝雙掌推擊。hit window t=0.38–0.50（雙手前推）。26 HP / 20 poise / knockback 10（推開）/ 不擊飛 / cooldown 5。`maxDistance` 1.15。
+- **已知限制（designNotes 有記）**：兩個 clip 都內建大量向前位移（root 走 ~4–6m），為了配合「站定出招」模型把位移抽掉了 → 只接了「位移前」的近距離 window，`maxDistance` 很保守。要恢復完整跳躍/衝刺距離＝`useRootMotion=1`（window ~0.1–0.7）＋ 修「LeapSlam/Breakdance 打斷攻擊時清 `_currentAttack`」（CHANGELOG 標記的 root-motion 陷阱），跟 `Wushi_DoubleCombo`/`Wushi_ChargeCut` 一樣留待後續，不盲改。
+- 授權：`ASSET_LICENSES.md` 補上屁孩王 Meshy 條目（付費方案、可出貨，同 Cat）。
+- EditMode **197 tests 196 綠**（唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項；無 boss FSM 單元測試，靠 play 驗證）。
+- **待使用者實機**：兩招的命中幀、傷害/knockback 手感、選用權重（現 18/20，跟 HighKick 25 差不多）、是否要 useRootMotion 恢復位移。
+
+## 2026-08-29 (追加43) — 屁孩王 LeapSmash/ChargeSlam 改 useRootMotion=1（把位移加回來）
+
+使用者:「這兩招應該都是有位移的 目前沒看到」。追加42 比照現有 boss 招式用 `useRootMotion=0`，位移被丟掉了。
+
+- **新 `BossAnimatorRootMotionRelay`**（掛在 `屁孩王/Visual`，Animator 所在的物件）：`Awake` 開 `applyRootMotion=true` ＋ 一個**空的 `OnAnimatorMove()`**。Unity 只有在 Animator 物件有 `applyRootMotion` 或 `OnAnimatorMove` 時才會**計算** avatar root motion；空的 `OnAnimatorMove` 讓 `Animator.deltaPosition` 有值、又不會把位移自動套到這個子物件上 —— 由 `BossStateMachine.ApplyMotion` 自己讀 `deltaPosition` 餵給根部 CharacterController。Play 實測 `deltaPosition` 確實有值、attack 期間 boss 會位移。
+- **`BossStateMachine.ApplyMotion` root motion 判斷加 `CurrentState == BossState.Attack`**：修 CHANGELOG 標記過的「root-motion 陷阱」—— 以前只看 `_currentAttack != null`，LeapSlam/Breakdance 打斷可中斷攻擊後 `_currentAttack` 還留著一兩幀 → 會亂讀 stale root motion。順便把 `deltaPosition.y` 歸零（垂直永遠交給重力/貼地，不讓 clip 的跳躍分量把 boss 拋上天）。
+- **兩個 asset 改 `useRootMotion=1`**、`rootMotion` window `0.05–0.90`、`minDistance` 1 / `maxDistance` 3.5。
+- **實測到的位移量偏小**（retarget 後 Humanoid root motion 被正規化到 avatar 比例）：ChargeSlam 全 window ~1.3m、LeapSlam 水平接近 0（它主要是垂直跳，Y 被歸零）。**位移「有了」但幅度、命中距離、LeapSmash 要不要保留一點縱跳感，全待使用者實機定**。
+- EditMode **197 tests 196 綠**。
+- **既有無關**：Console 有 `Parameter 'Hash 1367192179' does not exist`（= `BreakdanceTrigger`）—— `PiHaiWangV2.controller` 少這個參數，屁孩王每次 Breakdance（每 15 秒戰鬥）就 warn 一次。無害（Breakdance state 靠 CrossFade 名稱進，不靠 trigger），非這次改動造成，未修。
+
+## 2026-08-29 (追加44) — 屁孩王 LeapSmash 改成正式飛空劈砍 ＋ 兩隻 boss 脫離後跑步歸位
+
+使用者:「1. 屁孩王舉雙手置頂那招 讓他飛高一點，攻擊前先鎖定玩家，觸發攻擊時往玩家方向垂直發起攻擊 2. 武士與屁孩王在脫離追擊範圍後，要使用跑步歸位」。
+
+### 1. PW2_LeapSmash → 屁孩王的 leapSlamAttack
+之前是 normalAttackPool 一招 + useRootMotion 硬塞位移（效果不好）。改成接上**現有的 `LeapSlamWindup` + `LeapSlam` 狀態機**（武士在用的那套）:
+- `屁孩王.leapSlamAttack = PW2_Attack_LeapSmash`，從 `normalAttackPool` 移除（剩 4 招：PunchCombo1/HighKick/GuardKick/ChargeSlam）。
+- **攻擊前先鎖定玩家**：`LeapSlamWindup` 1 秒前搖，全程 `FaceTarget` 面向玩家。
+- **飛高**：`PW2_Tuning.leapSlamExtraHeight` 30 → **8**（30 是武士 4x 尺寸用的，屁孩王只 ~2.5m 高，8 已經是身高 3 倍、明顯騰空）。這是腳本高度弧（`ComputeLeapSlamExtraHeight`），不是 clip 位移。
+- **往玩家方向垂直發起**：`UpdateLeapSlam` 上升期間 homing 追玩家實時位置到 `leapSlamTrackUntilNormalized`(0.45)，之後鎖定、垂直落下。
+- `PW2_Attack_LeapSmash.asset`：`useRootMotion` 關回 false（LeapSlam 自己驅動位置）、`maxDistance` 999、選用權重 0（改由 `leapSlamTriggerSeconds` 20 秒定時觸發，不進 pool 抽選）、`interruptible=false` + `superArmor`（committed 空中招）。hit window 移到 **0.42–0.60**（下降+落地，高度弧 fallEnd 在 nt 0.53），用**雙手 hitbox**（屁孩王沒有 LandingAOE hitbox，這招本來就是雙手過頭砸）。AnimatorState m_Speed 1.25 → 1.0（滯空可讀性）。
+
+### 2. 脫離追擊 → 跑步歸位（`BossState.ReturnHome`）
+追加37 把武士的歸位從「走回去」改成瞬移（因為 Dormant animator 是靜態 pose、走路腳滑）。使用者現在要跑步歸位:
+- 新 `BossState.ReturnHome`（enum 第 5 位，Attack 後移一格；無 int 序列化依賴）。`UpdateReturnHome`:朝 `_homePosition` 以 `RunSpeed`(6.75/7.5) 移動、面向移動方向、播 Locomotion blend tree（`MovementSpeed = CurrentHorizontalSpeed` 驅動 Running clip）。到駐點 0.4m 內 → `SnapToHome`（精準 pose/朝向）→ Dormant。
+- **中途玩家回到 `AlertRange` 內 → 立刻 `Alert` 重新交戰**。
+- `TryLeashReset` 的距離 leash disengage、`UpdateGateWatch` 的 give-up：`SnapToHome + Dormant` → 改 `ChangeState(ReturnHome)`。`TryLeashReset` 開頭加 `CurrentState == ReturnHome → return true`（讓歸位跑完、擋下 cascade 不讓 LeapSlam/Breakdance 中途觸發）。
+- `WriteAnimatorParameters`:ReturnHome 時 `CombatActive=false`（戰鬥暫停）＋ foot-sync（追加38）也套用到 ReturnHome。`WushiBossHudVisibility`:ReturnHome 時隱藏血條。
+- 兩隻 boss 都吃這套（武士靠距離 leash、屁孩王靠距離 leash 或 GateWatch give-up）。`SnapToHome` 保留給最終到站的精準對位 ＋ LeapSlam 落地釘位。
+
+- EditMode **197 tests 196 綠**。
+- **待實機**：LeapSmash 飛 8 高會不會太高/太低、垂直落點準不準、hit window 對不對；ReturnHome 跑步姿勢（foot-sync 有沒有到位）、被打斷後會不會卡在半路（目前打斷→HitReaction→Idle→可能 Dormant 卡原地，非致命）。MCP play mode 凍幀跑不了真實驗證。
+
+## 2026-08-29 (追加45) — 武士：脫戰更早放棄 ＋ LeapSlam 不再跨場瞬移
+
+使用者:「武士判定距離怪怪的 我明明沒接近他 突然他就像我衝過來的 脫離戰鬥後他也沒跑回原位」。追加44 的 `ReturnHome` 機制本身沒問題，但觸發條件太寬，武士在本地內幾乎永不放棄。
+
+### 根因
+- `leashRange` 30（從駐點 (0,0.6,11) 量）＝整個本地都在半徑內，玩家在本地怎麼跑都觸發不到距離 leash。
+- `UpdateApproach` **本身沒有任何脫戰判斷**：唯一的距離脫戰在 `UpdateIdle`（`> AlertRange*1.5` = 9m），但玩家一直移動時 boss 追不上、進不了 Idle → 永遠卡在 Approach 追擊，`ReturnHome` 沒機會觸發。同時 breakdance/leapSlam 計時器照跑（Approach 算「戰鬥中」）。
+- `TryEnterLeapSlam` 的 `leapCap = max(AlertRange*3, 15)` ≈ **18m**：`CommitLeapSlamLanding` 是瞬移到玩家頭上，18m 內都能發 → 玩家自認離很遠時被瞬移劈 =「突然衝過來」。
+
+### 修法
+- **場景**：武士 instance `leashRange` 30 → **14**（純 Inspector；`TryLeashReset` 每幀從 Approach/Attack/Idle 都跑，玩家離駐點 >14m 就 `DisengageAndReturnHome` → 跑步歸位）。屁孩王那顆維持 30（`confineToArena=1` 本來就有牆）。
+- **`BossStateMachine.UpdateApproach`**：開頭加上跟 `UpdateIdle` 一模一樣的 `distance > tuning.AlertRange * 1.5f → DisengageAndReturnHome` 判斷（Idle 本來就只把 <AlertRange*1.5 的缺口丟進 Approach，Approach 也照這規則收尾，一致）。這是「玩家在駐點附近繞圈風箏、leash 看不到」的補網。
+- **`BossStateMachine.TryEnterLeapSlam`**：`leapCap` 收到 `max(AlertRange*1.5, 9f)` ≈ **9m** —— 短距離撲擊，不再是跨半個本地的瞬移。屁孩王同碼受惠（原 15m → 9m）。
+
+- 編譯無錯（既有 CS0414 warning 不變）。EditMode 測試因使用者當下在 Play Mode 沒跑成；`BossStrideRateTests` 是純靜態函式、與本次改動無關。
+- **待使用者實機**：`leashRange` 14 會不會太短（打到一半玩家後退一點就脫戰）、Approach 的 9m 脫戰是否太敏感、LeapSlam 9m 撲擊距離手感。三個都是手調值，實機再校。
+
+## 2026-08-29 (追加46) — 屁孩王攻擊：位移招從遠處發、前搖不被排程技打斷、出招小幅追身、HighKick 下架
+
+使用者:「屁孩王感覺有些攻擊打不倒玩家 或著直接打斷當前動作 只看到起手姿勢 確定每一招都有用上嗎 那種有連續位移的可以不用綁死近戰攻擊距離」。
+
+### 診斷
+- **ChargeSlam（唯一有位移的普通招）幾乎不發**：`minDistance: 1` > `AttackReadinessDistance()`（＝池裡最小 maxDistance ＝ PunchCombo1 的 0.98），boss 追到 0.98m 停下抽招時每次被 `0.98 < 1.0` 濾掉；maxDistance 3.5 也沒用，因為 boss 只在站定的 Idle 抽招，距離一 >0.98 就切 Approach 用走的。
+- **「只看到起手」**：池裡 4 招全 `interruptible: 1` → `AttackFinishedCommittableWindow()` 只要 interruptible 就直接放行 → Breakdance(15s)/LeapSlam(20s)/Ultimate(能量~15s滿) 可在普通攻擊前搖任一幀切掉。
+- **打不到**：`UpdateAttack` 一進攻擊就 `_horizontalVelocity=0` 站定只轉向，1.5x 大隻 boss、~1m reach，玩家在 0.3–0.7s 前搖裡退一步就出 reach。
+- **HighKick clip**：自己的 designNotes 標了「real peak 揮到頭高 ~2.2m，飛過站著玩家的 hurtbox」「may need retiming/re-choreography」——只有 0.8–1.0 收腳那段能中，最容易「起手沒中」。
+
+### 改動（`BossStateMachine.cs`）
+- **`PickAttack()` → `PickAttackFiltered(Func<BossAttackDefinition,bool>)`**：共用本體。Idle 走 `extraFilter=null`（原行為）；Approach 走 `a => a.UseRootMotion`。
+- **`UpdateApproach`**：決策 tick 時，若仍在接近（`distance > readinessDistance`）且不在 rest window，roll 一次「只含 useRootMotion 招」的 `PickAttackFiltered`，中了就直接 `BeginAttack`（不先走進近戰距離）。maxDistance/角度/冷卻照 `PickAttackFiltered` 內部把關。
+- **`AttackFinishedCommittableWindow()`**：interruptible 攻擊不再從第 0 幀就可被搶——**排程技**（Breakdance/LeapSlam/Ultimate/Vanish，都經由此函式）要等 `AnimatorNormalizedTime() >= FirstStrikeNormalized(attack)`（＝第一個 hit window 起點）才准 pre-empt。玩家造成的 stagger（`TryEnterPostureBroken` / 載具 `RequestBeHitFlyUp`）走別條路，不受影響、照樣即時打斷。新增純函式 `FirstStrikeNormalized`（無 hit window 時 fallback 0.5）。
+- **`UpdateAttack`**：非 useRootMotion 招、還在 tracking 期間（`normalized < trackingDropNormalizedTime`）、且 `HorizontalDistance() > MaxDistance*0.85` 時，給 `WalkSpeed*0.5` 朝玩家的低速位移（reel-in，不是全追）。其餘照舊 `_horizontalVelocity=0` 站定。useRootMotion 招不碰（自己驅動位移）。
+
+### 資產
+- `PW2_Attack_ChargeSlam`：`minDistance` 1→**0**（它自己 root motion 衝上去，近距也 OK；現在 Idle 也選得到）。
+- `PW2_Attack_HighKick`：`selectionWeightPhase1/2` 25/30→**0/0**（下架，clip 幾何上打不到站立玩家；asset 仍接著、可還原）。屁孩王普通池實際剩 3 招：PunchCombo1 / GuardKick / ChargeSlam。
+- `PW2_Attack_PunchCombo1`：`maxConsecutiveUses` 1→**2**（池變薄後，GuardKick+ChargeSlam 都在冷卻時不至於沒招可出；對齊該 asset 自己的註解「spec 允許 Punch_Combo 連兩次」）。
+
+- 編譯無錯（既有 CS0414 warning 不變）。EditMode **197 / 196 綠**（唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項）。
+- **待使用者實機**：gap-closer 會不會太常從遠處衝、前搖保護後排程技是否偶爾還是切到揮擊尾、追身 `WalkSpeed*0.5` 幅度、`MaxDistance*0.85` 門檻、3 招池夠不夠（可能要再補一支能打站立玩家的近戰 clip 換掉 HighKick）。
+
+## 2026-08-29 (追加47) — 屁孩王：攻擊慾望拉高（縮短出招間隔）＋ 招式輪流施放偏置
+
+使用者:「1. 每招 盡量做到輪流施放 不要有技能被孤立 2. 屁孩王攻擊慾望太低 攻擊間隔太長」。
+
+### 1. 招式輪流（新 `BossTuning` 兩欄 + `PickAttack` 偏置）
+- `BossTuning`：`attackRotationRecoverySeconds`(6) / `attackRotationRecentFactor`(0.15)。純加欄位 + 兩個 accessor，舊 asset 缺 key 由 field initializer 補預設；PW2_Tuning / Wushi_Tuning 都明寫進 asset。
+- `BossStateMachine`：新 `Dictionary<BossAttackDefinition,float> _lastUsedTime`（`BeginAttack` 記 `Time.time`）。`PickAttackFiltered` 算完 base weight 後乘上 `Lerp(recentFactor, 1, clamp01(sinceUsed / recoverySeconds))` —— 剛用過的招權重掉到 15%，6 秒線性回滿。軟性 LRU，不是硬輪替鎖；跟每招自己的 `cooldownSeconds` 硬門檻分開。`recoverySeconds=0` 可停用（回純加權隨機）。
+- 效果：PunchCombo1（w50）不再長期洗掉 GuardKick / ChargeSlam；三招會自然循環。
+
+### 2. 攻擊慾望（純 `PW2_Tuning.asset`，武士不動）
+- `globalRestPhase1` 1.6–2.4 → **0.5–0.9**；`globalRestPhase2` 1.1–1.8 → **0.3–0.55**（每次攻擊後的強制休息 = 主要的「間隔太長」來源）。
+- `majorAttackExtraRest` 2–3 → **0.8–1.5**（LeapSmash 是 `isMajorAttack`）。
+- `decisionIntervalPhase1` 0.5–0.9 → **0.22–0.4**；Phase2 0.3–0.5 → **0.14–0.28**（Idle 抽招節奏）。
+- 攻擊間空檔從 ~2.3–3.5s → ~0.75–1.35s。仍比武士（~0.1–0.3s）保守。
+- `PW2_Attack_GuardKick` cd 5.5→**3.5**、`PW2_Attack_ChargeSlam` cd 5→**4**（縮短休息後，避免另外兩招都在冷卻時 PunchCombo1 唱獨角戲／出現空手站定）。`PunchCombo1.maxConsecutiveUses` 維持 2（追加46）當保險閥，輪流偏置會讓它其實很少連兩次。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：新節奏會不會太兇（globalRest 再往上一點就緩下來）、輪流偏置 6s/0.15 的循環感、GuardKick/ChargeSlam 縮 cd 後是否過度洗版。全部值在 `PW2_Tuning` + 三個 `PW2_Attack_*` asset。
+
+## 2026-08-29 (追加48) — 屁孩王 LeapSmash：真的飛過去（不再瞬移）＋ 固定 50% 傷害
+
+使用者:「飛向天空那朝沒有鎖定玩家方向飛過去攻擊 傷害固定百分比50」。
+
+### 飛過去（不瞬移）
+- **`BossTuning` 新 `leapSlamTeleportToLanding`（bool, 預設 true = 武士行為）**。`CommitLeapSlamLanding` 把「起跳瞬間 blink 到玩家腳邊」包進 `if (tuning.LeapSlamTeleportToLanding)`；false 時只鎖朝向 + 落地 Y，不移動位置。
+- **`PW2_Tuning.leapSlamTeleportToLanding: 0`**、`Wushi_Tuning: 1`（明寫，維持原樣）。
+- 效果：屁孩王前搖結束後**留在原地**，`UpdateLeapSlam` 既有的空中 homing（追玩家實時位置到 `leapSlamTrackUntilNormalized` 0.45，`leapSlamMaxTrackSpeed` 30 封頂）負責整段水平位移 → 從起跳點飛到玩家、垂直落下。變成真正的撲擊弧線而非瞬移。leapCap（`TryEnterLeapSlam`，屁孩王 = max(alertRange 5 ×1.5, 9) = 9m）夠短，homing 來得及在鎖定前貼上。
+
+### 固定 50% 傷害
+- **`PW2_Attack_LeapSmash`**：`healthDamageIsPercentOfTargetMax` 0→**1**、`baseHealthDamage` 30→**50**（= 玩家 max HP 的 50%，`BossHitbox` 命中時 `MaxHealth * 50/100` 結算）。
+- **hitWindows 2→1**（只留 LeftHand，0.42–0.60）：原本 LeftHand + RightHand 兩個獨立 `BossHitbox` 各自結算，站在正下方會吃兩下 = 100% 秒殺。收成一下 = 固定 50%。`basePoiseDamage` 24 也從「兩下 48」變回「一下 24」。
+- 武士的 LeapSlam 不受影響。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：飛行弧線觀感（起跳→前衝→落下的節奏）、homing 追不追得上、9m 內起手是否夠近、50% 傷害 + launch + 24 poise 會不會太重（`leapSlamTriggerSeconds` 20s 一次）。
+
+## 2026-08-29 (追加49) — 屁孩王 LeapSmash：專屬 pounce 路徑（真的飛到玩家）＋ 降低飛行高度
+
+使用者:「飛空那招可以不用飛那麼高 比站著高一倍就好 然後目前沒有鎖定玩家位置飛過去」。追加48 拿掉瞬移後改靠共用 homing，但那段 homing 的速度是用 `_stateTimer / normalizedTime` 反推「總時長」再算的，crossfade blend 期間 `normalizedTime` 是髒/混合值 → 早期反推出的速度趨近 0，等 normalized 正常時已經沒剩多少追蹤時間 → 看起來沒飛過去。
+
+### 專屬 pounce 路徑
+- **`BossTuning` 新 `leapSlamFlightSeconds`（預設 1.3，只在 `leapSlamTeleportToLanding=0` 時用）**。
+- **`UpdateLeapSlam` 開頭**：`if (!tuning.LeapSlamTeleportToLanding) { UpdateLeapSlamPounce(normalized); return; }`。武士（teleport=1）走原本共用路徑，**一個 byte 都沒動**。
+- **新 `UpdateLeapSlamPounce`**（自足、全部用 `_stateTimer` 牆鐘驅動，不碰 `normalizedTime` 那條脆弱路徑）：
+  - 水平：每幀重新瞄準玩家實時 xz（短 `leapSlamLandingOffset` 2m），速度 = 剩餘距離 / 剩餘飛行時間，`leapSlamMaxTrackSpeed` 30 封頂 → 保證在 `leapSlamFlightSeconds` 內貼到玩家，然後鎖定直落。
+  - 垂直：`_stateTimer` 拋物線，`leapSlamFlightSeconds` 中點衝到 `leapSlamExtraHeight`、結束回地面，一樣用逐幀高度差驅動 `_verticalVelocity`（Move-consistent）。
+  - hit window 仍讀 clip 的 normalized 窗（落地時 ~1.3s，normalized 早就正常了，可靠）；落地後 pin 落地 Y + `_leapSlamHolding` 讓 `ApplyMotion` 跳過 Move（同共用路徑的 landed 分支）。
+
+### 高度
+- `PW2_Tuning.leapSlamExtraHeight` 8 → **2.5**（屁孩王站著 ~2.5m，弧頂 +2.5 ≈ 站著的兩倍高＝「比站著高一倍」）。
+- `leapSlamFlightSeconds: 1.3` 對齊 clip 自己的 slam 窗起點（hitWindow 0.42 × 3.07s ≈ 1.29s）→ 落地正好接上揮擊判定。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：飛行弧線觀感、`leapSlamFlightSeconds` 1.3 落地時機對不對、高度 2.5 夠不夠低、髒 normalizedTime 期間 hit window 有沒有提早/延後開。
+
+## 2026-08-29 (追加50) — 屁孩王 LeapSmash 命中修正（時間驅動判定窗）＋ 攻擊間隔再縮短
+
+使用者:「飛天那朝仍然沒有攻擊到玩家 可能是動畫問題 另外攻擊間隔本身再簡短」。
+
+### LeapSmash「沒攻擊到」= crossfade 髒 normalizedTime
+追加49 的 pounce 位移改吃 `_stateTimer`，但 **hit window 跟 exit 還在讀 clip 的 `normalizedTime`**。crossfade blend 的頭幾幀 `AnimatorNormalizedTime()` 回傳 OUTGOING clip 的殘值：
+- 若殘值 `>= 0.6`（hit window endNormalized）→ `_leapSlamHitWindowsDone` 第一幀就 latch 成 true → **整招 hitbox 永遠不開**。
+- `IsAttackAnimationFinished` 在殘值 `>= 0.98` 時（`_stateTimer > 0.1s` 後）→ **整個 LeapSlam state 起跳後 ~0.1s 就 abort 回 Idle**。
+
+**修**（`UpdateLeapSlamPounce`，只影響屁孩王，武士 teleport 路徑不動）：
+- hit window 改 **`_stateTimer` 相對落地**：`t ∈ [leapSlamFlightSeconds - 0.1, +0.35]` 開左手 hitbox（`part`/`damageMultiplier`/50% 傷害仍讀 asset 的 `HitWindows[0]`）。落地即命中，跟物理位置同步。
+- exit 改 **`_stateTimer` 相對**：`t >= leapSlamFlightSeconds + max(0.3, recoverySeconds)` → Idle（`AnimatorHasFinished` 只當 `t > flight+0.5` 後的後備）。
+- **落地後補 `_globalRestUntil`**：50% 核彈招走 LeapSlam state 直接回 Idle、跳過 EndAttack 的休息邏輯 → 補上「一般休息 + major-attack 額外休息」，不讓它立刻接下一招。
+
+### 攻擊間隔再縮短（純 `PW2_Tuning`）
+- `globalRestPhase1` 0.5–0.9 → **0.25–0.5**；`globalRestPhase2` 0.3–0.55 → **0.15–0.3**。
+- `majorAttackExtraRest` 0.8–1.5 → **0.4–0.9**。
+- `decisionIntervalPhase1` 0.22–0.4 → **0.12–0.25**；Phase2 0.14–0.28 → **0.08–0.16**。
+- `attackReadinessBuffer` 0.1–0.2 → **0.06–0.12**。
+- 攻擊間空檔 ~0.75–1.35s → **~0.35–0.7s**（已接近武士 ~0.1–0.3s）。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：LeapSmash 這次有沒有打到、`leapSlamFlightSeconds` 1.3 落地時機、間隔 0.35–0.7s 會不會太壓迫（`globalRest` 往上調就緩）。
+
+## 2026-08-29 (追加51) — 屁孩王 LeapSmash 落點修正（原本刻意落在玩家 2m 外）
+
+使用者:「飛天這招很奇怪 落點永遠沒有在玩家身上」。
+
+### 根因
+`leapSlamLandingOffset` = **2**。這欄位是武士時代加的：落在玩家精確 xz 會讓 boss 掉進玩家的 CharacterController 膠囊、卡在玩家頭高（「浮空」bug）→ 所以刻意落在玩家往 boss 方向退 2m 的點。武士有 3m 半徑的 LandingAOE 還罩得到，但**屁孩王沒有 LandingAOE**、用左手 hitbox 做過頭劈 → 落在 2m 外那一拳根本搆不到玩家。
+
+### 修
+- **`PW2_Tuning.leapSlamLandingOffset` 2 → 0.4**（落在玩家身上；CharacterController 對撞會自然把 boss 停在 ~0.57m 外，過頭劈的手 hitbox 搆得到）。
+- **`UpdateLeapSlamPounce` 的落地 Y raycast 改 `RaycastAll` + 跳過玩家**：瞄準點離玩家這麼近時，普通 `Raycast` 會打到玩家膠囊頂端、把 boss 釘在頭高（就是 offset=2 當初在閃的「浮空」）。現在取「不是 boss 自己、也不是玩家」的最近命中 → 拿到真正的地面。
+- hit window 從 `[flight-0.1, flight+0.35]` 放寬到 **`[flight-0.15, flight+0.45]`**。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：這次落點在不在玩家身上、過頭劈有沒有命中、`leapSlamLandingOffset` 0.4 會不會偶爾把 boss 擠進玩家。武士 LeapSlam（teleport 路徑）不受影響。
+
+## 2026-08-29 (追加52) — 屁孩王 LeapSmash 觸發變頻（20→10s）＋ Breakdance 讓路（15→24s）
+
+使用者:「感覺屁孩王很少放這招」。
+
+- **`PW2_Tuning.leapSlamTriggerSeconds` 20 → 10**：屁孩王沒接 `leapSlamEnergy`，走的是純戰鬥累計計時器。20s 太長，加上計時器在**每次脫戰 / 死亡復活**都歸零（`DisengageAndReturnHome` line ~1250、revive reset line ~2282），一場戰鬥常常湊不到一次。減半。
+- **`PW2_Tuning.breakdanceTriggerSeconds` 15 → 24**：cascade 裡 `TryEnterBreakdance` 排在 `TryEnterLeapSlam` 前面，Breakdance 15s < LeapSlam 20s → 每次都是 Breakdance 先搶到「排程技」的空檔。而且 `PW2_Attack_Breakdance` 的 hit window 是 `measured: 0`（placeholder 猜的、designNotes 自己標未驗證），本來就是低價值 flourish。往後推讓 LeapSlam 先。
+- 現在 LeapSlam 10s 先 arm、先觸發；Breakdance 24s 殿後。
+
+- 純 asset 改動，無 code。編譯無錯。EditMode **197 / 196 綠**。
+- **待使用者實機**：10s 一次會不會太頻繁（往上調 leapSlamTriggerSeconds）。若還是很少 → 下一個嫌疑是 **Ultimate（RisingFlyingKick，能量 ~15s 滿，cascade 更前面，300 傷害幾乎秒殺）** 在吃 LeapSlam 的空檔 + 提前結束戰鬥；那需要另外討論 ultimate 的定位。
+
+## 2026-08-29 (追加53) — 屁孩王 Ultimate 飛踢：真的離地（原本是貼地平移）
+
+使用者:「跳下來瞬間就把我即飛了（LeapSmash 讚）… 但這個可以做到秒即飛 為甚麼飛踢步行呢」。
+
+### 根因
+`UpdateUltimateAttack` 的撲擊只有水平：`_horizontalVelocity = transform.forward * UltimateLeapSpeed(10)`，**貼地、沒有垂直分量**。RisingFlyingKick clip `useRootMotion=0`，所以身體在原地播踢擊動作、根部貼地滑 → 看起來像快走 / 滑步，不是「飛」踢。
+
+### 修
+- **`BossTuning` 新 `ultimateLeapJumpSpeed`（預設 7）**。
+- **`OnEnterState(BossState.UltimateAttack)`**：進入撲擊的第一幀，`if (_controller.isGrounded && jumpSpeed > 0) _verticalVelocity = jumpSpeed`。`ApplyMotion` 對 `UltimateAttack` 有正常重力（-20）→ 自然把這個上拋弧線帶回地面、正好落在 strike window。7 ≈ 弧頂 ~1.2m、滯空 ~0.7s。0 = 舊的貼地滑。
+- 純加值，不改弧線邏輯（用現成重力，任何地形都會正確落地）。PW2/Wushi tuning 都明寫 7（武士其實沒接 ultimate，只是補齊欄位）。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：飛踢離地感夠不夠、`ultimateLeapJumpSpeed` 7 會不會太高讓腳踢空（往下調）、落地時機跟 strike window 對不對。`UltimateReposition` 的後退（速度 4、播前進 clip 的「月球漫步」）沒動 —— 那是 setup、不是踢擊本身，要的話另外處理。
+
+## 2026-08-29 (追加54) — 屁孩王 Ultimate 飛踢：擊退不再延遲（仿 LeapSmash 的 _stateTimer 命中）
+
+使用者:「飛踢碰到玩家時 動畫上玩家沒有馬上被擊退出去 能仿照 LeapSmash 的作法嗎」。
+
+### 根因
+`Rising_Flying_Kick` clip = 45f @ 30fps = **1.5s**。舊 `UpdateUltimateAttack`：撲擊跑 `transform.forward * UltimateLeapSpeed(10)` 整個 normalized 前搖窗（`< hitWindows[0].start` 0.6 → 0.9s）＝ **~9m 位移**，從 ~5m 觸發距離衝過去 → **暴衝 3–4m 過頭**。腳部 hitbox 才在 normalized 0.6 打開（boss 已經飛過玩家），命中只能靠腳「收回」時 `SweepCheck` 掃回玩家身上結算 → 慢、跟視覺踢擊脫節（正是 KnockbackReceiver.cs 2026-08-25 註解裡那個「延遲 不銜接」老症狀，當時只修了 receiver 端，沒修命中時機）。
+
+### 修（仿 `UpdateLeapSlamPounce`，純 code）
+- 撲擊改成**衝到玩家就停**：`transform.forward * UltimateLeapSpeed` 直到 `HorizontalDistance() <= 1.3` 或 `_stateTimer >= 0.75s`（time cap），不再跑滿固定時間暴衝過頭。方向仍鎖 `transform.forward`（spec「起跳後不追蹤」，側移可閃）。
+- **命中窗改 `_stateTimer` 相對「觸地/停下」**：`t ∈ [contact-0.06, contact+0.35]` 打開 `HitWindows[0]` 的 hitbox（part/傷害仍讀 asset）。boss 停在玩家身上 + hitbox 開啟當幀就重疊 → `OnTriggerEnter` 立刻結算 → 擊退跟視覺同步（LeapSmash 的即飛就是這個機制）。
+- exit 改吃真實 clip 長度 `t >= 1.5s`（+ `AnimatorHasFinished` 後備），不用會被 crossfade 髒 normalizedTime 提早 abort 的 `IsAttackAnimationFinished`。
+- 新欄位 `_ultimateContactTime` / `_ultimateHitDone` / const `UltimateLungeTimeCap 0.75`，在 `OnEnterState(UltimateAttack)` 重置。asset 不動（normalized 窗值變成不影響時機、只留 part/damageMultiplier）。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：擊退這次有沒有即時、暴衝有沒有收掉、1.3m 停下 + 上一版加的跳躍弧會不會讓 boss 半空停住再掉、側移閃避判定。
+
+## 2026-08-29 (追加55) — 貓咪也能開車：F 鍵進出 ＋ 模型塞進駕駛座（可見）
+
+使用者:「接下來來讓貓咪也可以使用車輛 F功能 以及模型塞進車裡」。
+
+`VehicleEntrySystem`（車上的 F 鍵）原本寫死綁 `Player`。改成**「當前操控角色」感知**：
+
+### `VehicleEntrySystem.cs`（重寫）
+- 保留全部舊欄位（`player` / `playerMovement` / `playerCombat` / `playerRenderersToHide` / `playerCamera` / `driverSeatAnchor` / `vehicleController` / `vehicleCamera` / `enterRange` / `exitLocalOffset`）→ 場景既有序列化值不動、`possession` 留空時行為跟原本一模一樣。
+- 新增：`possession`（`CameraPossessionSwitcher`，判斷 F 用哪隻角色）、`cat`、`catControlToDisable[]`、`catCamera`、`catDriverSeatAnchor`、`catRenderersToHide[]`（空 = 貓可見）。
+- F 進車：`switcher.Current` 決定用 player 還是 cat；停用該角色的控制 consumer（player: movement+combat；cat: movement/PlayerCombat/CatChargeAttack/CatPounce/CatAerialJudgment）＋ `CharacterController` ＋ 停在座位錨點 ＋ 切到 VehicleCamera。**貓的 renderer 不隱藏**（player 照舊隱藏）。`_drivingCat` 記住是誰進來的，出車還原對的那隻。
+- `CatProceduralWalk` / `CatAttackPose` **不停用**（留著讓腿/pose 自己 ease 回中性靜止姿，停用反而會凍在半步）。
+
+### `CameraPossessionSwitcher.cs`
+- 新 `vehicleEntry` 欄位；`IsDriving` 時 C 鍵忽略（比照「守望者視角時忽略 C」），先按 F 下車。
+
+### 新 `VehicleCatWiring.cs`（Editor，可重跑）
+- `Tools/Live2DAction/Wire Cat Into Vehicle` ＋ 從 `CatCharacterSetup.Apply()` 結尾呼叫（貓每次重建都要重接）。
+- 找場景的 `VehicleEntrySystem` / `CameraPossessionSwitcher` / `Cat` / `CatCamera`，雙向接線；在車根建 `CatDriverSeatAnchor` 子物件（car-local `(0, 0.55, -0.1)`，比 player 的 `(0, 0.75, -0.1)` 低一點，起點值待實機微調）。
+- 選單已重跑，場景已存：`VehicleEntrySystem` 貓欄位全接、`switcher.vehicleEntry` 已接、`CatDriverSeatAnchor` 在 Buggy 的 `m_AddedGameObjects` 裡。
+
+**進貓車流程**：C 切成貓 → 靠近車 → F 進車（貓坐在駕駛座、看得到）→ F 下車 → C 切回 player。
+
+- 編譯無錯。EditMode **197 / 196 綠**（既有無關 `...FallsBackToAttack3`）。
+- **待使用者實機**：`CatDriverSeatAnchor` 座位高度/前後（貓 scale 0.45、只有綁定姿勢、會 ease 成中性四足站姿，塞在座位上大概是「貓站在駕駛座」的樣子）、下車位置、開車中攝影機。
+
+## 2026-08-29 (追加56) — 開車中也能 C 切換角色（GTA 式：駕駛留在車上）
+
+使用者:「PLAYER和CAT在駕駛車輛時沒辦法互相切換視角嗎」→ 選 GTA 式（駕駛留車上、切去控另一隻）。追加55 是把 C 擋掉，這次改成能切。
+
+### 新狀態模型（`VehicleEntrySystem` 重寫）
+- 唯一存的旗標：`SeatedCharacter`（None / Player / Cat，誰被 parent 在座位）。
+- 「正在開」= derived：`SeatedCharacter` 等於 `CameraPossessionSwitcher.Current`。
+- `LateUpdate()` 每幀對帳：`youDrive` 時車引擎（`vehicleController.enabled`）＋ VehicleCamera 開、兩隻角色相機關；`!youDrive`（你切去控另一隻）時車熄火、VehicleCamera 關（切換器已開了另一隻的相機）。座位上那隻不管你控誰，控制組件 + CharacterController 永遠 forced off。
+- `[DefaultExecutionOrder(-50)]` → VES 的 Update/LateUpdate 跑在攝影機控制器(0)、切換器(150)前面，所以對帳能覆蓋切換器在 keypress 幀設錯的狀態、且在相機自己的 LateUpdate 前就關掉它。
+
+### 按鍵
+- **C**：永遠可切 Player↔Cat（不再擋）。切離駕駛 → 車自動熄火停好、駕駛留在座位（貓看得到）。切回駕駛 → 引擎重開、繼續開。
+- **F**：站在車旁 → 上車開；正在開（你是駕駛）→ 下車；座位被「另一隻」佔著 → 無作用（先 C 切回那隻）。
+
+### 其他
+- `CameraPossessionSwitcher.Apply()`：切到「被 VES 停在座位的角色」時，不開它自己的第三人稱相機、不開它的控制（VES 管 VehicleCamera + parked passenger）。移除追加55 的「開車中忽略 C」。
+- `VehicleEntrySystem` 加 `viewDirector` 欄位：守望者(T)視角期間 LateUpdate 對帳讓位（不跟 director 搶相機），`VehicleCatWiring` 一併接線。
+- 選單已重跑，場景已存。
+
+- 編譯無錯。EditMode **197 / 196 綠**。
+- **待使用者實機**：C 切離/切回駕駛的相機切換順不順、座位那隻靜止姿、開車中按 T 守望者再回來。
+
+## 2026-08-30 (追加57) — 車輛雙人座 ＋ 兩隻角色都在車上可見 ＋ 貓駕駛仰角
+
+使用者:「1.貓咪駕駛時可能要把模型上仰望 不然看不到臉 2.PLAYER駕駛時不再隱藏人物 3.車輛改為雙人座，車身後方攤平的區塊可以將人物放置在上方」。
+
+### 1. 貓駕駛仰角
+- `CatDriverSeatAnchor` 加 **-50° X 旋轉**（四足貓往後仰、chase cam 從後方看得到臉）。`Mount()` 對齊錨點姿勢，所以錨點轉多少貓就轉多少。`VehicleCatWiring` 的 `CatSeatLocalEuler` 常數，實機拖錨點微調。
+
+### 2. PLAYER 不再隱藏
+- `VehicleEntrySystem.playerRenderersToHide` 清空（`VehicleCatWiring` 每次重跑都清）。
+- `DriverSeatAnchor`（player）降到 footwell `(0, 0.1, 0.1)`，讓可見的 ~1.8m humanoid 不會站穿車頂。`VehicleCatWiring` 現在也接管這個錨點（可重跑）。
+
+### 3. 雙人座（`VehicleEntrySystem` 重構）
+- 狀態改成 `PlayerSeat` / `CatSeat` ∈ {None, Driver, Passenger}。「正在開」= 你操控的角色持有 Driver 座。
+- **F**：不在車上 → 駕駛座空就進駕駛座、被佔就上**後方平台當乘客**、都滿就無作用；在車上（駕駛或乘客）→ 下車。
+- **C**：照舊切控制。控駕駛 → 車能開；控乘客或地面上的另一隻 → 車熄火停好，兩隻都留在原位（貓／player 都看得到）。
+- 想換人開 → 兩隻都 F 下車，再 F 進去。
+- 相機：駕駛看 VehicleCamera；乘客看自己的第三人稱相機（看著自己坐在後平台）；`CameraPossessionSwitcher.Apply()` 改用 `DriverOccupant` / `PlayerSeat` / `CatSeat` 判斷（原 `SeatedCharacter` enum 改名 `Occupant` + 新 `Seat` enum）。
+- 4 個座位錨點都是 Buggy 的子物件，由 `VehicleCatWiring` 建/定位（car-local 起點值：player 駕駛 `(0,0.1,0.1)`、貓駕駛 `(0,0.5,-0.1)` -50°、player 乘客 `(0,0.55,-1.25)`、貓乘客 `(0,0.7,-1.25)` -50°）。後平台約 car-local z -1.65..-1.05、頂面 y ~0.57（`MainBodyCollider` 後段、`CabinCollider` 後面）。
+
+- 編譯無錯。EditMode **197 / 196 綠**。
+- **待使用者實機**：4 個座位錨點的位置/角度（貓仰角夠不夠看到臉、player 塞在座位的高低、後平台乘客會不會浮空/穿模）、乘客視角觀感、C 在「兩隻都在車上」時切換順暢度。
+
+## 2026-08-30 (追加58) — 車輛 4 個座位錨點分位置微調
+
+使用者:「PLAYER和貓當作主駕駛和後座時位置不一樣，要微調不同位置下的座標，不然看起來很奇怪」。
+
+追加57 已經是 4 個獨立錨點，只是起點值粗糙。用 edit-mode 定位截圖對著真實幾何（`CabinCollider` 中心 y 0.95 / 頂 1.375、`MainBodyCollider` 頂 y 0.57 = 後平台面）逐一調：
+
+| 錨點 | car-local pos | rot | 說明 |
+|---|---|---|---|
+| `DriverSeatAnchor`（player 駕駛） | (0, 0.65, 0.15) | 0 | 站在開頂座艙裡，腳約在車底板、頭露出車頂（開放式 buggy 無實體車頂） |
+| `CatDriverSeatAnchor`（貓 駕駛） | (0, 0.6, -0.1) | (-8, **180**, 0) | **面向後方 chase cam** + 微仰（四足貓面朝行進方向的話，後方追尾相機只看得到背，又沒有坐姿 pose） |
+| `PlayerPassengerAnchor`（後平台） | (0, 1.15, -1.3) | 0 | 站在後平台上，腳約在平台面 |
+| `CatPassengerAnchor`（後平台） | (0, 0.95, -1.3) | (-8, **180**, 0) | 後平台、面向 chase cam |
+
+- `VehicleCatWiring` 的常數同步更新（重跑選單會套用這組值）。場景 4 個錨點已存。
+- **player 的最終外觀仍待 Play 確認**（edit mode 下 Maya 綁定姿勢渲染不準；跑起來播 Idle 才是站姿）。貓沒有動畫，edit=runtime，截圖可信。
+- 編譯無錯。EditMode **197 / 196 綠**。
+- **待使用者實機**：4 個錨點在 Buggy 底下，Play 裡直接拖；貓面朝後（看得到臉）vs 面朝前（正常但看不到臉）哪個要，使用者定。
+
+## 2026-08-30 (追加59) — 貓駕駛面朝前 ＋ player 駕駛裁掉下半身（收腿 + 藏翅膀）
+
+使用者:「1.貓咪主駕駛時請讓貓臉朝前 2.PLAYER駕駛時請裁減到他下半身 不然會看到他的腳在地上」。
+
+### 1. 貓臉朝前
+- `CatDriverSeatAnchor` / `CatPassengerAnchor` 拿掉追加58 的 yaw 180，改 **面向行進方向** + 微仰 `euler (-6, 0, 0)`。（代價：後方 chase cam 看不到臉 —— 使用者這次接受這個取捨。）
+
+### 2. player 裁下半身
+player 的身體是**一張 skinned mesh**，`renderer.enabled` 沒辦法只藏一半。兩段處理（都只在坐上車時，下車還原）：
+- **收腿**：`VehicleEntrySystem` 新 `playerCollapseBones`（兩根 UpperLeg 骨）+ `playerCollapseBoneScale`(0.02)。`Mount` 時把骨頭 localScale 縮到 ~0 → 小腿/腳掌塌進骨盆；`Dismount` 還原到 Mount 當下存的原始 scale。`HoldSeated` 每幀重申（Mecanim 不碰 scale，保險）。`OnDisable` 也還原。
+- **藏翅膀**：`polySurface2197`/`2631`（`Player/Visual/.../WingsAnchor/Wings` 下）會垂到車底 → 進 `playerRenderersToHide`（`Mount` 關、`Dismount` 開）。`VehicleCatWiring` 用 `Wings` 物件名找 renderer、用 Animator `GetBoneTransform(HumanBodyBones.Left/RightUpperLeg)` 找骨頭，都自動接。
+- 背上的刀展示（`Blade`/`pCube*`）在頭頂上方，沒動（它是 player 的裝備）。
+
+### 座位錨點（edit-mode 截圖對幾何調過）
+| 錨點 | car-local | rot |
+|---|---|---|
+| `DriverSeatAnchor` | (0, 0.62, 0.12) | 0 |
+| `CatDriverSeatAnchor` | (0, 0.72, -0.05) | (-6, 0, 0) |
+| `PlayerPassengerAnchor` | (0, 0.55, -1.3) | 0 |
+| `CatPassengerAnchor` | (0, 0.72, -1.3) | (-6, 0, 0) |
+
+- `VehicleCatWiring` 常數同步、選單已重跑、場景已存（Player/Cat 已還原到出生點、骨頭 scale 1、翅膀開）。
+- 編譯無錯。EditMode **197 / 196 綠**。
+- **待使用者實機**：收腿後 player 坐姿（Play 才是 Idle 站姿基礎，edit 綁定姿勢不準）、貓朝前的位置、翅膀藏了會不會怪。骨頭縮放法若有 mesh 爆裂再把 `playerCollapseBoneScale` 調大一點（0.05）。
+
+## 2026-08-30 (追加60) — player 駕駛時定住 ＋ 貓駕駛大仰角 ＋ 貓後座朝後
+
+使用者:「1.PLAYER在主駕駛時必須靜止狀態 2.貓咪主駕駛時面向前方且上仰望至窗戶可看見的角度 貓咪後座時則朝向反方向」。
+
+- **player 靜止**：`VehicleEntrySystem` 新 `playerAnimatorToFreeze` 欄位（接 `Player/Visual` 的 Animator）。`Mount`(player) 時 `animator.enabled = false`（Idle 凍結）；`Dismount` / `OnDisable` 還原。SkinnedMeshRenderer 仍照骨頭 skinning，所以收腿還是有效。
+- **貓駕駛仰角**：`CatDriverSeatAnchor` euler `(-6,0,0)` → **`(-40,0,0)`**（面向前方、臉大幅上仰，chase cam 從後方看得到臉）。截圖確認：貓「坐起來、臉朝前上方」的樣子。
+- **貓後座朝後**：`CatPassengerAnchor` euler `(-6,0,0)` → **`(-8,180,0)`**（yaw 180，面向車尾／追尾相機方向）。當你操控貓乘客時，CatCamera 就看得到牠的臉。
+
+- `VehicleCatWiring` 常數同步、選單已重跑、場景已存（Player/Cat 已還原、animator on、骨頭 scale 1）。
+- 編譯無錯。EditMode **197 / 196 綠**。
+- **既有無關**：截圖時發現貓模型胸口有個米色球體 artifact（`Cat/Visual/output_unwrapped` Meshy auto-rig 的東西，或模型自帶的球），一直都在、非這次改動造成，之後另處理。
+- **待使用者實機**：player 凍結姿勢（Play 才是 Idle 基礎姿）、貓 -40° 仰角夠不夠/會不會太後仰、貓後座朝後的觀感。
+
+## 2026-08-30 (追加61) — 第一人稱駕駛藏駕駛模型 ＋ 屁孩王更兇（切後搖、縮間隔）
+
+使用者:「1.貓咪主駕駛且 V第一人稱時會看到貓咪的臉 2.屁孩王攻擊慾望不夠強，技能銜接不夠快，且攻擊後搖太長」。
+
+### 1. V 第一人稱藏駕駛
+`VehicleCameraController` 的 `firstPersonLocalOffset (0,1.15,0.15)` 是當初 player **被隱藏**時調的；追加57 起駕駛看得到，所以 cockpit view 直接對著貓/player 的臉。
+- `VehicleCameraController` 加 `public bool IsFirstPerson`。
+- `VehicleEntrySystem.LateUpdate`：`youDrive && IsFirstPerson` → 把**當前駕駛角色底下所有 renderer** 關掉（`SetAllRenderers`）；離開第一人稱 / 換人 / 下車 → 還原（還原時仍套用 seated 隱藏清單，翅膀維持關）。`_fpHiddenOccupant` 追蹤、只在狀態變化時 toggle（不是每幀）。
+
+### 2. 屁孩王攻擊節奏
+- **切後搖**（新機制）：`BossTuning.attackRecoveryTailCutNormalized`（預設 2 = 不切；武士明寫 2）。`UpdateAttack`：最後一個 hit window 關閉 + 這個 normalized 量之後、且不在 active window 內 → 直接 `EndAttack()` CrossFade 出去，跳過 clip 的收招 recovery 尾巴。`PW2_Tuning` 設 **0.15**。
+- **縮間隔**（`PW2_Tuning`）：`globalRestPhase1` 0.25–0.5 → **0.1–0.25**、Phase2 0.15–0.3 → **0.06–0.15**、`majorAttackExtraRest` 0.4–0.9 → **0.2–0.5**、`decisionIntervalPhase1` 0.12–0.25 → **0.06–0.15**、Phase2 0.08–0.16 → **0.04–0.1**、`attackReadinessBuffer` 0.06–0.12 → **0.03–0.08**。已接近武士的兇度。
+
+- 編譯無錯。EditMode **197 / 196 綠**。
+- **待使用者實機**：第一人稱下有沒有殘留的 renderer（VFX ring 之類，一起關了應該沒事）；屁孩王切後搖 0.15 會不會太急（招式看起來被砍尾）、間隔會不會過猛（`globalRest` 往上一點就緩）。
+
+## 2026-08-30 (追加62) — player 後座坐上綠色板子 ＋ 翅膀真的藏起來
+
+使用者:「PLAYER坐後座時Y座標太低了 沒有坐在綠色板子上」。
+
+- **後座 Y 提高**：`PlayerPassengerAnchor` car-local y 0.55→**0.9**（root world 1.75→2.1）、`CatPassengerAnchor` 0.72→**1.15**。後方綠色 deck 面板是視覺件，頂端約 world 2.0–2.2，比 `MainBodyCollider` 頂（world 1.77）高。截圖確認 player 現在坐在綠板上。
+- **翅膀 bug 修**：追加59 把翅膀 renderer 加進 `playerRenderersToHide`，但 `Wings` 物件上有 `WingFlap` 每幀重新開啟 renderer → 沒藏成。改成 `VehicleEntrySystem` 新 `playerHideObjectsWhileSeated`（GameObject[]），`Mount` `SetActive(false)` 整個 `Wings` 物件（連 WingFlap 一起停）、`Dismount`/`OnDisable` 開回。`playerRenderersToHide` 清空。`VehicleCatWiring` 改接 `Wings` GameObject。
+
+- `VehicleCatWiring` 常數同步、選單已重跑、場景已存（Player/Cat 已還原、animator on、Wings active、骨頭 scale 1）。
+- 編譯無錯。EditMode **197 / 196 綠**。
+- **待使用者實機**：後座 y 0.9/1.15 坐得剛不剛好（截圖看略高一點點，可再降 0.05）、背上的 `WolfsGravestone` 刀展示很大支很搶戲（使用者沒提，要的話也能一起藏）。
+
+## 2026-08-30 (追加63) — 學校土地放上第一棟建築（Meshy「元培大學」佔位）
+
+使用者:「把這個建築（`Meshy_AI_Yuanpei_University_Bu_0830053851_texture_fbx.zip`）放到第二座城市-學校的土地上」。
+
+- **匯入**：`import_model_file` 解壓進 `Assets/_Project/Environment/Meshy/YuanpeiUniversityBuilding/…/Meshy_AI_Yuanpei_University_Bu_0830053851_texture.fbx`（單一 mesh、~2.57M 頂點、無 LOD、無骨架）。附帶的重複 `.zip` 已從 Assets 刪除。Meshy 付費方案輸出 → 商用 OK、非 DoNotShip。
+- **材質**：FBX 匯入後只有白色預設材質。手建 URP/Lit `YuanpeiUniversityBuilding.mat`：`_BaseMap` = `_texture.png`、`_BumpMap` = `_texture_normal.png`（已改 texture type = NormalMap）、`_MetallicGlossMap` = `_texture_metallic.png`、smoothness 0.25。指到場景 renderer。
+- **場景擺放**（`GreyboxTest`，root `YuanpeiUniversityBuilding`）：等比縮到水平footprint ≈ 20m（localScale ≈ 0.206，等於抵消 FBX 自帶的 ×100 root scale）→ 世界尺寸約 18.7(x) × 20.6(高) × 20(z)。旋轉 `(0,90,0)` 讓 Meshy 唯一有貼圖的正立面朝 **+Z（北）**，正對學校北牆的路口 / `VehicleRoad`。位置 `(0, 10.75, -99.8)`，mesh 最低點 world y = 0.5 剛好坐在學校地板上表面；z 範圍 [-110, -90]，距北牆路口約 10.5m 當前庭。footprint 在 x ∈ [-9.3, 9.3]、z ∈ [-110, -90]，都在 30×30 地板內。
+- **碰撞**：mesh object 加非凸 `MeshCollider`；root + mesh object 設 static。
+- 場景已存、compile 乾淨。
+- **已知/待辦**：(1) 背面與兩側是 Meshy 單視角生成的空白面，只有正面能看。(2) 2.57M 頂點單 mesh 對 greybox 場景偏重，之後換正式資產或減面。(3) 建築目前不在任何 `學校` 父物件下（`學校`/`SchoolWall` 仍是各自的 scene root，追加31 待辦未做）。(4) 生成點 / 傳送點 / 室內仍未做。
+
+### 追加63 續 — 建築轉向（正立面朝北路口）＋ 縮小 ＋ 加基座解決懸空
+
+使用者:「建築物角度不對，正立面（有窗戶/玻璃中庭那面）要朝北正對路口，整棟要坐在地板上，尺寸縮小一點」。
+
+- **轉向**：`YuanpeiUniversityBuilding` euler `(0,270,0)` → **`(0,90,0)`**。Meshy 模型的有貼圖正立面是 local −X，`(0,90,0)` 把它轉到 world **+Z（北）**，正對 `SchoolWall_NorthLeft/_NorthRight` 的路口 / `VehicleRoad`。玩家從本地穿洞進學校就正面看到大樓正門與玻璃中庭。
+- **縮小**：等比 scale `0.206` → **`0.154`**（水平最長邊 20m → **15m**）。world 尺寸約 **14 × 15.4高 × 15**，占 30×30 基地約一半，正立面到北牆路口留約 12m 前庭。
+- **懸空修正**：抽樣模型底面發現 Meshy 這棟**沒有完整平底** —— 只有正面/中庭那條往下到接近地面，後 2/3 的底面浮在離地約 3.5–5m。做法：(1) 整棟再下沉 1.6m（正面/中庭稍微沒入地面，看不出來）；(2) 新增 `YuanpeiUniversityBuilding_Base` —— 一個 15.4 × 3.9 × 16.4 的 Cube 基座（`Ground_StoneFloor` 材質 + 內建 BoxCollider），頂面 y≈2.4、底沉入地下，填滿浮空的縫。視覺上變成「大樓坐在一個矮石造基座/廣場平台上」，合理的校園配置。
+- 位置：`(0, 6.44, −99.85)`，基座 `(0, 0.45, −100)`。合併範圍 x ∈ [−7, 7]、z ∈ [−107.5, −92.5]，都在基地內、離南牆約 2m。
+- `YuanpeiUniversityBuilding` + `YuanpeiUniversityBuilding_Base` 都設 static。場景已存、compile 乾淨。
+- **仍未解**：背面/兩側 Meshy 空白面；模型本身有輕微「往前傾」的造型（烘進 mesh，非擺放問題）；中庭圓柱體略微前突出基座邊緣。
+
+### 追加63 續 2 — 移除石造基座 ＋ 建築再往右轉 90°
+
+使用者:「不需要石造基座，並且讓現在的學校角度往右轉動 90 度」。
+
+- **移除** `YuanpeiUniversityBuilding_Base`（追加63 續加的石造 Cube 基座）。
+- **建築** euler `(0,90,0)` → **`(0,180,0)`**（繞 Y +90，俯視順時針＝往右）。有貼圖正立面 local −X 現在朝 **world +X（東）**。位置 `(0.15, 8.19, −100)`，最低頂點重新對齊地板頂 y=0.5。
+- **懸空問題回來了**：拿掉基座後，模型沒有平底的老問題外露 —— 大約南半 / 西側的底面浮在離地約 4–6m，從基地內側低角度看得到縫。追加63 續的下沉 1.6m 也一併還原（現在只靠 bounding-box 最低點貼地）。**待使用者決定怎麼收**（下沉一半讓正門側稍微入土 / 只加一片薄地板 / 暫時不管 / 換正式資產）。
+- 場景已存、compile 乾淨。
+
+### 追加63 續 3 — 找到正確朝向：模型本來是「躺著」的
+
+使用者澄清:「大門面向門口；『底盤』是指模型自帶的那片完全沒外觀的灰色地基，要踩在土地上」。
+
+- **根因**：這個 Meshy FBX 的 local 座標軸不是 Y-up。之前所有版本（識別、追加63 系列）都當成 Y-up 直接擺，等於把整棟**橫躺**放 —— 灰色地基面朝側面、細節正立面朝上、那根「玻璃圓柱」其實是建築正面的**圓弧玻璃塔樓**橫躺著。難怪一直有懸空 + 傾斜感。
+- **正確朝向**：`euler (0,180,0)` → **`(270, 90, 0)`**：模型 local −Z（那片大面積灰色地基 slab）→ world **down**、local −X（帷幕牆正立面 + 元培大樓招牌 + 入口雨庇）→ world **+Z（北，正對路口）**。抽樣底面：25/25 格最低點都在 y≈0.50–0.54 —— 地基整片平貼學校地板。
+- scale `0.15`（footprint 最長邊 100→**15m**）。world 約 15(寬) × 13.6(高) × 14.6(深)。位置 `(0, 7.35, −99.86)`，z ∈ [−107.3, −92.7]，正立面到北牆路口留約 13m 前庭。非凸 `MeshCollider`、static。
+- 現在 eye-level 看是一棟正常的科大教學樓：圓弧玻璃塔樓 + 帶招牌的入口 + 前庭綠化，正面朝路口。
+- 場景已存、compile 乾淨。背/側仍是 Meshy 單視角空白面；2.57M 頂點無 LOD 不變。
+
+## 2026-08-30 (追加64) — 學校再放兩棟圖書館（Meshy 佔位），組成校園中庭
+
+使用者:「部署 `Meshy_AI_Modern_Glass_Library_...` 和 `Meshy_AI_Palm_Lined_Library_...` 這兩個」。
+
+- **匯入**：`import_model_file` 解壓進 `Assets/_Project/Environment/Meshy/ModernGlassLibrary/…` 與 `…/PalmLinedLibrary/…`（各單一 mesh，ModernGlass ~1.62M 頂點、PalmLined ~3.37M；無骨架/動畫/LOD）。附帶重複 `.zip` 已從 Assets 刪。Meshy 付費輸出＝可 ship。
+- **材質**：各手建 URP/Lit（`_BaseMap`/`_BumpMap`（normal 已改 type）/`_MetallicGlossMap`，smoothness 0.35 / 0.3）。
+- **朝向**：兩個都跟元培大樓一樣**非 Y-up**。base rotation `euler (270,90,0)` 讓灰色地基 slab 朝下、貼地。ModernGlass 這樣正立面就朝 +Z（北）；PalmLined 正立面在 local −X，額外繞世界 Y +90 → `euler (270,180,0)`，正立面才朝北。
+- **佈局（校園中庭）**：三棟都正面朝北路口。
+  - `YuanpeiUniversityBuilding`：後方中央，scale 0.12、footprint 12×11.7、高 10.9，x[−6,6] z[−108.8,−97.2]（比追加63 續 3 再縮小、往後靠）。
+  - `ModernGlassLibrary`：西側，scale 0.14、footprint 8×14、高 6（低矮弧形玻璃館），x[−14.5,−6.5] z[−97,−83]。
+  - `PalmLinedLibrary`：東側，scale 0.12、footprint 12×9.7、高 8.1，x[2,14] z[−94.8,−85.2]。
+  - 中央從路口（x≈0）留約 8.5m 走道通到元培大樓；三棟無重疊、都在圍牆內。
+- 每棟非凸 `MeshCollider` + 全 static。場景已存、compile 乾淨。
+- **已知**：三棟的背/側都是 Meshy 單視角空白面（中庭內側看得到）；模型自帶不少樹木/綠化；頂點量大無 LOD。佈局偏密，使用者要調位置/大小/朝向再說。
+
+## 2026-08-30 (追加65) — 學校擴大到 60×60 ＋ 車道加長加寬
+
+使用者:「(學校地基不夠大) 好 60×60，銜接兩邊城市的車道也要跟上」。
+
+- **`SchoolAreaSetup.AreaSize` 30 → 60**。重跑選單 `Add School Area`：`學校` 現在 60×60，z ∈ [−145, −85]、x ∈ [−30, 30]、中心 (0, 0, −115)，上表面 y=0.5 不變。北緣仍貼齊 `VehicleRoad` 遠端。周界牆（teal）跨距自動跟著長；北面路口自動對齊道路，寬 8.6。南緣 z=−145 在 `BackgroundTerrain`（z ±150）內留 5m。
+- **`VehicleWallOpeningSetup`**：`RoadOutwardLength` 65 → 70、`RoadWidthOverGap` 2.0 → 3.5。重跑選單 `Add Vehicle Wall Opening + Road`：`VehicleRoad` 現在 **7.4 寬 × 70 長**（z ∈ [−15, −85]），本地南牆缺口重測 3.92。道路讀出後 `SchoolAreaSetup` 再跑，接點無縫。
+- **三棟樓重擺 + 放大**進 60×60 校園中庭（都正面朝北路口，`euler` 沿用非-Y-up 朝向）：
+  - `YuanpeiUniversityBuilding`：後方中央，scale 0.22、footprint 22×21.4、高 20，x[−11,11] z[−138.7,−117.3]。
+  - `ModernGlassLibrary`：西側，scale 0.20、footprint 11.3×20、高 8.6，x[−22.7,−11.3] z[−118,−98]。
+  - `PalmLinedLibrary`：東側，scale 0.20、footprint 20×16.1、高 13.5，x[7,27] z[−116,−100]，`euler (270,180,0)`。
+  - 三棟無重疊、都在牆內，中庭中軸從路口（z=−85）到元培大樓約 32m 深、寬約 18m。
+- 非凸 `MeshCollider` + static 全保留。場景已存、compile 乾淨、Console 無錯。
+- **待辦**：中庭偏空曠（之後補綠化/座椅/步道）；`arenaCenterXZ` 若要在學校放怪要設 (0, −115)；三棟背/側仍是 Meshy 空白面。
+
+## 2026-08-30 (追加66) — 入場前平地（Meshy 校園廣場）＋ 校園物件改 yuanpei_ 前綴
+
+使用者:「把 `Meshy_AI_Quiet_Campus_Plaza_...` 做為入場前平地，相關建築物全部以 `yuanpei_` 前綴命名，接下來我要調整位置」。
+
+- **匯入** `Assets/_Project/Environment/Meshy/QuietCampusPlaza/…`（單一 mesh ~1.59M 頂點、無骨架/動畫/LOD）。附帶 `.zip` 已從 Assets 刪。手建 URP/Lit 材質。
+- **`yuanpei_QuietCampusPlaza`**：非 Y-up（同其他 Meshy），`euler (270,90,0)` 讓廣場面平貼；scale 0.4 → world 40×40（含樹木/座椅/圓形中央區/步道/人形），base y=0.5。**粗擺**在學校北牆路口前 x[−20,20] z[−90,−50]（跨路口 + 沿 `VehicleRoad` 往北），非凸 MeshCollider + static。**位置待使用者自行微調**。
+- **場景物件改名（yuanpei_ 前綴）**：`YuanpeiUniversityBuilding` → `yuanpei_MainBuilding`、`ModernGlassLibrary` → `yuanpei_ModernGlassLibrary`、`PalmLinedLibrary` → `yuanpei_PalmLinedLibrary`。（Asset 資料夾/材質名沒動，只改 scene GameObject。）
+- 場景已存、compile 乾淨、Console 無錯。
+- **注意**：廣場中央目前壓到一顆既有低模岩石（場景原本就有的環境件）；廣場南緣稍微越過學校北牆——都等使用者調位置時處理。
+
+### 追加66 續 — 廣場放大成 60×60 當學校地基，三棟樓坐在上面
+
+使用者:「這個廣場我想讓它變成 60×60 放在學校領地上當作地基，其他建築物承載之上」。
+
+- **`yuanpei_QuietCampusPlaza`**：scale 0.4 → **0.6**，world **60×60**，對齊學校 lot（x[−30,30] z[−145,−85]、中心 (0,0,−115)）。它的可走平台面（mesh 內約 y2.5）整體下推 2m，讓平台面落在 y≈0.5 —— 跟原本 `學校` 灰板地面同高，牆/樓/其他東西的高度都不用動。次結構沉到 `學校` 板下面藏起來。
+- `學校` 灰板保留在底下當碰撞地板 + 邊緣填補（廣場不規則邊之外會露出石地面，可接受）。
+- **三棟樓重新落在廣場面上**：對每棟 footprint 往下 raycast 取平台高（`yuanpei_MainBuilding` / `yuanpei_PalmLinedLibrary` 落 y≈0.5、`yuanpei_ModernGlassLibrary` 壓到微高處 y≈1.0），base 對齊。
+- 4 個物件 static 仍關著（追加66 為了使用者手調關的），位置/擺放待使用者微調。場景已存、Console 無錯。
+
+### 追加66 續 2 — 清掉廣場的占位草木（mesh surgery）
+
+使用者:「這個廣場有很多占位的草木，有辦法單獨清理掉嗎」。
+
+- 這個 Meshy FBX 是**單一 mesh、單 submesh、貼圖幾乎純灰**（無綠色可分類，也沒有子物件/submesh 可單獨關）。只能做 mesh 手術。
+- 寫了個一次性 edit-time 程序：世界座標高度門檻 + XZ 格點「植栽欄位」偵測，逐三角形篩掉樹/灌木/燈柱/雕像/人形，重建 mesh、remap 頂點，存成新 asset `Assets/_Project/Environment/Meshy/QuietCampusPlaza/QuietCampusPlaza_NoFoliage.mesh`，指到 `yuanpei_QuietCampusPlaza` 的 MeshFilter + MeshCollider。
+- 結果：**2.87M tris → 578k tris（−80%）**、1.59M → 311k verts。留下鋪面 + 中央同心圓廣場紋路 + 低地面細節；門檻 y>0.85（deck≈0.6）以上全清。原始 FBX mesh 沒動，要還原把 MeshFilter 指回去即可。
+- 三棟建築 mesh 各自也有烘進去的綠化（`yuanpei_MainBuilding` 一棵樹、`yuanpei_PalmLinedLibrary` 棕櫚…），那是各自 mesh 裡的，不在這次範圍；要清用同一招另跑。
+- 場景已存、Console 無錯。
+
+### 追加66 續 3 — 修：上一版清理過度把廣場地面也削掉了
+
+使用者:「清理過度了，連地面都被破壞，有很缺口」。
+
+- 續 2 的高度門檻 + 密度格法太粗暴，把鋪面本身也篩掉了 → 地面破洞。
+- 做法改保守：先把 MeshFilter/MeshCollider **指回原始 FBX mesh**（沒動過），重新只做兩件事：
+  1. 樹冠：`centroid.y > 1.9`（deck 最高才 ~1.1）整片砍。
+  2. 樹幹：只在「樹冠密集格」裡、且**法線接近垂直**（trunk 壁面）、高度 0.55–1.9 的三角形才砍。
+  - **鐵律：`centroid.y ≤ 1.25` 的三角形一律保留**（deck 面全在這之下）→ 鋪面 100% 完整，零破洞。
+- 驗證：40×40 格點往下打，plaza 命中 371、`學校` 灰板命中 227（廣場鋪面本來就不是滿版 60×60，邊緣露灰板，那是模型形狀不是破損）、**真正落空 0**。
+- 結果 mesh：2.87M → 955k tris。三棟樓重新 raycast 落回 deck（這次排除建築自身 collider）。場景已存、Console 無錯。
+
+### 追加66 續 4 — 廣場回歸完全未清理狀態
+
+使用者:「先回歸到完全未清理的狀態」。
+
+- `yuanpei_QuietCampusPlaza` 的 MeshFilter + MeshCollider 指回原始 FBX mesh `mesh_node`（1.59M v / 2.87M tris，全部樹木/灌木/燈柱/座椅原封不動）。
+- 三棟樓重新 raycast 落回廣場 deck（取 y<1.8 的命中避開樹冠）：MainBuilding base 0.66、ModernGlass 1.06、PalmLined 1.52。
+- 清理過的 `QuietCampusPlaza_NoFoliage.mesh` asset 還留在 `Assets/_Project/Environment/Meshy/QuietCampusPlaza/`（目前無人引用，之後決定要不要重做清理再用或刪）。
+- 場景已存、Console 無錯。
+
+### 追加66 續 5 — 套用使用者 Play Mode 擺位 + 底部貼齊 + 存檔
+
+使用者在 Play Mode 把三棟樓移到想要的位置（Play Mode Transform 不存檔），要求套回 Edit Mode + 調底部 + 存檔。
+
+- Play Mode 中抓下 4 個 `yuanpei_` 物件的 P/Q/S（備份在 scratchpad）。
+- 使用者的擺位：`yuanpei_MainBuilding` (18.1, −96.5) 轉朝 Y=0；`yuanpei_ModernGlassLibrary` (−8.5, −124.1) 轉朝 Y=0；`yuanpei_PalmLinedLibrary` (26.1, −111.8) Y=180；`yuanpei_QuietCampusPlaza` 使用者把 pos.y 降到 −5.7 **（正確的——讓廣場 deck 落在地面高度，一度誤判成失手拖到，實測 deck 的三角形法線朝下、downward raycast 要 `queriesHitBackfaces` 才打得到，才會之前量錯）**。
+- Edit Mode 重套 P/Q/S，plaza pos.y 精調到 **−5.91**（deck median = 0.50，齊平 `學校` 灰板 / 圍牆底）。三棟樓 raycast 貼齊 deck（base y ≈ 0.45–0.50）。
+- 場景已存、Console 無錯。
+- **注意**：廣場 deck 面的 mesh 法線朝下，`Physics.Raycast` 預設打不到（會穿到底下 `學校` 灰板 y=0.5）——實際碰撞沒問題（MeshCollider 不看 winding），且灰板就在同高當底。
+
+### 追加66 續 6 — 學校校園配置定案
+
+使用者:「關於學校的建築物我的配置好了，幫我記住設定」。
+
+- 使用者在 Editor 又微調過（`ModernGlassLibrary` 放大到 scale 0.5、`MainBuilding` 轉朝 Y=340、`PalmLined` 轉朝 Y=270、`QuietCampusPlaza` 微移到 (0.08,−5.7,−114.44)）。
+- 三棟樓底部最後再 raycast 貼齊 deck（base y=0.50）。4 個 `yuanpei_` 物件 **static 重新開啟**（layout 鎖定）。
+- 定案 transform 記錄在 `Docs`（本則）＋ AI memory `yuanpei-campus-building-layout.md`：
+  - `yuanpei_QuietCampusPlaza`  pos (0.08, −5.70, −114.44)  euler (270,90,0)  scale 0.60
+  - `yuanpei_MainBuilding`       pos (17.81, 9.63, −97.55)   euler (270,340,0) scale 0.20
+  - `yuanpei_ModernGlassLibrary` pos (−5.01, 11.29, −125.34) euler (270,0,0)   scale 0.50
+  - `yuanpei_PalmLinedLibrary`   pos (21.21, 7.21, −116.64)  euler (270,270,0) scale 0.20
+- 場景已存、Console 無錯。往後不要自行搬動這幾棟。
+
+## 2026-08-30 (追加67) — 車輛 Ctrl 飛行（原理參考 player，綁在車本身）
+
+使用者:「回到車輛，car 幫我增加 ctrl 飛行功能，原理參考 player（功能綁訂車本身）」。
+
+- **新檔**
+  - `VehicleFlightData`（ScriptableObject，`Assets/_Project/Settings/Movement/Vehicle/VehicleFlightData.asset`）—— 爬升/下降/巡航速度、boost 倍率、偏航速度、俯仰/迴正平滑、起飛上衝、體力耗速、重進門檻。數值全在這（rule 7）。
+  - `VehicleFlightState`（純 C# 類，非 MonoBehaviour）—— 飛行狀態機 + 速度解算，`Tick()` 回傳 `VehicleFlightOutput`。跟 `DodgeState` vs 玩家 dodge 同一種「抽出可單測邏輯」的切法。
+  - `VehicleFlightController`（掛 Buggy，`[RequireComponent(Rigidbody)]`）—— 薄殼：直接讀 `Keyboard.current`（沿用 `VehicleController`/`VehicleEntrySystem` 慣例，不用 IInputCommand），把 `VehicleFlightState` 的輸出寫到 Rigidbody（`useGravity` 關 + 每 FixedUpdate 寫 `linearVelocity` + `MoveRotation` 迴正/偏航）。
+  - `VehicleFlightSetup`（editor menu `Tools/Live2DAction/Add Vehicle Flight (Ctrl)`，re-runnable）—— 把 `VehicleFlightController` + `FlightEnergy` 子物件（`UltimateEnergy`，max 500 / +5 每 1s / idle 3s，同玩家 flightEnergy 設定）接上 Buggy，指到 data asset。
+  - `VehicleFlightStateTests`（EditMode，16 個）。
+- **改既有**
+  - `VehicleController`：加 `public bool FlightModeActive`（飛行中 `FixedUpdate` 跳過輪子動力/煞車/轉向，只 `ApplyParkingBrake(0)` 清 stale torque）＋ `public bool AnyWheelGrounded`（飛行落地判定）。
+- **原理照 player**：按住 Ctrl 起飛 + 爬升；放開 → 懸停（垂直速度 SmoothDamp 回 0，不是墜落）；飛行一旦啟動就持續，只有「輪子著地 且 沒按 Ctrl」或「體力耗盡」才結束；重進需 `resumeEnergyThreshold`（30）。
+- **鍵位**（配合車）：Ctrl 起飛/爬升、**Space** 下降（地面時是手煞車）、**Shift** 加速巡航（沿用車 boost 鍵，額外耗體力）、**W/S** 沿車頭推進、**A/D** 偏航。車身隨垂直速度微俯仰、迴正 roll。只在「你正在開這台車」（`VehicleController.enabled`）時可飛；中途下車立即結束飛行。
+- **測試**：EditMode `VehicleFlightStateTests` **16/16 綠**；全套 213 tests 212 綠（唯一失敗 `CharacterAttackAnimationLinkTests...FallsBackToAttack3` 為既有無關項）。編譯無錯（Console 兩個 `CubismRenderController` IndexOutOfRange 是既有 Live2D SDK 問題，與此無關）。
+- **待使用者實機**（MCP Editor 沒 OS 焦點、Play Mode 會凍幀，無法自己跑真實飛行）：起飛手感、巡航/爬升速度、Space 下降、迴正快慢、`VehicleCameraController` 是水平跟隨相機、車爬升時鏡頭偏平（v1 沒動相機）。數值全在 `VehicleFlightData.asset`。
+
+### 追加67 續 — 修：飛行沒有落地手段 ＋ 空中車身抖動
+
+使用者實機:「1. 沒有落地的手段 2. 空中時車身會抖動」。
+
+- **落地**（`VehicleFlightState.Tick` 加 `heightAboveGround` 參數）：落地條件從「輪子著地 且 沒按 Ctrl」放寬成「(輪子著地 **或** 離地 ≤ `landingClearance` 1.6m) 且 沒按 Ctrl」。實際操作：Ctrl 起飛 → 放開懸停 → **按住 Space 下降**，一進到離地 1.6m 內就自動落地、車身掉到輪子上；全程按 Ctrl 可中止落地重新爬升。`VehicleFlightController` 用「從車體 pivot 往下 raycast、忽略車自身 collider」算離地高。落地瞬間下墜速度夾到 `landingImpactSpeedCap`(4) 免得撞爛懸吊。
+- **抖動**（`VehicleController.FlightModeActive` 的 setter 現在做事）：
+  - 飛行時**停用 4 個 WheelCollider** —— enabled 的 WheelCollider 只要擦到任何幾何就會自己跑懸吊 raycast + 施加彈簧力，把底盤踢一下、跟硬寫的飛行速度打架，就是抖動來源。落地時開回。
+  - 飛行時 `Rigidbody.interpolation` 從 `None`（地面預設）切到 `Interpolate`（`None` 下畫面只跟著 50Hz 物理步更新，空中平移看起來就是抖）；落地還原。
+  - 姿態改用**自持的 `_flightRot`**（不再每幀讀回 `Rigidbody.rotation` 再 slerp，避免物理/插值 nudge 反饋成抖動）。
+- `VehicleFlightData` 加 `landingClearance` / `landingImpactSpeedCap`（既有 asset 自動吃到新預設值）。
+- EditMode `VehicleFlightStateTests` **18/18 綠**（+2：離地高落地、低空按 Ctrl 不落地）；全套 215 tests 214 綠（唯一失敗 `...FallsBackToAttack3` 既有無關）。編譯無錯。
+
+### 追加67 續 2 — 修：飛行時輪胎貼圖被拉伸
+
+使用者實機:「飛行時輪胎貼圖沒跟隨導致拉伸」。
+
+- 根因：追加67 續飛行時停用了 WheelCollider，但 `VehicleController.FixedUpdate` 還是每步呼叫 `WheelVisualSync.SyncVisual()`，它把輪骨 `position` 釘在 `WheelCollider.GetWorldPose()` —— disabled 的 collider 回傳的是停用前的**地面舊姿態**，車身飛走輪骨還留在地上，蒙皮就被拉伸。
+- 修：`FlightModeActive` 時**跳過 4 個 `SyncVisual()`**（連同已跳過的動力/煞車一起）。不同步 = 輪骨保持起飛當下相對車身的 local 姿態、跟著車身一起飛，正是空中要的樣子。落地 `FlightModeActive` 轉回 false 就恢復同步（一幀內對回真實懸吊姿態，位移極小）。
+- EditMode `VehicleFlightStateTests` 18/18 綠（純視覺修正，飛行邏輯沒動）。編譯無錯。
+
+## 2026-08-30 (追加68) — 原神式切換走/跑（Left Alt，沉浸式）
+
+使用者:「設計像原神那樣的 切換式 跑步/慢走 沉浸式體驗」。
+
+- **鍵位**：**Left Alt** 輕點切換走/跑（`切換式`＝按一下翻轉、持久）。預設跑。
+- Maya Locomotion blend tree 只有 `NewWalk`（speed 0–0.8）/`NewRun`（speed 2），`CharacterAnimatorLink` 直接餵實際水平速度 → **降速度走路動畫就自動出來，不用動 animator**。
+- **`IInputCommand`**：加 `bool WalkTogglePressed`，用 **default interface member（`=> false`）** —— 玩家專用（AI 不切換），所以 15 個測試 stub + EnemyAI 全部不用改照樣編譯，只有 `PlayerInputProvider` override。
+- **`PlayerInputProvider`**：`WalkTogglePressed = leftAltKey.wasPressedThisFrame`。
+- **`EnemyAI`**：明寫 `=> false`（風格一致）。
+- **`CharacterMovement`**：加 `walkSpeed`（0.9，~45% run pace）＋ `_walkMode`。地面移動 `_isFlying ? flightMoveSpeed : (_walkMode ? walkSpeed : moveSpeed)`。起飛強制清 `_walkMode`（落地回跑）。純函式 `static NextWalkMode(current, togglePressed, isFlying)` 抽出可單測。公開 `IsWalking`（給之後相機拉近/FOV 的沉浸 polish 用）。
+- 貓也吃同一個切換（共用 `PlayerInputProvider`），各自記自己的 `_walkMode`。Player walkSpeed 0.9 / moveSpeed 2；Cat walkSpeed 0.9 / moveSpeed 3（比例可各自在 Inspector 調）。
+- **測試**：EditMode `WalkRunToggleTests` **6/6 綠**（切換翻轉/持久/飛行強制跑）；全套 221 tests 220 綠（唯一失敗 `...FallsBackToAttack3` 既有無關）。PlayMode `CharacterMovementTests.WalkToggle_MakesGroundMovementSlower` 已加（Editor 沒焦點無法自跑，待使用者/CI）。編譯無錯，無場景改動（新欄位吃 C# 預設值）。
+- **v1 只做速度+動畫**。相機「慢下來看風景」的拉近/FOV polish 沒做，之後 `ThirdPersonCameraController` 讀 `IsWalking` 再加。**待實機**：`walkSpeed 0.9` 對 `NewWalk` clip 會不會腳滑（滑就往 clip 的 authored pace 調高）；Left Alt 在你的鍵位習慣順不順。
+
+### 追加68 續 — 走路時相機「慢下來看風景」的拉近 + 收 FOV
+
+使用者:「相機『慢下來看風景』的拉近/FOV 沒做（IsWalking 已公開，之後要再加）幫我做這個」。
+
+- `ThirdPersonCameraController` 新增（都在第三人稱、非瞄準/非對決時才作用）：
+  - `walkDistanceMultiplier`（0.82）—— walk 模式時 `desiredDistance` 乘這個，鏡頭微拉近。非破壞性（不覆寫 `distance`），同 `flightDistanceMultiplier` 慣例。
+  - `walkFieldOfViewDelta`（−6）—— walk 模式時第三人稱 FOV 加這個，微收。
+  - `walkFramingBlendSpeed`（5）—— `_walkFramingBlend` 0↔1 lerp-per-frame 緩動，切換走/跑時鏡頭 ~0.4s 平滑進出，不是硬切。
+- 讀 `targetMovement.IsWalking`（追加68 的 walk 切換）。飛行時 `IsWalking` 本來就 false → blend 自動回 0。瞄準/對決相機各自覆寫 distance & FOV，不衝突。
+- 純函式 `StepBlend01` / `WalkFramedDistance` / `WalkFramedFieldOfView` 抽出可單測（同 `ComputeAutoCenterYaw` 慣例）。
+- Main Camera（target Player）＋ CatCamera（target Cat）都自動吃到（新欄位吃 C# 預設值，無場景改動）。
+- **測試**：EditMode `ThirdPersonCameraControllerTests` +6 綠（blend 緩動/夾值、距離拉近、FOV 收窄）；全套 227 tests 226 綠（唯一失敗 `...FallsBackToAttack3` 既有無關）。編譯無錯。
+- **待實機**：拉近幅度（base distance 已經只有 2，×0.82 = 1.64，可能偏微妙）／FOV −6 收多少合適／緩動速度；數值全在 `ThirdPersonCameraController` Inspector。
+
+## 2026-08-30 (追加69) — 影片技能特效：R 大招施法「劍體環繞」（不要有人形.mp4）
+
+使用者:「把這段影片做為 player 的技能特效，要處理透明通道 和仿3d問題」→「用推薦」（綁到 R 大招施法）。
+
+- **素材**：`不要有人形.mp4`（1280×720、H.264 **無 alpha**、24fps、240 幀）—— 一把 3D 劍被橘/藍能量軌道環繞，黑底，右下角小星星浮水印。歸檔在 `Assets/_Project/VFX/Skills/SwordOrbit/Source/SwordOrbitSource.mp4`（僅供重製，**執行期不播 MP4**，同 `SlashSourceVideo.mp4` 慣例）。
+- **透明通道**：ffmpeg 離線烘成 `SwordOrbit_Atlas.png` —— 抽 50 幀（第 20~216 每 4 幀）、`drawbox` 塗掉右下浮水印、`geq` 由亮度算 alpha（`a = 255·pow(clip((max(rgb)−40)/180,0,1), 1.5)`，黑底→透明、噪點地板夯到 0）、`tile=8×7` 拼圖集（2560×1260，透明 padding）。
+- **仿3d（2.5D）**：`SwordOrbitVfxSetup.cs`（選單 `Tools/Live2DAction/Add Sword Orbit Skill VFX (R ultimate cast)`，可重跑）建 flipbook 預製體 —— 主體 billboard flipbook quad（`SlashFlipbookURP` shader、**premultiplied Alpha blend** src=One/dst=OneMinusSrcAlpha，因為有白/藍核心會過曝、不能純 Additive；`_Brightness` 1.7 給 bloom）＋ 2 個小子粒子（Sparks 火花爆、GlowPulse 藍光暈）給體積感。billboard = 從任何角度都不會看到「側面變一條線」。`SlashVfxController` 自動回收。
+- **接線**：`UltimateAbility` 加 `castVfxPrefab` + `castVfxLocalOffset`（null-safe），發動大招瞬間（`burst.Play()` 旁）`Instantiate` 到玩家身上（parent 到玩家、隨起手旋轉）。`SwordOrbitVfxSetup` 把預製體接到 Player 的 `castVfxPrefab`（offset (0,1.1,0) 胸口高）。
+- 匯入設定：mipmap off、clamp、alphaIsTransparency、**npotScale None**（保 2560×1260 不被縮成 2048×1024）。
+- 編譯無錯；全套 227 EditMode tests 226 綠（唯一失敗 `...FallsBackToAttack3` 既有無關）。VFX 純視覺無單測，靠 `GreyboxTest` 重現（R 鍵、能量滿）。
+- **待實機**：Play Mode 我沒法自己看（失焦凍幀）。編輯期 simulate 預覽：特效渲染正常、透明乾淨、billboard 各角度一致。要調的：大小（`SlashVfxController.sizeMultiplier` 或 `SwordOrbitVfxSetup.SizeHeight` 3.4）、亮度、壽命 1.05s、子粒子強度；低角度對天空還看得到極淡的 quad 霧（實際打鬥場景應該無感，真的礙眼再把 alpha key 推更硬）。
+
+## 2026-08-31 (追加70) — 修:貓視角下攻擊/技能會連帶觸發 player ＋ 武士死亡飄在空中
+
+使用者:「1. 守望者視角 player 和貓視角，切換時一些移動、攻擊按鍵只有當下那個視角的角色會觸發，現在的問題是 cat 視角下攻擊會連帶觸發 player 攻擊 2. 武士死亡後卡在飄浮在空中的狀態」。
+
+### 1. 附身切換沒有關掉 player 的戰鬥輸入元件
+
+- **病因**：`CameraPossessionSwitcher.playerControl[]` 只放了 `CharacterMovement`。附身貓的時候只有 player 的「移動」被關，`PlayerCombat`（左鍵普攻）、`UltimateAbility`（R）、`TargetLockController`（滾輪鎖定）、`RangedWeapon`（右鍵瞄準/開火）、`ExecutionAbility`（F 處決）全部照常吃共用滑鼠/鍵盤 → 你操作貓的時候 player 也在原地揮刀。附身系統（追加于 2026-08-28）比貓戰鬥（追加30）早，之後沒回頭補。
+- **修法**：`CatCharacterSetup` 新增 `CollectPlayerControl(player)`（`CollectCatControl` 的鏡像），把 player 上所有讀輸入的元件都收進 `playerControl[]`：`CharacterMovement`＋`PlayerCombat`＋`TargetLockController`＋`UltimateAbility`＋`RangedWeapon`＋`ExecutionAbility`。`BuildSwitcher` 簽章由 `CharacterMovement` 改吃 `Behaviour[]`。
+- **場景**：直接把 `GreyboxTest.unity` 裡 `CameraPossession` 的 `playerControl` 陣列補成這 6 個並存檔（不用重跑選單）。貓側 `catControl[]` 本來就完整（5 個），不動。貓有自己的 `PlayerInputProvider` 實例，兩邊不互相污染。
+- **順帶把兩個「中途被停用」的破口補起來**（附身切換、player 死亡、場景拆除都會觸發）：
+  - `UltimateAbility.OnDisable`：大招丟劍是 coroutine，會把劍 `SetParent(null)` 拿在手上逐幀驅動。中途被停用 → coroutine 被 Unity 直接砍掉，劍留在半空、`_active` 卡 true（大招從此再也放不出來）。現在 `OnDisable` 會 `StopAllCoroutines` + 把劍瞬移回背上 + 清狀態。
+  - `RangedWeapon.OnDisable`：瞄準中被停用 → 準心 UI / 手上 AK 模型 / tracer 線會留在畫面上。現在 `OnDisable` 一律關掉。
+  - `TargetLockController` 不動：殘留的鎖定無害（consumer 都停用了），重新附身回 player 時 `Update` 第一幀就會重新驗證距離。
+
+### 2. 武士死亡後屍體飄在半空
+
+- **病因**：武士的 Animator 在**根物件**上、`applyRootMotion=False`。死亡播 `Wushi_DeathFallForward`（clip `Fall_Dead_from_Abdominal_Injury`），該 mocap 的 `RootT.y` 從 0.95 掉到 0.18（人往地上倒的垂直位移**在 root motion 裡**）。`applyRootMotion=False` 把這段位移整個丟掉，最後定格在「站姿髖高」的躺平姿勢 → ×4 模型縮放下 hips/head/feet 全在 y≈2.4–2.7，地面在 0.5，屍體飄 ~2m。（實測：修前 Hips y=2.701 / Head 2.538 / LeftFoot 2.409。）
+- **修法**：把 `Wushi_DeathFallForward.fbx` 這個 clip 的匯入設定改成 **Bake Into Pose (Root Transform Position Y) = ON**（`lockRootHeightY=true`）＋ **Based Upon = Feet**（`heightFromFeet=true`）—— 垂直位移改成留在 pose 裡（不靠 root motion 就會演），並以腳為基準錨定，讓站姿起手和躺平收尾都貼著 transform 的地面。修後定格：Hips y=1.04 / Head 0.88 / Feet 0.75–1.17，屍體躺在地上。站姿起手不變（Hips 2.58 / Foot 0.93），crossfade 進場無 pop。
+- 只動這一個 clip。`Wushi_PostureKneel`（`falling_down`）的 `RootT.y` 有一樣的下墜側寫，理論上跪地也會飄一點，但使用者沒回報（跪→起身很快），先不動。屁孩王的死亡 clip 走另一套（Animator 在 Visual 子物件 + `BossAnimatorRootMotionRelay`），不受影響。
+
+- **測試**：EditMode 全套 227 tests，唯一失敗仍是既有無關的 `CharacterAttackAnimationLinkTests...FallsBackToAttack3`（Attack4 已加、測試沒跟上）。PlayMode `CameraPossessionFirstPersonRestoreTests` 待跑（Editor 失焦卡住，需使用者點進 Editor 視窗）。
+- **待實機**：(1) 貓視角下確認左鍵/R/F/滾輪只作用在貓身上、切回 player 一切正常；(2) 打死武士看屍體是否貼地（LeapSlam 半空被打死的極端情況我沒法逐幀驗），跪地招式順帶留意有沒有飄。
+
+### 3. 武士＋屁孩王都要 5 秒後復活、屍體不消失、慢慢站起來（追加70 續）
+
+使用者:「不管是武士還是屁孩王都要讓他們在死亡五秒後復活 並且做完死亡動作後屍體不要消失 復活時間到慢慢站起來」。
+
+- **武士改成會復活**：`Wushi_Tuning.permanentDeath` **true → false**（屁孩王本來就 false）。兩隻 `reviveDelaySeconds` 都已是 5。
+- **屍體不消失**：兩隻的 `Health.deferDeactivationToDeathAnimation=true` 且都沒掛 `DeathAnimationLink` → `Health` 從不 `SetActive(false)`，死亡 clip 也不 loop（`loopTime=false`），本來就不會消失。順手把**屁孩王死亡 clip** `PW2_ShotAndFallForward` 也套上跟武士同樣的 `lockRootHeightY=true`＋`heightFromFeet=true`（它的 `RootT.y` 也是 0.98→0.13，同樣會飄，只是它會復活比較不明顯）→ 屍體貼地。
+- **慢慢站起來**：新 `BossState.GettingUp`（enum **最後一位**，其他 ordinal 不動；無資產序列化 BossState int）。`UpdateDead` 復活時序：先 `ResetHealth`/`EndStagger`/清 phase&排程旗標/`RestoreRenderers` → `ChangeState(GettingUp)`（不再直接 `ChangeState(Alert)`）。
+  - `OnEnterState(GettingUp)`：`animator.Play(死亡state, 0, 1f)`（硬切到死亡 clip 最後一幀＝當下已在的趴地姿，無 pop）＋ `animator.speed = 0`；`Health.SetInvulnerable` 起手 i-frame。
+  - `UpdateGettingUp`：每幀 `animator.Play(死亡state, 0, 1f - t)`，`t = _stateTimer / StandUpSeconds` → 手動把死亡動畫**倒著刮**回站姿（沒有專屬起身 clip，倒放死亡＝爬起來）。`_stateTimer >= StandUpSeconds`（新 tuning 欄位，預設 **1.8s**，吃 C# 預設值不用改 asset）→ 還原 `animator.speed=1`、清 i-frame、`ChangeState(Alert)` → Alert(0.3s)→Idle→Locomotion 正常接。
+  - 守門：優先序 cascade（`Tick`）、`UpdateCombatTimer` eligible、`WriteAnimatorParameters` 的 `CombatActive`、`RequestBeHitFlyUp` 全部把 `GettingUp` 跟 `Dead` 一起排除 → 起身期間不被打斷、不吃排程技計時、不進戰鬥架勢、不被 launch。`OnExitState` 補一個「離開 GettingUp 一定清 invuln」保險（`animator.speed` 本來就每次 exit 無條件歸 1）。
+  - `DeathStateName()` helper（`deathClipName` 有設用它，否則 `behitFlyUpClipName`）給 Dead + GettingUp 共用。
+- **實測（Play Mode，Editor 有焦點）**：武士連killtwo次，log 都是 `Dead -> GettingUp -> Alert -> Idle`，`_deathElapsed` 到 ~5.00 才離開 Dead；屁孩王反射檢查同樣 `_deathElapsed≈5.0` 後站起、`activeSelf=true`、renderer 全開、滿血。武士站姿 Hips y≈2.7、屁孩王 Hips y≈1.5（貼地）。
+- **測試**：EditMode 227，唯一失敗仍是既有無關 `...FallsBackToAttack3`。BossStateMachine 無 FSM 單測（巨型 MonoBehaviour，靠 play 驗證，慣例）。
+- **待實機**：倒放死亡當起身動畫的觀感（placeholder mocap 倒放本來就會有點怪）；`standUpSeconds` 1.8 的長短；LeapSlam/Vanish **半空**被打死時 `UpdateDead` 不主動施重力弧、只靠一般重力掉下來再躺平，沒逐幀驗過。
+
+### 4. 屁孩王有招式讓半身陷到地板下（追加70 續，使用者回報）
+
+使用者:「檢查屁孩王的有一個動作會讓他半身在地板之下」。
+
+- **是哪兩招**：`PW2_Breakdance1990`（定時 flourish）＋ `PW2_KneelOnOneKneeAndStand`（架勢崩潰跪地 / `kneelStandClipName`）。實測（FSM 驅動、Play Mode 有跑幀）Breakdance 時腳 y ≈ **−0.33**（地板 0.5，等於整個下半身埋進去 ~0.8m）。之前 2026-08-26 有人寫過 `PW2_FixBreakdanceKneelClipBaking.cs`（一次性，從沒被跑過）想修同一件事，但方向錯（假設 Humanoid + heightFromFeet）。
+- **根因**：這兩招唯一的來源是 `Meshy_AI_Meshy_Merged_Animations.fbx`——它是 **Generic**（屁孩王其他所有招式來自各自獨立的 `*_withSkin.fbx`，都是 Humanoid）。這顆 FBX 的 **position 曲線比 rig 小 100 倍**（cm/m 單位不一致）：clip 把 `Hips.m_LocalPosition.y` 打到 **0.834**，但 rig 的 bind Hips 是 **83.43**（`LeftLeg` 0.379 vs 37.86、`LeftFoot` 0.330 vs 32.98…全部剛好 ×100）。Generic clip 直接套原始 transform 曲線 → 骨架被壓到近原點 → 埋進地板。Humanoid clip 走 muscle 重定向、不受單位影響，所以只有這兩招出事。
+- **修法**：`Meshy_AI_Meshy_Merged_Animations.fbx` importer `useFileScale: 1 → 0`（globalScale 留 1）→ 有效匯入尺度從 0.01 變 1.0，position 曲線值對回 rig（Hips.y 0.834 → 83.43，逐骨驗證與 live rig 一致）。不改 `animationType`（維持 Generic）、不動 clip 切割、controller state 連結不變。那顆 FBX 裡另外 8 個 clip 沒被任何東西用到。
+- **⚠️ 沒能實機驗最終效果**：改完當下 Editor 失焦、Play Mode 凍幀（`Time.frameCount=1`），`AnimationMode.SampleAnimationClip` 對這顆多-clip FBX 子資產取樣也不可靠。單位×100 的 bug 本身是鐵證、修正無疑問，但「是否已完全貼地、有沒有第二層問題」要**使用者在 Editor 有焦點時 Play 看一眼**。曾嘗試改 Humanoid（`CreateFromThisModel` + `heightFromFeet`）但 take 自動切割會跑掉、已 `git checkout` 還原。
+
+### 5. 武士只待在警備範圍、不追玩家到門口（追加70 續，使用者回報）
+
+使用者:「發現武士只會待在警備範圍 而不是像屁孩王一樣會追逐玩家到門口」。
+
+- **病因**：`UpdateIdle` / `UpdateApproach` 的「玩家太遠就脫戰回家」判定是寫死的 `tuning.AlertRange * 1.5f`——武士 `alertRange=6` → **9m**。玩家離武士 9m 就 `DisengageAndReturnHome`。諷刺的是「不受城牆限制」的 boss 反而追得比「被關在本地」的菁英怪還近（屁孩王 `confineToArena=true` → 玩家一出方形就進 `GateWatch` 一路走到門口）。追加45 把武士 `leashRange` 30→14 是為了「脫戰後真的跑回家」，但那個 9m 的 from-boss 判定更早觸發、成了實際上限。
+- **修法**：
+  - 新 `ChaseGiveUpDistance()` = `Mathf.Max(tuning.AlertRange * 1.5f, leashRange)`。`UpdateIdle` / `UpdateApproach` 兩處 from-boss 脫戰判定改用它 → from-POST 的 `leashRange`（`TryLeashReset`，有 0.35s grace）成為「追多遠」的唯一權威；`AlertRange*1.5` 只當「leash 很小的 boss 被繞著駐點放風箏」的地板。
+  - **武士場景 `leashRange` 14 → 32**（駐點在本地北端 z=11、南邊載具門口約 z=−15.5 ＝ ~26m）→ 武士會一路追出門口才回頭。玩家真的繼續往南跑、離駐點 >32m 撐過 grace → 才 `DisengageAndReturnHome`。
+  - `TryEnterLeapSlam` 的 `leapCap`（追加45 收緊到 ~9m 防「憑空衝過來」）**不動**——那是瞬移距離、跟追擊無關。
+- **屁孩王不受影響**：`confineToArena=true` → `TryLeashReset` 的 confine 區塊先跑（GateWatch），而且方形只有 31 寬、玩家在方形內離不了屁孩王 `max(7.5,30)=30m`。`leashRange` 本來就 30。
+- **測試**：EditMode 227，唯一失敗仍是既有無關 `...FallsBackToAttack3`。BossStateMachine 無 FSM 單測。**待實機**：武士追出門口的路徑（direct steering、非 NavMesh，玩家沿外牆側移時武士會頂牆）；32m 的距離感；追出去後 ReturnHome 有沒有正常跑回。Editor 失焦凍幀，我沒法自己看。
+
+## 2026-08-31 (追加71) — AI 避障：NavMesh 路徑跟隨（agent-less）
+
+使用者:「所有角色在移動時有可能會被地圖物件擋住路線從卡住 有沒有演算法可以避開這個問題」→ 分析後選「AI: NavMesh 路徑跟隨」。
+
+- **病因**：`EnemyAI` 和 `BossStateMachine.MoveTowardTarget()` 都是**直線朝目標推**（`(target - self).normalized * speed`），零避障。中間有牆/柱/建築就一直往裡頂、`CharacterController` 擋死 → 原地磨。剛才「武士追出門口」那條 direct-steering 也會踩到。場景**本來完全沒有 baked NavMesh**（triangulation vertices=0）。
+- **做法**（不引入 NavMeshAgent、movement 系統不動）：
+  - **`NavPathFollower.cs`**（`Live2DAction.Runtime`）：`SteeringDirection(targetPos)` → 問 baked NavMesh 要路徑、回「朝下一個轉角」的水平單位方向。路徑每 `repathInterval`(0.3s) 或目標移動 >1.5m 才重算。**fail-open**：沒 NavMesh / 目標在 mesh 外 / 不可達 → 退回直線方向（＝今天的行為），所以掛了這元件但底下沒 baked mesh 的 AI 不會更糟。純函式 `AdvanceCorner(corners, self, current, reach)` 抽出，7 個 EditMode 測試。`IsDetouring` 供之後「還在繞路時先別出招」用。
+  - **`BossStateMachine`**：`MoveTowardTarget` + `UpdateReturnHome` 改成先問 `_pathFollower`（null-safe）。`EnemyAI`：**地面** chaseDirection 改路由（空戰 chase 和 facing/MoveInput 仍用玩家原方向）。
+  - **`NavMeshBakeSetup.cs`**（選單 `Tools/Live2DAction/Bake Navigation Mesh`，可重跑，**不自動呼叫**）：在 `Navigation` 物件掛 `NavMeshSurface`（`CollectObjects.All` + `PhysicsColliders` → 建築/牆自動變障礙），角色 + 車輛掛 `NavMeshModifier(ignoreFromBuild)` 不讓它們在 bake 時挖洞。同步 `BuildNavMesh()` + 把 `NavMeshData` 存成 `Assets/_Project/Scenes/GreyboxTest/NavMesh-Navigation.asset`（CopySerialized 保 GUID），再把 `NavPathFollower` 掛到武士/屁孩王/Enemy。
+- **實測**：baked 3461 verts；南牆 doorway 在 x=0（navmesh 正確留洞）；路徑穿過 Mecha 的 query 回 4 個轉角繞開（straight 會撞）；Play Mode（Editor 有焦點）`SteeringDirection` 對「Mecha 另一側的點」回 `(0,0,-1)`（沿 x≈0 南下繞開）而非 straight 的 `(0.15,0,-0.99)`，`IsDetouring=true`，Awake 建 `NavMeshPath` 無 exception。
+- **測試**：EditMode 234（+7 NavPathFollower），唯一失敗仍是既有無關 `...FallsBackToAttack3`。
+- **範圍/待辦**：
+  - 這次只接 AI（Enemy/武士/屁孩王）。**Player/Cat 沒接**——它們是輸入驅動、沒有「路線」可規劃，卡是碰撞體品質問題（凹角楔住、collider 接縫），要另做 collider pass（凹面 MeshCollider → primitive/convex、內凹角切斜面、「有輸入但位移≈0」的脫困輔助）。
+  - **NavMesh 要跟地圖維護**：改/加地圖幾何後要重跑 `Bake Navigation Mesh`。greybox scene builder 沒加自動 bake（全套 bake 慢、地圖不是每次都重建）。
+  - 學校區 navmesh 目前 `PathPartial`（plaza 在 y=−6、地形破碎），校園內避障效果打折，待該區 collider/地面整理後重烤。
+  - 角色被擊飛出 NavMesh 的邊界情況：`SamplePosition` radius 2.5 通常能拉回；真的飛很遠會 fail-open 直線。
+  - **待實機**：實戰情境下 AI 繞牆追人順不順、0.3s 重算頻率的手感、`cornerReachDistance` 0.75 會不會「切角」切進牆。
+
+## 2026-08-31 (追加72) — 修:武士會突破本地領地跑出去（追加70/71 的過頭修正）
+
+使用者:「武士現在會突破本地30*30範圍領地限制」。
+
+- **背景**：追加70 為了「武士追玩家到門口」把 `leashRange` 14→32、加 `ChaseGiveUpDistance`。但那是**理解錯方向**——使用者要的是「像屁孩王一樣追到門口」＝追到**本地邊界為止就停**（屁孩王 `confineToArena=true` → `GateWatch` 走到牆邊站定），不是穿過門口跑出本地。追加71 的 NavMesh 避障又讓武士真的能順順地跑出去到車道。
+- **修法**：武士場景 `confineToArena` **false → true**（＋ `arenaCenterXZ`(0,0) / `arenaHalfExtent` 15.5 / `gateWatchRange` 10，全部對齊屁孩王）。純場景值，無程式改動。
+  - 玩家**在本地內** → 武士照常追打（`ApplyMotion` 每幀 `ArenaBounds.ClampInside` 把它夾在 15.5 半徑方形內）。
+  - 玩家**出門口** → `TryLeashReset` confine 區塊先跑 → 武士進 `GateWatch` 走到牆邊、面向玩家站定、不攻擊、**不出本地**。玩家回來 → 重新交戰；玩家離門口 >10m 撐 1.5s → `ReturnHome` 跑回駐點。
+  - 這條路徑跟屁孩王完全同碼、已驗證過。`leashRange` 32 留著（要 ≥ 駐點到方形對角 ~30.7m，才不會在方形內誤觸發）。
+- **taxonomy 更新**：武士**不再是「不受城牆限制的 boss」**——武士＋屁孩王現在都 `confineToArena=true`、都被關在本地。差異退回純數值（HP/招式池/leashRange/tuning）。
+- 編譯無錯（無程式改動）；EditMode 不受影響。**待實機**：武士被打到架勢崩潰或飛空技能中途玩家跨界的邊角（屁孩王同碼沒回報過問題）。
+
+## 2026-08-31 (追加73) — 復原:武士回到「不受城牆限制」（追加72 撤回）
+
+使用者:「我想起來了 是我一開始設計讓它不受城牆限制的 請復原」。
+
+- 追加72 把武士 `confineToArena` 0→1（以為使用者要「像屁孩王一樣被關本地」）。使用者確認**原始設計就是讓武士不受城牆限制**——boss 可以追出本地。撤回：武士場景 `confineToArena` **1 → 0**、`gateWatchRange` **10 → 0**（confine 關了本來就不用）。純場景值。
+- **武士 vs 屁孩王 又分開了**：屁孩王 `confineToArena=1`（被關本地、GateWatch）；武士 `confineToArena=0`（不受限，只吃 `leashRange` 32 的距離 leash）。
+- **`leashRange` 32 保留**（追加70）：這是「武士只會待在警備範圍」那個回報的修正——武士會追出門口、到離駐點 32m（~z=−21，過門口上車道一小段）才 `DisengageAndReturnHome` 跑回。`ChaseGiveUpDistance()` 也保留。
+- 追加71 的 NavMesh 避障讓武士追出去時能繞開障礙、不頂牆。
+- 無程式改動、EditMode 不受影響、Console 無錯。
+
+## 2026-08-31 (追加74) — 貓咪三條 HUD（生命/能量/架式）＋ 貓咪削韌機制
+
+使用者:「為貓咪補上三個血量條 能量條 架式條」→ 選「只在操控貓時顯示」＋「架式條接真機制」。
+
+### 貓咪削韌（`StancePoise`，真機制）
+
+- 貓本來**完全沒有架勢/削韌**（`PlayerCombat.stance` / `CharacterMovement.stance` 都 null）。現在 `CatCharacterSetup.BuildCat` 加 `StancePoise`（`maxStance` **50**、`staggerDurationSeconds` **4**，其餘吃預設；比 player 的 60 低——「小生物比較快斷」）＋ 接 `combat.stance` / `movement.stance`。
+- `StancePoise` 是 drop-in：訂閱 `Health.Damaged`、任何進 `Health.ApplyDamage` 的傷害都按 `stanceGainMultiplier`(0.2) 累積削韌；滿 → `IsStaggered` 4 秒、期間 `PlayerCombat`/`CharacterMovement` 已 null-safe gate 住（不能出招、不能移動）；沒被打會回復。
+- **貓沒有硬直動畫**（Meshy 模型無 clip）→ 硬直時就是定住不動 ~4s、無視覺回饋（跟貓其他佔位動畫狀態一致）。
+- **待實機平衡**：貓 200 HP、削韌 5/擊（25 傷 ×0.2）、10 擊滿；25 傷/擊 8 擊就打死 → 目前敵人打貓**打死比打斷快**（跟 player 的「balance coincidence」同款）。要讓貓真的會斷得調低 `maxStance` 或調高貓的 `stanceGainMultiplier`。
+
+### 三條 HUD（`CatCornerHud` + `PossessionHud`）
+
+- 新 `CatBarsWiring.cs`（選單 `Tools/Live2DAction/Add Cat Bars`，也從 `CatCharacterSetup` 結尾呼叫，同 `WatcherCatWiring`/`VehicleCatWiring` 慣例）：**Clone 整個 `PlayerCornerHud`** → `CatCornerHud`，砍掉 `飛行` 那行 + `PlayerCornerHud` 元件，`必殺Label`→「能量」、`架勢Label`→「架式」，Panel 高 156→122。三個 `*BarFx` 重新指向貓：
+  - `生命Track` `PlayerHealthBarFx.health` → `Cat.Health`（200）
+  - `必殺Track` `UltimateEnergyBarFx.energy` → `Cat.UltimateEnergy`（貓唯一的能量 = 飛行能量 500）
+  - `架勢Track` `StancePoiseBarFx.stance`+`.health` → `Cat.StancePoise` + `Cat.Health`
+- 新 `PossessionHud.cs`（Runtime）：`LateUpdate` 讀 `CameraPossessionSwitcher.Current`，`Current==Cat` → 開 `CatCornerHud`.Canvas / 關 `PlayerCornerHud`.Canvas，否則相反。toggle `Canvas.enabled`（不 SetActive，BarFx 繼續跑、不 snap-in，同 `WushiBossHudVisibility` 手法）。**不 gate 戰鬥狀態**（「只在操控貓時顯示」，不是「戰鬥中才出現」）。switcher 遺失 → fallback 顯示 player HUD。純函式 `ShowCatHud(hasSwitcher, catPossessed)` 2 個 EditMode 測試。
+- 位置跟 player HUD 一樣在右上角（互斥、換人時整組換掉）。
+- **實測**：`Wire()` 建出結構正確（3 行、標籤、所有 Fx ref 都指向貓）；Play Mode（凍幀）手動叫 `Apply()`：`Current=Cat`→PlayerHud off/CatHud on，`FocusPlayer`→相反；削韌實測 3×25 傷 → 15/50，數學對。`LateUpdate` 自動 toggle 沒能實機看（Editor 失焦凍幀）。
+- **測試**：EditMode 236（+2 `PossessionHudTests`），唯一失敗仍是既有無關 `...FallsBackToAttack3`。
+- **待實機**：HUD 位置/大小觀感（右上角跟 player 同位，換人整組換）；貓削韌數值平衡（見上）；`LateUpdate` 換 HUD 有沒有一幀閃爍。
+
+## 2026-08-31 (追加75) — 貓咪大招：能量滿格 R 施放「黑暗劍氣」技能特效
+
+使用者:「讓 cat 能量滿格時可以施放 '幫我生成一個黑暗劍氣風格的版本.mp4' 這個技能特效 要處理透明通道和仿3d問題」。
+
+- **素材**：`幫我生成一個黑暗劍氣風格的版本.mp4`（1280×720、H.264 **無 alpha**、24fps、240 幀）—— 暗紅/紫的符文劍在黑影中成形 → 旋成漩渦盤 → 揚塵消散，黑底，右下角小星星浮水印。歸檔在 `Assets/_Project/VFX/Skills/DarkSwordQi/Source/DarkSwordQiSource.mp4`（僅重製用，執行期不播 MP4，同 `SwordOrbitSource.mp4` / `SlashSourceVideo.mp4` 慣例）。
+- **透明通道**：ffmpeg 離線烘成 `DarkSwordQi_Atlas.png` —— 抽第 24~156 幀每 3 幀共 **45 幀**、`crop=720:720:400:0`（中央方形裁切，順帶把右下浮水印裁掉、不用 drawbox）、`scale 256`、`geq` 由亮度算 alpha（`a = 255·pow(clip((max(rgb)−26)/145,0,1), 1.45)`）、`tile=8×6` 拼圖集（2048×1536，透明 padding）。
+- **仿3d（2.5D）**：`CatDarkQiVfxSetup.cs`（選單 `Tools/Live2DAction/Add Cat Dark Sword-Qi Skill`，可重跑，跟 `SwordOrbitVfxSetup` 同一套）建 flipbook 預製體 `CatDarkQiSkillVFX.prefab` —— 主體 billboard flipbook quad（`SlashFlipbookURP` shader、**premultiplied Alpha blend** One/OneMinusSrcAlpha、`_Brightness` 1.6 給 bloom）＋ 2 個小子粒子（Embers 暗紅火花爆、GlowPulse 暗紫光暈）給體積感。`SlashVfxController` 自動回收（~1.3s）。
+- **機制（`CatUltimateAbility.cs`，Runtime）**：
+  - 貓加**專屬技能能量** `Cat/SkillEnergy`（新 `UltimateEnergy` 子物件，100 / 5-per-1s = 20s 滿，跟 player 大招同節奏；**跟飛行能量 500 那顆完全獨立**，兩顆各管各的，同 player 有兩顆的做法）。
+  - `CatCornerHud` 的「能量」條**改指向 SkillEnergy**（追加74 原本指飛行能量）——所以貓的能量條現在代表「大招充能」；貓的飛行能量目前無條顯示（追加74「順帶做掉飛行體力條」的那個回退，note 一下）。
+  - `Update`：`input.UltimatePressed`（R）＋ `energy.IsFull` ＋ 非硬直非死亡 → `energy.Consume()` + `Instantiate(castVfxPrefab)` 掛貓身上（offset (0,0.55,0)）+ 一發 AOE（`CatDarkQi.asset` AttackData：**120 傷 / OverlapSphere 3.2m / 擊退 9**，走 `AttackResolver.ResolveHits`）。
+  - 掛進 `CameraPossessionSwitcher.catControl` → R 只在**操控貓時**施放（player 自己的 `UltimateAbility` 同樣被 catControl 停用）。
+- **接線**：`CatCharacterSetup.BuildCat` 加 `SkillEnergy` + `CatUltimateAbility`（enabled=false）；結尾呼叫 `CatDarkQiVfxSetup.Wire()` 填 castVfxPrefab / attack / stance / health、re-point HUD 能量條、加進 catControl（no-op 若 atlas/prefab 還沒烤 → 跑一次選單）。
+- **實測（Play Mode，Editor 有焦點）**：可以附身貓（`CatUltimateAbility.enabled` 變 true）、`SkillEnergy` 灌滿 `IsFull=true`；反射叫 `ResolveBurst()` → 假人 100→0（120 傷）；prefab spawn 出 3 個 particle system、材質/貼圖/blend 都對；`CatDarkQi.asset` 建出來（dmg 120 / range 2.6 / radius 0.6）。**VFX 在場景視圖對天空 simulate 預覽有渲染**（暗紅漩渦環＋亮核＋火花），但 game-view MCP 截圖抓不到粒子（SwordOrbit 追加69 同樣狀況、當時也只靠 simulate 預覽）。
+- **測試**：EditMode 236，唯一失敗仍是既有無關 `...FallsBackToAttack3`。VFX 純視覺無單測；`CatUltimateAbility` 靠 `AttackResolver` 既有覆蓋 + 實測 ResolveBurst。
+- **待實機**：(1) 黑暗劍氣對深色戰鬥場景的觀感（暗紅色調對亮橘 greybox 牆對比低，實際場景 + bloom 應該更明顯；亮度調 `DarkSwordQiFlipbook.mat` `_Brightness` 或 `SlashVfxController` 欄位）；(2) 大小 `SizeHeight` 3.2 / offset (0,0.55,0)、壽命 1.15s；(3) 120 傷 / 3.2m AOE / 20s 充能 的平衡；(4) R 在操控貓時的鍵位習慣；(5) SFX 無聲（專案還沒原創戰鬥音效，rule 1）。
+
+## 2026-08-31 (追加76) — 貓吃泉水、貓普攻改 50 傷、確認兩組特效處理
+
+使用者:「1.讓cat也可以吃到泉水恢復效果 2.檢查cat的r技能特效是否有參照player r技能特效的處理方法 3.cat改成每段普通攻擊扣50點傷害 4.檢查player普通攻擊特效是否有處理透明通道 彷3d 特效渲染」。
+
+### 1. 貓吃泉水（`HealingSpring` 重寫）
+
+- 舊 `HealingSpring`：(a) 單槽快取（`_playerHealth` 等欄位）→ player 跟貓同時站進去只有後進的一個吃得到；(b) `GetComponentInParent<UltimateEnergy>()` 只找到**一顆**能量 → 貓的 `SkillEnergy`（大招能量，子物件）從沒回復、飛行能量還被兩個 rate 灌到。貓其實早就過了「是玩家」那道 gate（共用 `PlayerInputProvider`，rule 8），只是這兩個 bug。
+- 重寫：`Dictionary<GameObject root, Occupant>` 追蹤**每個**站在裡面的角色；每個 Occupant 快取 `Health` + `CharacterMovement.FlightEnergy` + **所有其他** `UltimateEnergy`（`GetComponentsInChildren`）。`Update` 對每個 occupant：Health `Heal(healPerSecond)`、飛行能量 `AddEnergy(flightEnergyPerSecond)`、其餘每顆 `AddEnergy(energyPerSecond)`。
+- **player 行為逐位元不變**（它的「其他能量」＝那顆 100 的大招能量，吃 `energyPerSecond` 40，跟以前一樣）。貓現在：Health + 飛行能量(500) + SkillEnergy(100) 三個都回。
+- 實測（反射，凍幀）：`OnTriggerEnter(catCol)` → 1 occupant（root=Cat、Health✓、FlightEnergy✓、OtherEnergies=1 = SkillEnergy）；套一次 tick → HP 50→150 / 飛行 0→100 / skill 0→40 三個都漲。
+- **既有無關**：場景的 `HealingSpring_MainArea` `healPerSecond` 序列化值是 **40**（程式預設 100，註解說 2026-08-19 調到 100，但場景實例沒重序列化過 → 實際生效一直是 40）。沒動它（CLAUDE.md「手調值是權威，別改回預設」）。
+
+### 2. 貓 R 特效 vs player R 特效 — 確認：**有參照，同一套**
+
+- `DarkSwordQiFlipbook.mat` vs `SwordOrbitFlipbook.mat`：同 shader `Live2DAction/VFX/SlashFlipbook`、同 blend `_SrcBlend=1`(One)/`_DstBlend=10`(OneMinusSrcAlpha)=premultiplied alpha、同 render queue 3000、`_Brightness` 1.6 vs 1.7（都 >1 餵 bloom）。
+- prefab 結構相同：主 flipbook ParticleSystem + 2 個 accent 子粒子 + `SlashVfxController`、`mainRenderMode=Billboard`。
+- 透明通道：兩者都 ffmpeg 離線由亮度算 alpha 烘 atlas（黑底→透明）。仿3d：billboard flipbook + 立體感子粒子。`CatDarkQiVfxSetup.cs` 就是照 `SwordOrbitVfxSetup.cs` 抄的。
+
+### 3. 貓普攻 50 傷
+
+- `CatSwipe1/2/3.asset` `damage` **6/7/12 → 50/50/50**（「每段普通攻擊」＝三段連段）。`CatHeavy`(蓄力重擊 22)、`CatPounce`(撲擊 16) **沒動**——它們不是「普通攻擊」。
+- **⚠️ 待實機**：現在 CatHeavy 22 / CatPounce 16 **比一段普攻 50 還低**，蓄力/撲擊感覺會很弱。要不要等比拉高（heavy ~80、pounce ~65？）等使用者定。
+
+### 4. player 普攻特效 — 確認：**三項都有處理**
+
+- player 三段普攻 `LightAttack1/2/3` 的 `hitEffectOverride` → `Assets/_Project/VFX/Slash/Prefabs/Attack01/02/03.prefab`（`SlashVfxSetup.cs` 建、`alwaysSpawnHitEffect=1` 打空也放）。
+- **透明通道**：sprite sheet 由來源影片經外部 python `pack_sheets.py` 抽幀+alpha-key+打包（`Assets/_Project/VFX/Slash/Textures/AttackNN_SpriteSheet.png`）。匯入 `alphaIsTransparency=true`、`wrapMode=Clamp`（不讓相鄰格滲）、`mipmapEnabled=false`。shader `color.rgb *= color.a` premultiply。
+- **仿3d（立體感）**：主 flipbook（`renderMode=Mesh` + quad，`alignment=Local` 貼角色 forward 讓劍氣橫掃世界平面、非永遠面向鏡頭）+ 3 個子粒子（Sparks 爆閃 / Smoke 煙 / Glow 光暈）給體積。
+- **特效渲染**：hand-written URP HLSL shader `SlashFlipbookURP`（無 Shader Graph 套件）、`_Brightness 1.5` HDR emission 餵 URP Bloom、queue Transparent、`ZWrite Off`、`Cull Off`。`SlashVfxController` 逐-instance 調參 + 自動回收。
+- 跟貓 R / player R 用**同一個 `SlashFlipbookURP` shader**，差別只在 blend（普攻是 Additive One/One、R 大招是 premult One/OneMinusSrcAlpha）和 renderMode（普攻 Mesh 貼 forward、大招 Billboard）。
+
+- **測試**：EditMode 236，唯一失敗仍是既有無關 `...FallsBackToAttack3`。無新測試（HealingSpring 重寫靠實測 + player 行為不變推導；damage 是純資產值）。
+
+## 2026-08-31 (追加77) — 貓 R 500 傷、血刀銜接 player 右手、換掉 player 大招周邊特效
+
+使用者:「1.car r 技能可造成500傷害 2.將 blood_katana_retextured.glb 此武士刀銜接在 player 右手上握著，幫我調整尺寸 3. 不要出現人物_單純的周邊特效_請重新生成.mp4 將這個周邊特效取代 player 原本能量滿格時的特效，同樣處理透明通道和彷3d」。
+
+### 1. 貓 R 技能（黑暗劍氣）改 500 傷
+
+- `Assets/_Project/Settings/Combat/Cat/CatDarkQi.asset` `damage` **120 → 500**。純資產值，`CatUltimateAbility` / `AttackResolver` 邏輯不變。
+- **待實機平衡**：500 傷 / 3.2m AOE / 20s 充能。
+
+### 2. 血刀銜接 player 右手（取代 Genshin「Wolf's Gravestone」）
+
+- 素材 `blood_katana_retextured.glb` → `Assets/_Project/Characters/Weapons/BloodKatana/BloodKatana.glb`（4 材質 Base/Blader/Hilt/Wrapping、`Shader Graphs/glTF-pbrMetallicRoughness`；GLB 匯入 renderer bounds 退化成 (0,0,0)，setup 會重算 mesh bounds）。
+- 新 `PlayerKatanaSetup.cs`（選單 `Tools/Live2DAction/Attach Blood Katana To Player Hand`，可重跑）取代 `Player5WeaponSetup.cs`：
+  - 掛到 `Rhand_Weapon2` 骨頭底下。結構 `Rhand_Weapon2 / WolfsGravestone(wrapper) / BladeMesh(GLB)`。
+  - **wrapper 仍叫 "WolfsGravestone"**：`UltimateAbility.cs` 靠這個名字找要拋的武器（`WeaponObjectName` const / `FindWeapon()`），保留名字 = R 大招拋劍序列**零程式碼改動**照常運作。實測 player 的 `UltimateAbility.FindWeapon()` 正確回傳新 wrapper。
+  - **為什麼要 wrapper**：`UltimateAbility.ThrowSequence` 假設拋的 transform pivot 在刀尖、local −Y 指向刀尖（它用 `FromToRotation(Vector3.down, flightDirection)` 對齊）。GLB 自己的 pivot 在刀身中央、刀身沿 mesh −X。wrapper 把 pivot 移到握把/拳心、local −Y 對齊刀身朝刀尖；`BladeMesh` 帶固定 offset 讓握把落在 wrapper 原點、刀身沿 wrapper −X。
+  - wrapper `localRotation` + `BladeMesh` offset 是**手工調的權威值**（刀握在右拳、刀身朝前下傾 ~19°，「持刀垂下待機」），不是公式；同攝影機 distance / stepOffset 的「未經使用者許可別改回公式」地位。刀長 world ~0.96m（`BladeMesh.localScale` 0.00075 在 ~80× 手骨底下）。
+  - `Player/WolfsGravestone`（原本掛在 Player root、被 R 大招拋的**那把背劍**）已移除。
+- **舊 Genshin 佔位仍在磁碟上**（`Assets/_Project/Characters/Placeholder/Weapons/WolfsGravestone/` + `Player5WeaponSetup.cs`），`DoNotShipBuildGuard` 那條沒動（新血刀在 `Characters/Weapons/` 不在 `Placeholder/` 下、不會誤觸）。**待使用者確認**血刀來源授權後再決定是否連同 `Player5WeaponSetup.cs` 一起刪。
+- **待實機**：刀在拳心的位置/角度/大小；刀刃平面朝向（wrapper roll 是 `FromToRotation` 給的任意 roll，可能刀刃朝向怪）；R 大招拋刀動畫用新 wrapper 的表現。
+
+### 3. player 大招周邊特效換成火焰光柱（取代「劍體環繞」SwordOrbit）
+
+- 素材 `不要出現人物_單純的周邊特效_請重新生成.mp4`（1280×720、H.264 **無 alpha**、24fps、240 幀）—— 橘＋青能量絲旋成漩渦上升、成火焰光柱、地面光環、黑底、右下小星星浮水印。歸檔 `Assets/_Project/VFX/Skills/PlayerUltimateAura/Source/PlayerUltimateAuraSource.mp4`（僅重製用，執行期不播）。
+- **透明通道**：ffmpeg 離線烘 `PlayerUltimateAura_Atlas.png` —— 抽第 4~172 幀每 3 幀共 **56 幀**、`drawbox` 塗掉右下浮水印、`scale 320:180`、`tile=8×7`（2560×1260）、`geq` 由亮度算 alpha（`a = 255·pow(clip((max(rgb)−46)/150,0,1), 1.28)`；門檻拉高到 46 把黑底的微弱塵點/煙霧鍵乾淨、只留亮火焰，第一版門檻 22 上半截留了一片洗白的半透明卡）。完整 recipe 在 `PlayerUltimateAuraVfxSetup.cs` 檔頭。
+- **仿3d（2.5D）**：新 `PlayerUltimateAuraVfxSetup.cs`（選單 `Tools/Live2DAction/Add Player Ultimate Aura VFX (R ultimate cast)`，可重跑，照 SwordOrbit 那套）建 `PlayerUltimateAuraVFX.prefab` —— 主體 billboard flipbook quad（`SlashFlipbookURP`、premult One/OneMinusSrcAlpha、`_Brightness` 1.7）＋ 子粒子 `Embers`（暖色火花上升、World space、cone 向上）＋ `GroundFlash`（地面水平 billboard 閃光盤，紮住光柱腳）。`SlashVfxController` 自動回收（~1.3s）。
+- **接線**：`UltimateAbility.castVfxPrefab` → 新 prefab、`castVfxLocalOffset` (0, 1.3, 0)（`SizeHeight` 4.6，地面光環對齊腳底、火焰過頭頂）。
+- **刪除**：`Assets/_Project/VFX/Skills/SwordOrbit/`（整個資料夾：atlas / mat / prefab / Source/SwordOrbitSource.mp4）＋ `Assets/Editor/Bootstrap/SwordOrbitVfxSetup.cs`。`CatDarkQiVfxSetup.cs` / `UltimateAbility.cs` 裡提到 `SwordOrbitVfxSetup` 的註解改指 `PlayerUltimateAuraVfxSetup`（`CatDarkQiVfxSetup` 只有註解關聯、無程式碼相依）。
+- **實測**：menu 跑過、prefab 結構 + material blend/shader/atlas + 接線都驗過；場景視圖對天空 simulate 預覽有渲染（地面亮火焰 + 地閃 + 火花，上半截殘留一點淡煙霧霾——同 SwordOrbit「低角度對開闊天空會看到淡卡」的老註記）。game-view MCP 截圖抓不到粒子（同追加69/75）。
+- **測試**：EditMode **236**，唯一失敗仍是既有無關 `CharacterAttackAnimationLinkTests...FallsBackToAttack3`。VFX / 武器銜接純視覺無單測。
+- **待實機**：火焰光柱在實際戰鬥場景 + bloom 的觀感（上半截淡霧要不要再把 alpha key 推更兇 / 調 `_Brightness`）；`SizeHeight` 4.6 / offset (0,1.3,0) / 壽命 1.3s；施放瞬間跟拋刀 spin-up 的時間對齊。
+
+## 2026-08-31 (追加78) — 移除 player 普通攻擊特效（改揮刀前置）＋ R 大招特效加上音效
+
+使用者:「1.移除 player 普通攻擊相關特效，我要將他的攻擊手段從拳頭改為揮刀，後續要做成像隻狼那樣的對打機制 2. player 和 cat 的 r 大招特效來源資產應該是有音源的，把音效也加入綁定在特效上」。
+
+### 1. 移除 player 普通攻擊特效
+
+- **背景**：player 現在握著武士刀（追加77），使用者要把近戰從拳頭（Mixamo CrossPunch/HookPunch/Uppercut → Attack1/2/3）改成揮刀，之後做成隻狼式對打（拚刀/彈反）。**這則只做「移除特效」**——動畫替換與對打機制是後續，另開。
+- `LightAttack1/2/3.asset`：`hitEffectOverride` 清空（原本各指向 `Attack01/02/03.prefab` 的動漫劍氣 flipbook）、`alwaysSpawnHitEffect` 0（原本 1，打空也放）。落地命中仍會有 `PlayerCombat.hitEffectPrefab` 那顆共用小火花（沒動——那是命中回饋不是「攻擊特效」，且敵人共用）。
+- **這三顆 AttackData 是 Player / TrainingDummy / 中立者1-3 共用**，所以那幾隻的劍氣也一起沒了（一致，都是 player-clone）。敵人（`EnemyAttack3`/`GiantAttack3` → `Attack3SlashEffect.prefab`「X 斬」）**不受影響**。
+- **刪除**（僅 player 專屬、無其他引用）：`Assets/_Project/VFX/Slash/Prefabs/`（Attack01/02/03）、`Materials/Attack01/02/03Mat.mat`、`Materials/SoftDotAlphaMat.mat`（刪 Attack0N 後變孤兒）、`Textures/Attack01/02/03_SpriteSheet.png`、`Source/SlashSourceVideo.mp4`、`Editor/Bootstrap/SlashVfxSetup.cs`、`Game/VFX/SlashVfxSpawner.cs`（無場景引用的預留類）。
+- **保留**（敵人 / R 大招 VFX 共用）：`Attack3SlashEffect.prefab` + `SlashCrescent.mat` + `T_SlashCrescent_*`、`Attack3SlashEffectSetup.cs`（+ `Attack3SlashBackgroundCleaner`/`Attack3SlashFrameAtlasBuilder`）、`SoftDotAdditiveMat.mat` + `SoftDot.png`、`SlashVfxController.cs`、`SlashFlipbookURP.shader`。
+- `Attack3SlashEffectSetup.cs` 改名選單 `Rebuild Enemy Attack3 Slash Effect`、**拿掉 `WireToLightAttack3`**（不再碰 player 的 AttackData，只重建敵人用的 prefab），避免重跑時把 player 特效加回來。
+- **後續（未做，另開）**：拳頭動畫 → 揮刀。專案裡已有 `_Project/Characters/Placeholder/CombatAnimations/TC_Sword_Free_Pack/`（`KBS_Sword_ATK_Combo_01` 等）可 retarget，不用再下載。隻狼式拚刀/彈反機制是更後面。
+
+### 2. R 大招特效綁定音效
+
+- 兩支來源影片（`PlayerUltimateAuraSource.mp4` / `DarkSwordQiSource.mp4`）都內含 **AAC 立體聲軌**（使用者提醒的）。使用者自有 AI 生成素材，音軌同屬使用者自有（rule 1 的「原創」——非仿製既有商業作品），登記進 `ASSET_LICENSES.md`。
+- ffmpeg 離線抽音 + 裁切 + 淡入淡出 + `loudnorm`：
+  - `PlayerUltimateAura_Cast.wav`（4.6s，火焰上升的 whoosh/roar；`-ss 1.0 -t 4.6`）
+  - `CatDarkQi_Cast.wav`（2.9s，暗能量蓄力→劈砍→衰減；`-ss 3.25 -t 2.9`，**input seek**——這支檔 output seek 會抽出數位靜音）
+  - 存 `Assets/_Project/Audio/Skills/`。完整 recipe 在各自 `*VfxSetup.cs` 檔頭。
+- 兩個 VFX prefab（`PlayerUltimateAuraVFX` / `CatDarkQiSkillVFX`）root 加 `AudioSource`：`playOnAwake`、3D（`spatialBlend 1`，跟著施法者定位）、`volume 0.85`、log rolloff 4~50m、`dopplerLevel 0`。prefab 一 Instantiate（大招施放）就播。
+- `SlashVfxController` 改：`Destroy(gameObject, ...)` 的存活時間現在也把 `AudioSource.clip.length`（除以 pitch）算進去 → 音效比視覺長時（火柱 roar 拖尾）不會被切掉。null-safe，沒 AudioSource 的舊 prefab 不受影響。
+- 由 `PlayerUltimateAuraVfxSetup.cs` / `CatDarkQiVfxSetup.cs` 新增 `ConfigureCastAudio()` 接線，重跑選單即套用。
+
+- **測試**：EditMode **236**，唯一失敗仍是既有無關 `CharacterAttackAnimationLinkTests...FallsBackToAttack3`。無新單測（VFX/音效純資產＋接線；`SlashVfxController` 改動靠 null-safe 推導 + 既有測試不回歸）。
+- **待實機**：音效音量/3D 衰減/裁切長度是否合施法節奏；player 現在普攻無揮擊特效（預期，改揮刀前的中間狀態）。
+
+## 2026-08-31 (追加79) — player R 火焰特效改成「必殺可用」的常駐待命光環（非施放特效）
+
+使用者:「1.這個 player r 技能的周邊特效，不是施放時才出現，而是滿格能量條...代表必殺技已可使用的狀態，然後將這個特效的大小對齊 player 體型和位置(從腳底到頭部)，音效部分切掉後半段」。
+
+**背景**：追加77/78 把 `PlayerUltimateAura` 火柱接在 `UltimateAbility.castVfxPrefab`（施放瞬間 spawn 一次）。使用者澄清它應該是**能量滿格 = 必殺可用**的**常駐待命指示**，跟場上早就有的 `UltimateReadyAura` 閃電（2026-08-16，`energy.IsFull` 時繞圈的奇犽風閃電）同一個機制。
+
+### 角色
+
+- `UltimateReadyAura.cs`（`Live2DAction.UI`）加 `[SerializeField] GameObject flameAura`。`Update` 在**跟閃電完全相同的 `energy.IsFull` 條件**下 `SetActive(true/false)` 這個火焰子物件。閃電 bolt 保留——現在滿格時**閃電 ＋ 火焰兩層一起亮**。`flameAura` 留空 = 只有閃電，行為不變。guard 從 `energy==null || bolt==null` 改成 `energy==null`（讓火焰不依賴 bolt）。
+- `UltimateAbility.cs`：**移除 `castVfxPrefab` / `castVfxLocalOffset` 欄位 + 施放時的 `Instantiate` 區塊**（這特效不再是施放特效；施放瞬間的「霸氣」還是 `UltimateActivationBurst` 那條 line-renderer 衝擊波）。場景 YAML 的 stale key 下次序列化自動掉。
+- `PlayerUltimateAuraVFX.prefab` 改成**常駐迴圈**：主 flipbook `loop=true` + 連續發射（rate `2/Lifetime`、maxParticles 4、粒子彼此錯相位靠 colorOverLifetime 淡入淡出無接縫）；`Embers` `loop=true` 連續、Local space（貼著移動中的 player 不拖尾）；`GroundFlash` → `GroundRing`（每個 loop 一次脈動的地環）。**拿掉 `SlashVfxController`**（那會自毀，常駐光環不需要）。
+
+### 尺寸「對齊 player 體型（腳底到頭部）」
+
+- player 身體在 Player transform local space：**腳底 ~Y 0.05、頭頂 ~Y 0.83**（沿用閃電光環 `baseHeight 0.05` + `climbHeight 0.78` 那組**使用者手調的權威值**；`SkinnedMeshRenderer.bounds` 被翅膀撐大不可靠）。
+- 量 atlas alpha：滿焰格的火從 cell 底部 **8%** 起（火根/地環）到 **80%**（濃焰頂）。→ `SizeHeight 1.1` + `AuraLocalOffset (0, 0.5, 0)`：實測火根落在 local Y **0.038**（腳底 0.05）、濃焰頂 **0.830**（頭頂 0.83，剛好）、飄焰尖 0.95（頭頂略上）。`SizeWidth = SizeHeight × 1.4`（≈1.54，比 16:9 窄一點，免得繞在矮角色身上顯得瘦長）。
+- Embers 速度/壽命/cone 縮小（0.35~0.9 m/s、0.4~0.8s、cone radius 0.22）讓火花不衝出頭頂；GroundRing 直徑縮到 ~0.45~0.6。
+
+### 音效「切掉後半段」
+
+- `PlayerUltimateAura_Cast.wav`（4.6s）→ 刪。新 `PlayerUltimateAura_Ready.wav`（**2.3s**，前半段，`-ss 1.0 -t 2.3` + 淡入淡出 + loudnorm）。
+- 掛在火焰子物件 root 的 `AudioSource`（`playOnAwake`、3D、vol 0.8、**loop=false**）→ 每次子物件 `SetActive(true)`（能量剛滿）播一次「充能完成」stinger，不是常駐 ambience。
+- `SlashVfxController` 追加78 那個「自毀延時也算 `AudioSource.clip.length`」的改動保留（cat R 還在用），player 火焰現在沒 `SlashVfxController` 了不受影響。
+
+### 接線
+
+- `PlayerUltimateAuraVfxSetup.cs` 選單改名 `Add Player Ultimate Ready Aura VFX (flame, on full energy)`。`Apply` 建 material + prefab → `WireReadyAura`：在 Player 底下（重）建一顆 inactive 子物件 `ReadyFlameAura`（localPos `(0,0.5,0)`）→ 填 `UltimateReadyAura.energy` + `.flameAura`。可重跑。
+
+- **測試**：EditMode **236**，唯一失敗仍是既有無關 `CharacterAttackAnimationLinkTests...FallsBackToAttack3`。無新單測（純 VFX/音效 + `UltimateReadyAura` 的 toggle 是既有 pattern 加一層）。
+- **待實機**：閃電＋火焰兩層同時亮會不會太滿（要的話一句話拿掉閃電）；火焰尺寸/位置對真實 play 姿勢（走路/待機骨架位移）；音量/裁切；game-view MCP 截圖抓不到粒子、scene-view 程式化取景這次也不配合，尺寸是照 atlas alpha 剖面 + 使用者腳底/頭頂校正值**解析對位**的（數學驗證：火根 0.038 / 濃焰頂 0.830）。
+
+## 2026-08-31 (追加79 續) — 火焰待命光環改大 + 修「只有上半身」+ 前後兩層包住全身
+
+使用者回報:「角色特效火焰目前只有上半身且範圍小，沒有做到從腳底開始往上覆蓋全身」。
+
+- **根因 1：feet/head 校正值是舊的**。追加79 初版沿用閃電光環的 `baseHeight 0.05` / `climbHeight 0.78`——那是**舊的、比較矮的 player rig** 的數字。實測現在的 Player5 骨架（`Bip001-Toe0` / `Bip001-Head` / skin renderer 頂）：**腳趾 local Y ≈ −0.58（world 0.50）、頭頂 ≈ +0.70（world 1.78）**，身高 ~1.28。初版把火焰放在 local 0.5 附近 = 角色腰部以上。改成 `SizeHeight 2.5` + `AuraLocalOffset (0, 0.42, 0)`（照 atlas alpha 剖面：滿焰格的火占 cell 高 ~10%~60%，把這段對到 feet→head）。
+- **根因 2：單一 billboard 只能貼在身體一側**。camera-facing billboard 放在身體中心，正面看時下半身被角色網格擋掉、只露出頭頂和腰部那圈亮光 →「只有上半身」。修法：**兩層 flipbook**——
+  - **back 層**（root PS，`_ZTest 4` LEqual 正常深度）：正面看被身體擋在後面。
+  - **front 層**（新 `FrontFlame` 子物件，`_ZTest 8` Always，`SlashFlipbookURP` 新增 `_ZTest` 浮點屬性、預設 4 對既有材質零影響）：畫在角色網格**之上**，較淡（peak alpha 0.55）、略小（0.85×）。
+  - 兩層合起來 = **任何鏡頭角度火焰都包住身體前後**。用 game camera（billboard 面向的那台）算圖驗證：正面/背面/3⁄4 都是火焰從地面裹到頭頂。
+- **其他**：flipbook 只循環 sheet 尾段（`LoopStartFraction 0.72`，frame ~40~55 的成形滿焰，不再從火花 build-up 脈動）；兩粒子錯半個 lifetime + 三角 fade → 無縫循環、亮度不疊加爆白；`_Brightness` 1.7→**1.0**；`SizeWidth` 1.4×→**0.9×**（atlas 地面輝光占 cell 寬 ~57%，1.4× 會甩出一條寬亮帶）；Embers 速度/壽命放大回覆蓋 1.28 身高、從腳底發射；GroundRing 縮小。
+- **診斷踩坑（記一下）**：用臨時 camera `cam.Render()` 到 RenderTexture 算圖時，**billboard 粒子朝向的是 `Camera.main` 不是那台臨時 camera**——從別的角度拍就會看到 billboard 近乎側面 = 一條假的水平亮帶，一度以為是 bug。要驗 billboard VFX 必須**借 game 的 Main Camera** 移位算圖。scene-view 的程式化取景 / `manage_camera` 的 scene_view 截圖這台機器上都不吃 `view_position`，game_view 截圖又抓不到粒子。
+- **測試**：EditMode **236**，唯一失敗仍是既有無關 `...FallsBackToAttack3`。shader 加 `_ZTest` 屬性對 cat DarkQi 材質零影響（reimport 後 `_ZTest=4`=舊行為）。
+- **待實機微調**：腰際仍有一條淡黃色橫帶（atlas 地面輝光被 billboard 寬度攤開）、小腿以下火焰較弱、整體強度/GroundRing 大小——都是 `PlayerUltimateAuraVfxSetup.cs` 常數一行可調、重跑選單即套用。
+
+## 2026-08-31 (追加81) — 待命光環「完全照資產外觀」＋ 移除奇犽風閃電
+
+使用者:「上次做到 player 能量條滿格時的特效，要完全顯示資產來源的特效外觀，並移除舊特效(白色一圈的那)」。尺寸取向：「忠於來源比例，略大於角色」。
+
+### 移除舊閃電（「白色一圈的那」）
+
+`UltimateReadyAura` 從 2026-08-16 起除了火焰還驅動一條奇犽風繞圈電光（藍白 `LineRenderer`，bloom 下看起來就是「白色一圈」）。整條移除：
+
+- `UltimateReadyAura.cs` 砍掉 `bolt` 欄位與全部電光幾何邏輯，只剩「`energy.IsFull` → `flameAura.SetActive`」。guard 改 `energy==null || flameAura==null`。
+- 刪 `UltimateReadyAuraSetup.cs`（電光建置選單）、`LightningAuraUtility.cs` ＋ `LightningAuraUtilityTests.cs`（16 個單測）、`Assets/_Project/VFX/LightningBolt.mat`、場景裡的 `Player/UltimateReadyAura` 子物件（含 `Bolt`）。
+- `UltimateActivationBurst`（R 施放瞬間的金色衝擊環）**保留**——那是施放特效不是待命特效。
+- 選單 `Add Ultimate Ready Lightning Aura` 隨之消失。
+
+### 火焰「完全照資產外觀」——把加上去的裝飾全拆掉
+
+追加79/80 在來源影片上疊了一堆自製東西：第二層 `_ZTest=Always` 的 front billboard（0.3 alpha）、手做的上升火花 / 脈動地環粒子、`_Brightness` 1.3、以及一個把來源外圈地環切掉的中央裁切。全部拿掉——現在 prefab 就只有**一個 billboard flipbook**播來源影片：
+
+- **atlas 重烤**（`PlayerUltimateAura_Atlas.png`）：完整未裁切 1280×720 frame，只取穩定火柱段（source 72..231 每 3 格 = **54 frames**，8×8，2560×1440）；`drawbox` 塗掉角落 ✦ 浮水印；亮度鍵 threshold **52**（更低會讓地環之間的暗焦土鍵成半透明棕色板 / 再低會整片殘留 alpha 糊住畫面）、range /60、gamma 0.80 → 火焰實心、細地環＋藍舌保留。recipe 在 `PlayerUltimateAuraVfxSetup.cs` 檔頭。
+- **prefab**：單層 billboard、`_ZTest=Always`（角色網格永不裁切它）、premult alpha（shader 自己 premultiply）、`_Brightness` 1.2（只夠吃到 URP Bloom 讓它像火，不改色不改形）。無 Embers / GroundRing 子粒子——來源影片自帶地環、藍舌、火花。兩粒子錯相位 ＋ 三角 alpha fade 仍用來抹平 flipbook 迴圈接縫（只是接縫平滑，不是外觀處理）。
+- **尺寸「忠於來源比例，略大於角色」**：不再把火柱壓成身高。`SizeHeight 2.7`（可見火焰 ~1.9m，尖端略過頭）、`SizeWidth = SizeHeight × 1280/720`（不變形，地環維持圓形，~3.8m across——那就是來源相對火柱的比例）、`AuraLocalOffset.y 0.31`（地環落在腳底）。
+- 音效 `PlayerUltimateAura_Ready.wav` 不動。
+
+- **測試**：EditMode **220**（少了 16 個 `LightningAuraUtilityTests`），唯一失敗仍是既有無關 `CharacterAttackAnimationLinkTests...FallsBackToAttack3`。
+- **待實機**：`cam.Render()` 到 RenderTexture 的算圖這輪一直吐 tonemap 爆掉的糊白圖（HDR RT / 非 HDR RT 都試過），沒能用截圖目視收尾——atlas 內容已用 ffmpeg 合成在深/淺底逐格檢查過（火柱、細地環、藍舌、火花都在、浮水印已除）。尺寸/位置（2.7m 高、地環 3.8m）、`_Brightness`、迴圈接縫平滑度都是 `PlayerUltimateAuraVfxSetup.cs` 一行常數、重跑選單即調。
+
+### 追加81 續 — 復原 R 施放特效（劍體環繞 SwordOrbit）
+
+使用者:「player 施展 r 技能原來的特效不見了 就是一把劍的旋轉砍擊(我不是說大劍)」。
+
+- **背景**：`不要有人形.mp4`（一把長劍＋藍/橘能量絲像行星環繞著它旋轉）追加69 接在 `UltimateAbility` 當 R 施放特效 → 追加77 被火焰取代 → 追加79 火焰移去待命，R 施放就只剩 `UltimateActivationBurst` 衝擊環，那個劍體環繞特效整個沒了。使用者要它回來。它是**施放特效**（按 R 當下 spawn），跟待命火焰光環是兩回事（火焰=「必殺充能好了」，這個=真的施放時）。
+- 源檔仍在 `~/Downloads/3d遊戲資源/不要有人形.mp4`，重新歸檔到 `Assets/_Project/VFX/Skills/SwordOrbit/Source/SwordOrbitSource.mp4`。
+- **透明通道坑**：這支不是純黑底，是**烘進 RGB 的灰色透明棋盤格**（AI VFX 產生器慣例）。亮度鍵 threshold 拉到 **60**（黑底只要 ~30）才能把 ~luma 55-70 的淺格清掉；range /165、gamma 1.4 保住藍/橘光絲＋幽靈劍。`drawbox` 塗掉角落浮水印。source 33..177 每 3 格 = **49 frames**、8×7、2560×1260。recipe 在 `SwordOrbitVfxSetup.cs` 檔頭。
+- **prefab** `SwordOrbitSkillVFX.prefab`：billboard flipbook（`SlashFlipbookURP` premult、`_Brightness` 1.7 吃 Bloom）＋ `Sparks`（藍白火花 burst）＋ `GlowPulse`（中央輝光脈動）＋ root `SlashVfxController`（播完自毀，~1.6s）。`SizeHeight 3.0` / `SizeWidth ×320/180`。
+- **`UltimateAbility.cs`**：重新加回 `castVfxPrefab` / `castVfxLocalOffset`（追加79 移除的），在 `energy.Consume()` + `burst.Play()` 之後 `Instantiate` 一次，parent 到 player，offset `(0, 0.4, 0)`（胸口高度）。
+- **`SwordOrbitVfxSetup.cs`** 新選單 `Add Sword Orbit Skill VFX (R ultimate cast)`，建 material + prefab + 接 `UltimateAbility.castVfxPrefab`，可重跑。
+- 無音效（追加69 原版也沒有；要的話同 CatDarkQi 的做法一句話補）。
+- **測試**：EditMode 220，唯一失敗仍是既有無關 `...FallsBackToAttack3`。borrow-Main-Camera 算圖這次成功（PP volume 關掉後不爆白）——確認藍/橘光絲環繞幽靈劍、棋盤格已鍵乾淨、位置在角色上半身。offset/size 待實機微調（`SwordOrbitVfxSetup.cs` 常數）。
+
+### 追加81 續 2 — 貓 R「黑暗劍氣」修「掉漆」（chroma 去背 + 拿掉裁切）
+
+使用者:「為什麼感覺 `幫我生成一個黑暗劍氣風格的版本.mp4` 掉漆很嚴重 是因為透明通道或 3d 問題嗎」。
+
+- **診斷**：主因是**透明通道**。這支跟 `不要有人形.mp4` 一樣是**烘進 RGB 的灰色透明棋盤格**背景，但 `CatDarkQiVfxSetup` 追加75/80 的 alpha 鍵用**亮度**、門檻只有 **28**——遠低於棋盤格淺方塊（~luma 74），棋盤格 + 暗部 H.264 壓縮雜訊全漏進來變一層**灰濁半透明霧**，亮場景下特別慘。加乘：素材本身暗紅/暗紫暗色調，premult 疊在超亮 greybox 上幾乎看不見（為暗場景 + bloom 設計）。追加75 的 `crop=720:720:400:0` 又把外圈漩渦環切掉。**不是 3D 問題**。
+- **修法**：改用 **chroma（彩度）去背**。棋盤格是純灰（chroma == 0），特效是暗紅/暗紫（chroma 40~200）→ `alpha = max( (chroma−10)/70 , (maxc−92)/120 )`：第一項鍵彩色特效、棋盤格自動消失；第二項留住近白火花核心（92 > 棋盤格 74 上限故乾淨）。gamma 0.9。
+- **拿掉中央裁切**：現在整張 1280×720 frame，`drawbox` 塗掉角落浮水印。8×8、320×180 cell、2560×1440、source 21..210 每 3 格 = 64 幀（全程：符文劍成形→暗紅漩渦→紫爆→消散）。缺點：結尾灰色煙塵是低彩度、鍵得比較淡——可接受（不是重點畫面）。recipe 在 `CatDarkQiVfxSetup.cs` 檔頭。
+- `_Brightness` 1.6 → **2.0**（material + `SlashVfxController`），暗素材拉亮一點在非暗場景也讀得出來、吃到 Bloom。`SizeWidth` 改回 `SizeHeight × 320/180`（cell 從 720 方形變 16:9，不壓扁漩渦）。atlas import `maxTextureSize` 2048 → 4096。
+- 貓 R 的 AOE / 傷害 / 能量 / 機制**完全沒動**——純資產 + 材質。
+- **驗證**：ffmpeg 把新 atlas 合成在橘色 + 深色底逐格檢查——棋盤霧完全消失、全寬漩渦、暗紅/暗紫/紫爆都在、浮水印已除。borrow-Main-Camera in-engine 算圖確認 greybox 地面上不再有灰霧。EditMode 220，唯一失敗仍是既有無關 `...FallsBackToAttack3`。
+
+### 追加81 續 3 — Player 武器：修武士刀被剔除消失 ＋ 狼末大劍放回背上當裝飾
+
+使用者:「1. player 背上那把 wolf 大劍裝飾品消失了 2. katana 武士刀應該被握在 player 右手手上，將來會以此武器為核心進行揮劍動作設計」。
+
+- **武士刀「消失」根因**：血刀 `BloodKatana.glb` 其實一直掛在右手（`Rhand_Weapon2/WolfsGravestone/BladeMesh`），但 glb 匯入時 mesh bounds 是退化的 (0,0,0)，`PlayerKatanaSetup` 只在編輯器 `RecalculateBounds()`（不會存下來），**執行期沒有 `MeshBoundsFixer`** → 一進 Play mode 手不在畫面正中央整把刀就被視錐剔除。修法：`PlayerKatanaSetup` 在 wrapper 上加 `MeshBoundsFixer`（同空島/貓用的那顆 `[ExecuteAlways]` 元件），並補進現有場景。
+- **狼末大劍**：追加77 的 `PlayerKatanaSetup` 會刪掉任何叫 `WolfsGravestone` 的物件——使用者 2026-08-23 手擺在背上的那把就是這樣沒的。新增 `PlayerBackGreatswordSetup.cs`（選單 `Attach Wolf's Gravestone As Back Decoration`）：把 `Genshin_WGS.fbx` 掛在 **Player root**（直接掛、scale 1，不掛脊椎骨——骨骼有 ~80x lossy scale 會把 localPosition 乘爆甩飛數公尺，第一版就踩到）、**命名 `BackGreatswordDecor`（不叫 WolfsGravestone）** 所以 R 大招不會丟它、接上 **兩顆** `ThirdPersonCameraController.firstPersonHiddenAccessory`（Main Camera + CatCamera 各一顆，原本只接到第一個 iterate 到的）、自帶 `MeshBoundsFixer`。
+- **追加81 續 4**：使用者「檢查幾個版本前的大件裝飾品是如何擺放...應該是劍柄左上刀劍右下」。從 git d735761 / 8ecb5fb（0830 前 commit）撈出使用者 2026-08-23 手調的 transform 原封不動還原：`localPosition (1, −0.80115217, −0.2)`、`localRotation Euler(0,0,43)`、`localScale 1`。FBX 的握把在模型 +Y 端（mesh `pCylinder5` local Y≈2.37，不是原點；原點端是刀尖），所以 Euler 43° 把握把甩到左肩上方、刀尖落右下——正是「劍柄左上刀劍右下」。borrow-Main-Camera 算圖確認。
+- **R 大招**：仍丟右手的 `WolfsGravestone`（＝武士刀，戰鬥核心武器）。背上大劍純裝飾、不丟。
+- ⚠ **`Genshin_WGS.fbx` 是《原神》「狼的末路」的直接仿製品，DoNotShip**（`DoNotShipBuildGuard.cs` + `ASSET_LICENSES.md` 已擋）。只能當內部原型佔位，絕不進任何對外 build（CLAUDE.md 規則 2）；日後要換原創大劍模型。
+- **驗證**：borrow-Main-Camera 算圖確認武士刀在右手（不再被剔除）、大劍斜背「劍柄左上刀劍右下」。EditMode 220，唯一失敗仍是既有無關 `...FallsBackToAttack3`。
+
+## 2026-08-31 (追加82) — 4 個 Meshy 校園建築 FBX 排除版控（>100 MB）
+
+使用者:「我的專案中好像有超過 100mb 的檔案導致我無法 git」→ 確認後要求「創建說明文件記錄這些大型資產，然後 git 排除他們」。
+
+- **問題**：追加63/64/66 匯入的 4 個 Meshy 校園建築原始 FBX（內嵌貼圖版）單檔 108~130 MB，全部超過 GitHub 的 100 MB 單檔硬上限。當時還在暫存區、**尚未 commit**（`git log` 確認歷史裡無 ≥50 MB blob，`main` 與 `origin/main` 齊平），所以**不需要改寫歷史**。
+  - `ModernGlassLibrary/.../Meshy_AI_Modern_Glass_Library_0830064510_texture.fbx` — 108 MB / 294 萬三角面
+  - `PalmLinedLibrary/.../Meshy_AI_Palm_Lined_Library_En_0830064603_texture.fbx` — 130 MB / 304 萬三角面
+  - `QuietCampusPlaza/.../Meshy_AI_Quiet_Campus_Plaza_0830071958_texture.fbx` — 106 MB / 287 萬三角面
+  - `YuanpeiUniversityBuilding/.../Meshy_AI_Yuanpei_University_Bu_0830053851_texture.fbx` — 120 MB / 309 萬三角面
+- **烘 Unity `.mesh` 不可行**：實測把 ModernGlassLibrary 網格 `AssetDatabase.CreateAsset` 成 `.mesh` = **216 MB**，比 FBX 還大（獨立 `.mesh` 資產不壓縮）。`QuietCampusPlaza_NoFoliage.mesh` 之所以只有 55 MB，是因為已被減面成 54.5 萬頂點 / 95.5 萬三角面（原始約 1/3、去植被、剝切線）——`.mesh` 路線一定要先外部減面。
+- **處理**（本次）：
+  - 新增 `Docs/LARGE_ASSETS.md`：登記這 4 個檔的 repo 路徑、大小、面數、外觀、原始 zip 檔名、補回方法、長期正解（回 Meshy 下載低面數版 / Blender decimate）。
+  - `.gitignore` 加規則 `Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx`（＋ `.fbx.meta`）——只擋 `.fbx` 網格本身。
+  - `git rm --cached` 這 4 個 `.fbx` ＋ 對應 `.fbx.meta`（檔案留在本機硬碟，Unity 照常能用）。
+- **沒動到**的：同資料夾的 `*_texture.png` / `*_normal.png` / `*_metallic.png` / `*_roughness.png` 貼圖、`Materials/*.mat`、`QuietCampusPlaza_NoFoliage.mesh`（55 MB，過得了 100 MB）全部照常進版控。fresh clone 後材質與貼圖都在，只有這 3 棟（QuietCampusPlaza 有減面 mesh 例外）的**網格**會缺、場景對應物件顯示 missing mesh——本機開發不受影響。
+- 排除後暫存區最大單檔 56 MB（`QuietCampusPlaza_NoFoliage.mesh`），總量 ~158 MB，可正常 push。
+- **TODO**（見 `KNOWN_ISSUES.md`）：這 4 個模型各 ~300 萬三角面，遊戲裡本來就不能直接用，需回 Meshy 下載低面數版或減面後才重新進版控。
+
+## 2026-08-31 (追加83) — 十足蟲.glb → 可戰鬥的高速近戰敵人（TenLeggedBugController）
+
+使用者:「將十足蟲.glb 實作為可戰鬥的高速近戰敵人」＋一份完整規格（骨頭編號 / 巡邏追蹤攻擊搜尋硬直死亡六態 / 程序步態 / 犀牛角刺擊 / 3 連段後硬直 / 翻腹淡出死亡 / 全數值 Inspector）。
+
+### 先檢查（沒重造衝突系統）
+- **傷害**：沿用 `Core.IDamageable` + `DamageInfo(amount,point,dir,source)` + `Core.Health`（`maxHealth`、`Damaged`/`Died` 事件、`deferDeactivationToDeathAnimation`）。玩家受擊點 = `Player/PlayerHurtbox`(CapsuleCollider trigger + `HurtboxLink`)。**專案無專屬 layer**，靠 `IDamageable` + `BossTeamMember.Team` 過濾。
+- **敵人 hitbox 慣例**：`Combat/Boss/BossHitbox`（trigger 預設關、`Activate/Deactivate`、kinematic Rigidbody、每 FixedUpdate swept-cast、per-activation `HashSet` 去重）。
+- **移動/NavMesh**：專案**唯一**移動系統 = `CharacterController` + 手動 `.Move()`（**無 NavMeshAgent**）。`AI/NavPathFollower`（agent-less、`SteeringDirection(targetPos)` 繞障、fail-open）。NavMesh 已 baked。
+- **程序動畫**：`Characters/CatProceduralWalk`（capture rest localRotation → `ApplyHinge` 相對 root right 軸 → 速度縮放 → pure helper）——十足步態照這架構。
+- **死亡淡出**：專案**沒有**現成溶解工具（`DeathAnimationLink` 只延遲 SetActive、需 Humanoid clip）。自己在控制器做。
+
+### 新增檔案（全新，未改既有遊戲邏輯 / 玩家 / 敵人）
+- `_Project/Game/AI/TenLeggedBugController.cs` — 主控制器。六態 `BugState`（Patrol/Chase/Attack/Search/Stagger/Death）。所有數值（偵測/脫離/攻擊距離、追蹤/巡邏/搜尋速度、轉向速度、重力、巡邏半徑、步態頻率/幅度、攻擊夾角 30°、攻擊循環 1s、角三段時間 0.25/0.45、刺擊命中窗、角傷害 10、連段數 3、硬直 0.7–1s、搜尋 2–3s、翻腹 0.5–0.8s / 屍體 1s / 淡出 1–1.5s）皆 `[SerializeField]`（同 `EnemyAI` 慣例；偏離規則 7 的 ScriptableObject 但依規格明確要求）。
+- `_Project/Game/AI/TenLeggedBugHornHitbox.cs` — 角部獨立 trigger hitbox，精簡 `BossHitbox`（kinematic RB、每 FixedUpdate swept BoxCast、per-activation 去重）。只在下刺命中幀 `Activate()`，命中一次 10 HP，**不因玩家待範圍內連續扣血**。
+- `_Project/Game/AI/TenLeggedBugGaitUtility.cs` — pure：嚴格 1→N→重複、一次一腳、`SteppingLegIndex`/`LegLift01`/`LegStride`/`AdvancePhase`（速度縮放）。
+- `_Project/Game/AI/TenLeggedBugAttackUtility.cs` — pure：30° 正面錐、犀牛角三段 pitch 曲線、命中窗、前腳張開 telegraph、搜尋左右掃。
+- `_Project/Tests/EditMode/TenLeggedBugTests.cs` — 11 個 EditMode 測試，**全綠**（gait 一次一腳、lift 峰值、stride 前後掃、速度縮放、錐角、角三段、命中窗只在下刺、rest-pose 快照、bend 骨自動抓 first-child）。
+- `_Project/Tests/PlayMode/TenLeggedBugPlayModeTests.cs` — 4 個整合測試（角只在命中幀傷害且一次一擊、背後不打會轉身、HP0 停一切、遠→巡邏近→追）。**MCP test runner 這輪卡死（既有環境問題，見 AGENT_NOTES），待使用者本機跑**。
+- `Assets/Editor/Bootstrap/TenLeggedBugSetup.cs` — 選單 `Tools/Live2DAction/Build Ten-Legged Bug Enemy (十足蟲)`。把 `Shizuchong.prefab` 改造：加 `Rig` wrapper（Y 180，因原模型頭朝 local −Z，root +Z 才是 forward）＋ `CharacterController`（h1.7 r0.7 c(0,0.85,0)、step0、minMove0）＋ `Health`(100、defer=true)＋ `BossTeamMember`("Bug")＋ `NavMeshModifier`(ignoreFromBuild)＋ `NavPathFollower`＋控制器＋角 hitbox 子物件（Bone_002 底下）。**12 個骨頭在 Editor 端用名字解析、絕不在 runtime 猜**。場景實例只設 `target=Player`。
+
+### 骨頭對照（十足蟲.glb 只綁 8 條地面腿，非 10——「十足」是名字）
+`BodyRoot=Bone_001`、`Horn=Bone_002`（頭骨，pitch 做刺擊＋前兆）。腿 1..8（因 Rig Y180，模型左右已對調）：`Bone_033 / Bone_037 / Bone_025 / Bone_021 / Bone_017 / Bone_009 / Bone_029 / Bone_013`（前左、前右、左2、右2…）。控制器吃任意腿數，1→N 循環。
+
+### 其他
+- `NavMeshBakeSetup.cs` 的 `ExcludeFromBake` / `PathFollowerTargets` 加入 `十足蟲`。
+- `十足蟲` 場景實例：scale 0.3、掛滿上述元件、`target=Player`、貼地 y≈0.52。BoxCollider（追加前置作業做的）已由 CharacterController 取代。
+- `ASSET_LICENSES.md`：`十足蟲.glb`（Meshy AI 付費輸出，使用者持商用權）移到「已授權/原創素材」表。
+- **待使用者**：跑 `Tools/Live2DAction/Bake Navigation Mesh` → Play 手感微調（距離/速度/角度/時間全在控制器 Inspector）；跑 PlayMode 測試；指派骨頭若要微調（目前 Editor 已自動填）。
+
+### 追加83 續 — 修：蟲頭尾接反 + 攻擊搆不到玩家（使用者實機回報）
+
+使用者:「1.蟲有在做攻擊動作但沒真的打到玩家，中間隔一段距離，不能衝破碰撞體到玩家腳下嗎 2.蟲攻擊的部位是尾巴，控制錯骨頭了 應該是反方向那個」。
+
+- **頭尾接反**：初版把 `Bone_002`（其實是**尾/螫刺**，模型 −Z）當角，又給 `Rig` wrapper 轉 180° → 蟲**尾巴朝前、倒退走向玩家**、拿尾巴刺。**用逐骨標記渲染 + BakeMesh 頂點高度**確認：真正的頭/角是 `Bone_005 → Bone_004 → Bone_048` 鏈（模型 +Z 端、該半邊幾何最高 y=1.03＝角）。修：
+  - `Rig` wrapper 轉回 **identity**（模型 +Z 頭＝root +Z forward，頭朝前走）。
+  - `HornBoneName` `Bone_002` → **`Bone_004`**（真頭骨，pitch 它＝角上下刺＋頭壓）。角 hitbox 移到 `Bone_004` 底下、用 `Bone_004.InverseTransformPoint(Bone_048)` 定在角尖、放大到 world ~0.33×0.33×0.54。
+  - 8 腿重排（無 L/R 翻轉了，模型自然左右、依 +Z→−Z 前到後）：`Bone_013/029/009/017/021/025/037/033`。
+  - **場景 `十足蟲` + `Shizuchong.prefab` 已用 execute_code 直接改好**（MCP test runner 卡死沒法重跑選單）；`TenLeggedBugSetup.cs` 原始碼也同步更新，之後重跑選單一致。
+- **搆不到玩家**：`TickAttack` 原本一過 `attackRange`(1.6) 就硬停 → 留 ~1m 空隙。改成：
+  - `attackRange` 1.6 → **1.3**（Chase→Attack 的「投入攻擊」距離，非揮擊距離）。
+  - 新欄位 `playerBodyRadius`(0.45)：Attack 態內先算 `contactDistance = 自身世界半徑 + playerBodyRadius + 0.08`，**還沒貼上就繼續全速前壓**（速度隨剩餘距離收斂、不推人）、步態續走、刺擊時鐘不啟動；**貼上才 plant + 揮**。＝蟲會真的頂到玩家身上才刺。
+  - `TenLeggedBugHornHitbox` 加 `StaticOverlapCheck`：`Activate()` 後第一個 FixedUpdate 若角盒已與玩家重疊（貼身開窗，swept cast 和 OnTriggerEnter 都可能漏），用 `Physics.OverlapBox` 補一次結算。
+- **待使用者**：點回 Editor 解 `tests_running` wedge → 腳本自動重編（吃到 press-in + StaticOverlapCheck）→ 重跑 `Build Ten-Legged Bug Enemy (十足蟲)`（可選，冪等）→ `Bake Navigation Mesh` → Play。`playerBodyRadius` / `attackRange` / 角盒大小位置都在 Inspector 微調。
+
+### 追加83 續 2 — 血量條 + 5 秒復活 + 純觀看攝影機視角（使用者需求）
+
+使用者:「1.根據他的身長製作血量條 UI 2.死亡五秒後復活 3.新增一個按鍵得到他的攝影機視角(純粹觀看不影響行為)，要考慮身高和視線」。
+
+- **血量條**（`TenLeggedBugSetup.AddHealthBar`，加在 prefab 上）：世界空間 `Canvas` + 紅色 `WorldSpaceHealthBar`（既有元件、每幀 poll `Health`、billboard 對 `Camera.main`）。**寬度＝身長**：`SkinnedMeshRenderer.BakeMesh` 量最長水平軸 × 0.9 → 世界寬 ~0.86 m（body length），高 = 寬 × 0.13。位置：body 頂 + 0.18 m，world Y ~1.14（蟲頂 ~1.03）。Fill 用 Unity 內建 `UISprite`（否則 `Image.Type.Filled` 無視覺效果，同 `HealthBarSetup` 的坑）。
+- **5 秒復活**：`TenLeggedBugController` 死亡不再淡出+`Destroy`，改 `DeathThenReviveSequence`：翻腹（`flipOverSeconds` 0.65）→ 躺平 → 總計 `respawnDelaySeconds`(5) 秒後 → `Health.ResetHealth()` + 翻回站立（`getUpSeconds` 0.6）+ 重置狀態 → `BugState.Patrol`。**GameObject 全程不 deactivate/destroy**（`Health.deferDeactivationToDeathAnimation=true`），所以 coroutine 活著跑完整輪——不像專案通用 `RespawnController` 得掛在角色外。`respawnMode`：`InPlace`（原地站起，同 boss 慣例）/ `AtSpawn`（回出生點），Inspector 可選。移除了 `BuildFadeMaterials` / `fadeOutSeconds` / `corpseHoldSeconds`。
+- **純觀看攝影機（按 B）**：新 `Live2DAction.CameraSystem.SpectatorCameraToggle`（掛 `BugSpectator` 空物件）——**只換視角、不換操控**（不 reference 蟲的 controller，蟲照跑 AI）。按 B：快照當前所有 active 相機 → 全關 → 開 spectator；再按 B → 還原快照。組合得了任何當下的相機（player/cat/vehicle/守望者）。`BugSpectatorCamera` = 複製 Main Camera rig（`Object.Instantiate`，同 CatCamera 做法）retarget 到蟲，**低視線**：`distance` 1.5、`targetOffset` (0,0.35,0)、`initialPitch` 17°（往下看地面生物）、`minPitch` −18 / `maxPitch` 78。player-only 欄位（lockOn/input/ultimate/descendAutoPitch）清掉。起始 inactive。
+- **測試**：EditMode `TenLeggedBugTests` 仍 **11 綠**（無回歸）。PlayMode `TenLeggedBugPlayModeTests` 加 3 個（復活滿血回巡邏、spectator toggle 只換視角會還原、既有 4 個）→ **6 個**，MCP test runner 又卡死（`tests_running` wedge，AGENT_NOTES 記載），**待使用者本機跑**。
+- setup 工具修：`BugSpectatorCamera`/`BugSpectator` 清舊用掃 scene roots（`GameObject.Find` 跳過 inactive → 之前重跑會產生重複相機）。已手動清掉一個重複。
+- **待使用者**：點回 Editor（若 wedge）→ `Bake Navigation Mesh` → Play。血量條 billboard 只在 Play 對得準（Editor 截圖是側面線）。按 B 切蟲視角。
+
+### 追加83 續 3 — 蟲位置 + 更低視角 + 修駕車時無法切蟲視角（使用者實機回報）
+
+- **移到右下角圍牆下、與屁孩王直行對齊**：`TenLeggedBugSetup` 把 `十足蟲` 擺到 `(屁孩王.x, groundY, Ground 南緣 +1.5m)` = **(12, 0.52, −13.5)**（屁孩王在 (12, 12)，同一 X 直線、一南一北）。`patrolRadius` 5（角落用小一點）。**待使用者重跑 `Bake Navigation Mesh`**。
+- **視角不夠低 → 壓到接近蟲眼高**：`BugSpectatorCamera` 的 `ThirdPersonCameraController`：`distance` 1.5→**1.05**、`targetOffset` (0,0.35,0)→**(0,0.12,0)**、`initialPitch` 17°→**4°**（幾乎與蟲平視、微微往下）、`minPitch` −18→−30。實測相機世界 Y ~0.72（蟲頭高度）。
+- **駕車時切不了蟲視角**：`VehicleEntrySystem.LateUpdate` 每幀 `SetActiveSafe(vehicleCamera, youDrive)`，會把 spectator 相機搶回去（同 `viewDirector.IsFocusedOnWatcher` 早退的情境）。修：`SpectatorCameraToggle` 加 `LateUpdate`，spectating 時每幀重申（開 spectator、關其他所有 `Camera.allCameras`）。`[DefaultExecutionOrder(150)]` 保證跑在 VehicleEntrySystem（order 0）之後，同幀內覆蓋掉、渲染前生效、無閃爍。被搶走的相機記進 restore list，退出時還原。**不需要 cross-reference**——對 vehicle / 守望者 / possession 任何 camera owner 都通用。
+- setup 清舊 `BugSpectator*` 物件改掃 scene roots（`GameObject.Find` 跳 inactive → 重跑生重複相機，已修）。
+- **待使用者**：重跑 `Bake Navigation Mesh`（蟲換位置了）→ Play：蟲在右下角、按 B 低視角看牠、上車開一開再按 B 應能切到蟲視角。
+
+### 追加83 續 4 — 骨架重驗：確認 10 條腿，重接 leg bones（第二份分析 + 頂點驗證）
+
+使用者提供另一個 AI 的分析（10 條腿），我用**地面接觸頂點分群**驗證：`y<0.12` 的蒙皮頂點分群 → **10 個腳掌，5 對完全對稱**（不是先前抓到的 8）。第一次漏掉是因為只找「Bone_001 直接子骨 + 乾淨 4 節鏈」。
+
+**正確對照**（前 +Z 到後 −Z、L/R；每腿：swing 骨 / knee 骨）：
+| # | 位置 | swing | knee |
+|---|---|---|---|
+| 1 | L 前 | `Bone_046` | (無) |
+| 2 | R 前 | `Bone_029` | `Bone_028` |
+| 3 | L 二 | `Bone_013` | `Bone_012` |
+| 4 | R 二 | `Bone_017` | `Bone_016` |
+| 5 | L 三 | `Bone_009` | `Bone_008` |
+| 6 | R 三 | `Bone_025` | (無) |
+| 7 | L 四 | `Bone_021` | `Bone_020` |
+| 8 | R 四 | `Bone_024` | `Bone_023` |
+| 9 | L 後 | `Bone_037` | `Bone_036` |
+| 10 | R 後 | `Bone_033` | `Bone_032` |
+
+**兩隻腿骨架不乾淨**（兩份分析都指出，要 Blender 重綁才能根治）：
+- **腿 1（Bone_046）**：掛在頭鏈底下（`Bone_005 ← Bone_004 ← Bone_047 ← Bone_046`），權重跟身體混——踏步時腿根附近網格會輕微拉扯（驅動它**不會**帶動頭，child 旋轉不往上傳）。
+- **腿 6 & 8（Bone_025 / Bone_024）**：`Bone_025` 是腿 8 骨鏈的父骨——**踏腿 6 會小幅拖到腿 8**（反向不會）。
+
+**程式改動**：
+- `TenLeggedBugController.CaptureRestPose`：`legBendBones` 若**逐腿都給**（Count == legRootBones）就**照用不自動補**（null = 這腿沒膝骨）——否則腿 6 會自動抓到唯一的子骨 `Bone_024`＝腿 8。
+- `TenLeggedBugSetup`：`LegRootBoneNames` 改 10 個 + 新 `LegBendBoneNames`（10 個、腿 1/6 為空）。已重跑套上。
+- EditMode `TenLeggedBugTests` 仍 **11 綠**。
+- **待使用者**：Play 看十足交替步態（腿 1 / 6 / 8 會有輕微滑步/拉扯，那是骨架問題不是程式）；要完美步態就在 Blender 把腿 1、6、8 各自獨立出根骨再重匯。
+
+### 追加83 續 5 — 蟲移動速度 ×0.7（使用者實機回報「太快」）
+
+`TenLeggedBugController` 移動速度整組 ×0.7：`chaseSpeed` 5.5→**3.85**、`patrolSpeed` 1.4→**0.98**、`searchMoveSpeed` 3→**2.1**。`gaitSpeedForFullRate` 也跟著 5.5→**3.85**（腿步頻率維持與衝刺速度匹配）。`rotationSpeedDegrees`（轉向）/ `gaitBaseRateHz`（步態每秒循環數）不動。已改欄位預設值 + 場景實例 + prefab。
+
+## 2026-08-31 (追加81 續 4) — Player 滿能量待命火焰光環調小（使用者:「燃燒過大蓋住角色和視線」）
+
+`PlayerUltimateAuraVfxSetup`（`UltimateReadyAura.flameAura`，能量滿時亮）：
+- **尺寸**：`SizeHeight` 2.7 → **1.7**（可見火焰 ~1.9m → ~1.2m，約角色身高、火尖到頭不過頭），`SizeWidth = H × 1280/720` 隨之 4.8 → **3.0m**（比例不變、地環維持圓形）。
+- **`_Brightness`** 1.2 → **1.0**（bloom 不再洗版視線）。
+- **`_Opacity`** 1.0 → **0.6**（火焰半透明，角色從火中看得清楚 —— 直接解「蓋住角色」）。ZTest 維持 Always（半透明後不再擋人，且避免 billboard 半邊被裁）。
+- `AuraLocalOffset.y` 0.31 → **−0.02**（縮小後地環重新對回腳底）。
+- 已重跑選單、材質 + prefab + 場景實例已更新存檔。**待使用者 Play 確認**，還要更小/更淡就調 `SizeHeight` / `_Opacity`。
+
+### 追加81 續 5 — Player 待命火焰光環換新資產（青金靈火柱）
+
+使用者換來源影片（`請根據需求描述製作影片：一個孤立的_D遊戲特效...mp4` → 青綠+金色靈火柱、白色能量絲環繞、火花、地面漣漪環，乾淨黑底，1280×720/24fps/10s）。需求：體型匹配、只有角色中心輪廓稍微透明、其他部分完全還原資產、處理透明通道、模仿 3D。
+
+- **來源 + atlas 覆蓋**：`Source/PlayerUltimateAuraSource.mp4` 換新片；`PlayerUltimateAura_Atlas.png` 重烤（同檔名 → material/prefab/wiring GUID 不變）。**64 幀、source 30..156 每 2**、8×8、2560×1440。
+- **透明通道**：乾淨黑底 → 亮度鍵 threshold **22** / range /50 / gamma 0.80（火焰實心、微光去乾淨）。`delogo`（不是黑 drawbox —— 浮水印壓在地環上，挖黑洞會破環）去掉角落 ✦。
+- **中心輪廓稍微透明**：alpha = 亮度鍵 **×** 一個逐-cell 高斯「輪廓凹陷」——角色站的中下段（frame 55.6% 處、sx 7%W / sy 19%H）alpha 最低 ~0.45，往外回全 alpha。＝「只有中心稍微透明、其他完全還原」。
+- **體型匹配**：`SizeHeight` 1.7（可見火焰 ~1.2m ≈ 角色身高），`SizeWidth = H×1280/720`（不變形，地環維持圓）。新片地環只佔 frame 寬 ~58% → 佔地更小、更不擋視線。`_Opacity` 回 **1.0**（透明現在烤在 atlas 中心，其他全強度）、`_Brightness` **1.05**。`AuraLocalOffset.y` −0.02 → **−0.1**（新片地環在 frame ~78% 處，對回腳底）。
+- 選單重跑、material + prefab + 場景 `Player/ReadyFlameAura` 更新存檔。已用 `ps.Simulate` 截圖確認：青靈火包住角色、角色從火中央看得清楚、火尖到頭不過頭、地環貼腳。
+- **待使用者 Play 確認**（能量滿）。中心透明度太淡/太濃調 `geq` 的 `0.55`，位置調 `0.556*H`；大小調 `SizeHeight`；重跑選單。
+
+## 2026-08-31 (追加84) — 移除場上兩個物件：泳裝女標準人形 + 幽靈血條機甲
+
+使用者:「場上兩個物件想移除 一個是穿著泳裝的女士 一個是只有血量條 UI 沒看到人物的幽靈」。
+
+- **`FemaleStandee_Placeholder`**（Quaternius Superhero_Female，CC0，外觀像白泳裝，`(0, 0.5, -8)`，純靜態展示、無 Health/AI）→ 刪除。沒有任何腳本 serialize 引用它。
+- **`Mecha`**（`MechaModel_DoNotShip`，來源不明、KNOWN_ISSUES 阻塞項 1b）`(2.5, 1.5, -2)`：那顆網格 `sharedMaterial` = NULL、renderer bounds 退化成 (0,0,0)，Play 下**完全不顯示**，只剩 `MechaDamageableSetup` 加的浮空紅血條＝使用者說的「幽靈」→ 刪除 GameObject ＋ `GameManager` 上指向它的 `RespawnController`（9→8）。唯一的引用就是那顆 RespawnController，已一併清掉。
+- 場景 roots 68 → 66，已存檔，Console 無錯誤/missing reference。
+- **選單工具沒動**：`FemaleStandeeSetup.cs` / `MechaVisualSetup.cs` / `MechaDamageableSetup.cs` / `MechaRespawnSetup.cs` 都還在，重跑會把物件加回來。`GreyboxSceneBuilder.Build()` 不會重建（只在註解提及）。要永久清 Mecha 就再刪那些檔 + `MechaModel_DoNotShip/` 資料夾（DoNotShip 素材，對正式 Build 只有好處）。
+- **Mecha 佔的 navmesh**：它 layer=Default + CapsuleCollider 且無 `NavMeshModifier`，之前有 carve 進 baked mesh（出生點附近）。移除後重跑 `Bake Navigation Mesh` 可把那塊還原。`FemaleStandee` 是 layer=Scenery，本來就排除在 bake 外，不影響。
+
+## 2026-08-31 (追加85) — 移除 TrainingDummy + 玩家武士刀每段攻擊配音效
+
+### 1. 移除 `TrainingDummy`
+Maya 視覺的站樁假人（原 Player3）@ (5,1,0)。掃過全場 MonoBehaviour 的 ObjectReference 欄位——**沒有任何腳本引用它**（不像 Mecha 有 RespawnController）。刪除 GameObject，並從 `NavMeshBakeSetup.ExcludeFromBake` 拿掉 "TrainingDummy"（那名字現在指不到東西）。場景 roots 66→65，已存檔。**選單 `TrainingDummySetup.cs` 還在**，重跑會加回。
+
+### 2. 武士刀攻擊音效（`刀碰撞聲效.mp3`）
+- 素材 → `Assets/_Project/Audio/Combat/KatanaClash.mp3`（使用者提供，1.23s；import 設 forceToMono + DecompressOnLoad + PCM）。
+- 新 `Combat/PlayerMeleeSfx.cs`：訂閱 `PlayerCombat.Hit`（**每個 combo 段落 resolve 時各觸發一次，含揮空**）→ `PlayOneShot`，每次隨機 pitch 0.96–1.07（4 段連段不會四聲一模一樣）。`onlyOnHit`（預設 false）可切成只在命中時響。**沒動 `PlayerCombat`**，只是掛個訂閱者。
+- 新 `Player/MeleeSfx` 子物件：獨立 `AudioSource`（3D、spatialBlend 1、minDist 3）＋ `PlayerMeleeSfx`，接 Player 的 `PlayerCombat` + 該 clip。**獨立子物件**避免跟 root 的 RangedWeapon 槍聲 AudioSource 共用 pitch 狀態。
+- 選單 `Tools/Live2DAction/Add Player Katana Attack SFX`（`PlayerMeleeSfxSetup.cs`，可重跑）。
+- 玩家 combo 是 `LightAttack1..4`（4 段），每段都會響。**待使用者 Play 確認音量/pitch 手感**（在 `MeleeSfx` 的 Inspector 調）。
+
+## 2026-08-31 (追加86) — 滑鼠右鍵改武士刀防禦 + 退役射擊系統
+
+使用者:「把滑鼠右鍵改成武士刀防禦，移除射擊系統和步槍資產可以保留到以後，另外目前 player 動作其實都不適合武士刀的風格，網路上有好的資源嗎」。
+
+### 1. 右鍵 = 武士刀格擋（新機制）
+- **輸入層**：`IInputCommand` 新增 `GuardPressed`（held，**default member `=> false`**，跟 `WalkTogglePressed` 同模式 → 所有 AI/測試 stub 不用改就編譯過）。`PlayerInputProvider`：右鍵 `isPressed` → `GuardPressed`；`AimPressed`/`FirePressed` 改成恆 `false`（expression-bodied）；`AttackPressed`/`AttackHeld` 改 gate 在 `!GuardPressed`（舉刀時左鍵不能起手，放開才能揮）。
+- **傷害管線**：新 `Core/IIncomingDamageModifier`（泛用 pre-damage hook）。`Health.ApplyDamage` 加一段：套用**同物件上**的 `IIncomingDamageModifier`（lazy-cache，停用的 Behaviour 跳過，沒有 modifier 時 = 一次 length-0 迴圈，零行為改變）。既有 240 EditMode 測試全綠 → 無回歸。
+- **`Combat/PlayerGuard`**（掛 Player root，`IIncomingDamageModifier`，Inspector 全參數化）：
+  - 按住右鍵 → `IsBlocking`（死亡/硬直時不成立）。
+  - `ModifyIncoming`：**只擋正面**（`guardArcDegrees` 150° 錐，用 `DamageInfo.Direction` 判定攻擊者方位）。命中：HP 傷害 ×`blockedDamageMultiplier`（0.15）；但 `ExplicitPoiseAmount` 設成**未減傷的架勢量**（`poiseMultiplier` 0.2，需與 `StancePoise.stanceGainMultiplier` 保持一致）→ **架勢照樣全額累積**（龜盾一樣會被打崩，沿用 boss `Boxing_Guard` 先例）。背後/側面命中不減傷。
+  - 移動減速：`CharacterMovement` 新增 `ExternalSpeedMultiplier`（預設 1，只乘進地面 `baseSpeed`，不碰飛行/翻滾）；格擋時 PlayerGuard 設 0.35。
+  - 程序化舉刀 pose：`LateUpdate` 對 `Bip001-R-Forearm` 疊加 local 旋轉、blend in/out（現有動畫不適用武士刀 → 佔位手法，同 `AttackPoseVisualizer` / 貓步）。
+  - `Blocked` 事件（帶原始 `DamageInfo`）= 之後火花/clash 音效/完美格擋時機窗的掛點。
+  - `LastBlockTime` = 之後 UI 閃光/parry 窗的掛點。
+- **`PlayerGuardSetup.cs`**（選單 `Add Player Katana Guard`，可重跑）：掛 `PlayerGuard`，接 input/movement/health/stance + 抓 Humanoid 右前臂骨。已跑上場景。
+- **`CameraPossessionSwitcher.playerControl`**：加入 `PlayerGuard`（貓附身時一起停用，才不會用共用滑鼠替 player 舉盾）——場景陣列已補上、`CatCharacterSetup.CollectPlayerControl` 也加了。
+
+### 2. 退役射擊系統（**資產與腳本保留在磁碟**）
+- Player 上移除：`RangedWeapon`、`RangedAttackDistance`、tracer `LineRenderer`、root `AudioSource`（只服務槍聲）。場景移除 `RangedWeaponHud` crosshair canvas、右手骨下的 `AK47` 實例（`WolfsGravestone` 武士刀留著）。
+- **保留在磁碟**：`RangedWeapon.cs` / `RangedAttackDistance.cs` / `RangedWeaponSetup.cs` / `GunshotSfxSetup.cs`、`AK47.fbx` + 材質貼圖、`RangedTracer.mat`、`GunshotSfx.wav`。
+- `RangedWeaponSetup` menu 加註「已退役、延後」；`GunshotSfxSetup` 找不到 `RangedWeapon` 時改 warning + skip（不再報 error）。
+- `RangedWeapon.Update` 現在永遠看不到 aim/fire（`AimPressed` 恆 false）→ 完全 inert，就算日後把 component 加回去也不會走火，得先在 `PlayerInputProvider` 恢復一個 aim/fire 綁定。
+
+### 3. 動畫資源（回答使用者提問）
+專案內**已有** `Assets/_Project/Characters/Placeholder/CombatAnimations/TC_Sword_Free_Pack/`（MocapOnline TC Sword FREE：Ready Idle / Walk / Run / 三連斬，MotusMan_v50 骨架，retarget 到 Player5 Humanoid(Bip001) 需調 offset）。缺格擋/受擊/處決。線上補充（登入/下載由使用者本人，規則 11）：Mixamo（sword slash/katana/block/parry/hit reaction/death，免費商用）、Unity Asset Store 免費 Mecanim 劍術包（Kevin Iglesias 等）、MocapOnline 付費 Sword & Shield / Katana 大包、itch.io。建議：先用專案內 pack retarget combo/idle，格擋走程序化，之後從 Mixamo 補專用 clip。
+
+### 測試
+- EditMode：新 `PlayerGuardUtilityTests`（8）——正面錐判定（含忽略垂直分量、退化向量）、減傷 clamp、架勢全額、blend clamp。**240/240 綠**（含把 `CharacterAttackAnimationLinkTests` 一個自 08-17 起就跟 4 段連段脫節的舊測試 `BeyondThirdHit_FallsBackToAttack3` 更新成 Attack4）。
+- PlayMode：新 `PlayerGuardPlayModeTests`（4，合成場景）——正面減傷/背後全傷/無盾全傷/減速再還原。**MCP runner 又卡在 `editor_unfocused`**（AGENT_NOTES 已知），**待使用者在互動式 Editor 跑一次**。
+
+### 待使用者
+- Play 確認：右鍵舉刀正面擋傷、背後不擋、舉刀時移動變慢、放開右鍵才能揮刀、舉刀 pose 方向對不對（不對就翻 `PlayerGuard.invertPose` 或調 `guardPoseLocalEuler`）。
+- 手感值全在 `PlayerGuard` 的 Inspector（減傷倍率、錐角、減速、blend 速度、pose 角度）。
+
+## 2026-09-01 (追加87) — 連續刺刀動作：武士普通攻擊 + Player F 處決（共用一支 Humanoid clip）
+
+使用者提供 `連續刺刀.zip`（Meshy `Meshy_AI_Parkside_Portrait_biped` 的 Animation，without_skin FBX 205KB）→ 問「能同時被武士跟 PLAYER 使用嗎」→「武士的部分讓他作為普通攻擊加入 PLAYER 則做為 F 處決加入」。
+
+### 匯入
+- `Assets/_Project/Characters/Placeholder/CombatAnimations/Meshy/ContinuousThrust.fbx`。Meshy biped 骨架（Mixamo 式命名）→ 匯入設 **Humanoid**（`animationType:3` / `avatarSetup:1`），23 根骨頭自動對應、零手動。
+- clip `ContinuousThrust`：**92 幀 / 3.033s / 30fps**、`isHumanMotion=True` → **一支 clip retarget 到 Player5Avatar 和 WushiAvatar 兩邊**（Humanoid 動畫骨架無關，武士 4× 縮放對 retarget 無影響）。
+- clip import：`loopTime=0`、`keepOriginalPositionY=1`（比照 `Wushi_DoubleCombo` 的「AdvancingCuts 下沉教訓」）、`lockRootPositionXZ=1`（原地化 —— Meshy 慣例「起點在 root 後方往前走」）、`lockRootRotation=1`。
+
+### 武士 —— 普通攻擊
+- `Wushi.controller` 加 state `Wushi_ContinuousThrust`（motion = ContinuousThrust，speed 1.25）。boss 靠名字 CrossFade，不接 transition。
+- 新 `Assets/_Project/Settings/Combat/Boss/Wushi_Attack_ContinuousThrust.asset`（`BossAttackDefinition`），複製 `DoubleCombo` 結構。**離線量測**（`AnimationMode.SampleAnimationClip` retarget 到 4× 武士，讀 BladeHitbox vs Chest 的前伸量+速度）= **5 段連刺**：
+  - jab1 nt 0.045-0.10（前伸 2.6、Y~3.0、nt 0.10 抽刀 spd 92）
+  - jab2 nt 0.22-0.29
+  - jab3 nt 0.335-0.385（Y~4.1 頭高刺）
+  - jab4 nt 0.445-0.495（Y~4.5）
+  - jab5 nt 0.575-0.665（前伸 **3.3 最深**、Y~2.0 下段突進，dmgMult 1.3；之後 0.67-0.77 刀停在前方＝不算新命中，0.8-1.0 抽刀 recovery）
+  - 全 `part=Weapon`、`measured=1`
+- 傷害：`healthDamageIsPercentOfTargetMax=true` + `baseHealthDamage=1` → 每刺 1%、5 刺全中 ~5%（守「大招以外固定扣 5%」）。poise 3/刺（~15 total，接近 DoubleCombo 的 24）。
+- selection：`maxDistance 2.8`（Meshy「起點在 root 後方」→ 保守，見 DoubleCombo notes）、`maxAngleDegrees 45`（突刺窄）、`cooldown 4`、`useRootMotion=0` 第一版、`isMajorAttack=0`。
+- 加進武士 `BossStateMachine.normalAttackPool`（5 → **6**）。
+
+### Player —— F 處決
+- **不能直接改 Maya `NewAnimator` 的 `Execute` state** —— 掃描發現 `中立者1` 也用同一個 controller **且也掛 `ExecutionAbility`**（`守望者` 也用該 controller 但無此元件）。改 `Execute` 會連 `中立者1` 的處決一起換掉。
+- 隔離做法：`ExecutionAbility.cs` 加 `[SerializeField] string executeTriggerName = "Execute"`（`Awake` 算 hash，取代寫死的 `"Execute"`）。Maya `NewAnimator` 加**新** trigger `ExecuteThrust` + 新 state `ExecuteThrust`（motion = ContinuousThrust，speed 1.35，AnyState->ExecuteThrust / ExecuteThrust->Locomotion exitTime 0.9，比照 `SpecialMoveAnimatorSetup.WireState`）。
+- Player 的 `ExecutionAbility`：`executeTriggerName = "ExecuteThrust"`、`executionAnimationSeconds` 1.5 -> **2.25**（3.033s / 1.35 speed；處決 50%-當前血傷害在動畫播完才結算）。
+- `中立者1` 的 `ExecutionAbility` 維持預設 `"Execute"` -> 原 `Execute` state / `FlyingKick` 不動。`EnemyExecutionAbility`（Arisa，另一個 `NewAnimator`）也不動，仍 FlyingKick。
+
+### 驗證 / 待辦
+- EditMode **240/240 綠**（本次無新增 EditMode 測試，純 animator/asset 接線 + 一個 serialized 欄位；util 測試全過＝無回歸）。
+- **retarget 高度**：離線 BakeMesh 量測，ContinuousThrust 在 Player 上最低頂點 ~0.55（CrossPunch 落地基準 ~0.45）-> **Player 處決時可能浮 ~5-10cm**。武士上比照 DoubleCombo，`keepOriginalPositionY=1` 已是防下沉的正解。**待使用者 Play 確認**，浮太多就調 `ExecuteThrust` state 或 Visual 的 Y。
+- **hit window 待實機確認**：離線量的（frames-advancing 的 in-Play 才算數，見 DoubleCombo 同樣的確認流程）。若武士刺不到玩家，比照 DoubleCombo 上 `useRootMotion=1`（要一併補「root-motion attack 被打斷時清 `_currentAttack`」的坑）。
+- **手感**：Meshy clip 當攻擊天生要調（`KNOWN_ISSUES` 2026-08-28）。speed（武士 1.25 / Player 1.35）、windows、傷害/poise 都在 asset / state 上。
+- PlayMode 測試：MCP runner 仍卡 `editor_unfocused`，**待使用者點回 Editor 重跑** boss / execution 整合測試。
+
+## 2026-09-01 (追加88) — 武士架勢回復調慢 + 左鍵音效改成防禦刀刃碰撞 + 格擋姿勢改負斜率
+
+使用者三點：1. 武士架勢條太容易就遽減（→ 確認是「我累積的一下就被回掉」＝回復太快）2. 把 PLAYER 左鍵音效移到右鍵(防禦)，且只在「防禦時玩家與武士刀刃碰撞」時響（隻狼機制）3. 防禦時武士刀角度不對，要負斜率（刀尖左上、刀柄右下）。
+
+### 1. 武士 StancePoise 回復調慢（只動武士）
+`regenPerSecond` 20 → **8**、`regenDelaySeconds` 1.5 → **3**。`maxStance`(60) / `stanceGainMultiplier`(0.2) 不動。玩家中斷攻擊 3 秒後才開始退、退速砍半 → 累積的架勢不會一放手就蒸發，打得崩了。屁孩王/Player/Enemy 的 StancePoise 不變。
+
+### 2. 左鍵音效 → 防禦刀刃碰撞（隻狼）
+- **移除** `PlayerMeleeSfx`（每段 `PlayerCombat.Hit` 都放 `KatanaClash.mp3`）＋ `PlayerMeleeSfxSetup.cs`（連 .meta 一起刪）。場景 `Player/MeleeSfx` 子物件移除。
+- **新** `Combat/PlayerGuardClashSfx.cs`：訂閱 `PlayerGuard.Blocked`（正面擋下時觸發，帶原始 `DamageInfo`）。只在確認是「boss 刀刃攻擊」時放音效 —— 從 `info.Source` 找 `BossHitbox` 且 `IsActive && ActiveWindowPart == Weapon`（新 `BossHitbox.ActiveWindowPart` getter，1 行）。擋下踢擊(RightFoot)不會響。`clashOnAnyBlock` 開關（預設 false）可放寬成「任何正面格擋都響」。
+- **新** `PlayerGuardClashSfxSetup.cs`（選單 `Add Player Guard Clash SFX`，取代舊的 `Add Player Katana Attack SFX`）：同一支 `KatanaClash.mp3`、新 `Player/GuardClashSfx` 子物件(獨立 AudioSource, 3D)，接 `PlayerGuard`。可重跑、會清掉殘留的舊 MeleeSfx 子物件。
+- 左鍵普攻現在**完全沒有音效**（照使用者「移動」的字面意思）。
+
+### 3. 格擋姿勢：負斜率武士刀（刀尖左上刀柄右下）
+- **`PlayerGuard` 從只轉前臂 → 轉兩根骨**：新 `upperArmBone`（`Bip001-R-UpperArm`）＋ `upperArmGuardLocalEuler`。前臂單獨轉沒辦法把手抬起來做跨身體格擋，加上大臂才行。`LateUpdate` 兩根都疊 `_poseBlend` 權重（跟 `AttackPoseVisualizer` 同疊法）。
+- 新預設：`upperArmGuardLocalEuler = (-30, -40, -18)`、`guardPoseLocalEuler = (-40,15,-55) → (-55, 25, -165)`。離線 `AnimationMode` 逐格算圖掃出來的（~35 張 render 比對刀刃在螢幕上的斜率）：刀柄在右手邊、刀刃往左上斜切過身體，**負斜率、刀尖左上、刀柄右下**。
+- `PlayerGuardSetup` 加抓 `Bip001-R-UpperArm` 並寫入。已重跑上場景。
+- **注意**：離線 render 用的是 bind pose；Play 時姿勢是疊在 idle 動畫上的，實際角度會有差。兩個 euler 都在 `PlayerGuard` Inspector 可調。場上還有一把 `BackGreatswordDecor`（背上的紅色狼末大劍裝飾，DoNotShip）從背後鏡頭看會擋住武士刀視線 —— 它不受 `PlayerGuard` 控制。
+
+### 測試
+- EditMode **240/240 綠**（`PlayerGuardUtilityTests` 不受影響 —— 改的是 Inspector 值 + 第二根骨 + SFX 換觸發源）。
+- **待使用者 Play 確認**：武士架勢回復手感、防禦時擋武士刀有 clank 音（擋踢沒有）、格擋姿勢刀刃斜率（不對就調 `PlayerGuard` 的兩個 euler）。PlayMode 測試 MCP runner 仍卡 `editor_unfocused`。
+
+## 2026-09-01 (追加89) — 連續刺刀 clip 不堪用，退回；順帶做 face-target 修正
+
+使用者回報：1. 防禦判定帧和武士判定帧沒對齊、防禦音效散亂沒規律 2. 武士/玩家的連續刺擊「很像打空氣、會亂位移」，要先鎖定目標方向再施展。
+
+### 診斷：`ContinuousThrust.fbx`（追加87 匯入的 Meshy clip）本身不堪用
+離線 `AnimationMode` 逐格量測，retarget 到 4× 武士 + 1× 玩家：
+- **髖部單調位移**：整段往前 + 往右各漂 ~4.5/4.75 世界單位（4× 武士）≈ 1× 上 **~1.5m 前 + ~1.6m 側**，**且不回來**。`lockRootPositionXZ`(Bake Into Pose) 只清掉 root 節點的淨位移，per-frame 的前進是烤在髖/脊椎曲線上的 → root 不動但**可見身體整個走出去**（"亂位移"）。
+- **軀幹狂轉**：chest yaw 相對 root 在一段內擺 **-70° → +73° → +133°(!) → 回**。這是個**旋身撲擊**動作，不是連續直刺 → 我追加87 量的「5 段 hitWindow」其實是刀刃在旋身時掃過去的位置，難怪「打空氣」。
+- 側視 render 確認：nt 0.3 時武士已整個移出畫面、刀刃視覺脫節。
+
+→ **調 tuning 修不了動畫資料本身**。
+
+### 處置：退回可用狀態，資產全留磁碟
+- `Wushi_Attack_ContinuousThrust` 從 `武士 BossStateMachine.normalAttackPool` **移除**（回到原本 5 招）。
+- Player F 處決 **退回 `Execute`/`FlyingKick`**（`ExecutionAbility.executeTriggerName` = "Execute"、`executionAnimationSeconds` = 1.5）。
+- **全部留在磁碟、只是沒接**：`ContinuousThrust.fbx`、`Wushi_Attack_ContinuousThrust.asset`、`Wushi.controller` 的 `Wushi_ContinuousThrust` state、Maya `NewAnimator` 的 `ExecuteThrust` state + trigger。clip 修好後重接即可。
+
+### 有價值、留下來的改動（對任何有方向性的攻擊都有用）
+- **新 `BossAttackDefinition.faceTargetSnapOnStart`**（bool）：true 時 boss 在攻擊 state 進入的當下（frame 0 前）**直接 snap yaw 對準目標**，不再只用 `startupTracking` 速度慢慢轉 → 早期命中帧不會因為 commit 時稍微歪掉就刺空。`BossStateMachine.OnEnterState` 的 Attack case 實作。
+- **`ExecutionAbility.BeginExecution` 先 snap 對準被處決目標**（壓平），處決動作整個指向對方，不再朝原本面向打空氣。對 `FlyingKick` 一樣有效。
+
+### 建議（clip 要重用的話，擇一）
+1. Meshy 重生成，prompt 強調「站定原地、連續向前直刺、不轉身不位移」。
+2. 換 Mixamo 的 "sword thrust / stab"（有原地版）。
+3. Blender：把 root/髖部前進位移 bake 掉 + 收掉旋身幅度。
+
+### 測試
+EditMode **240/240 綠**。PlayMode MCP runner 仍卡 `editor_unfocused`。
+
+## 2026-09-01 (追加90) — 修：武士架勢滿了不做蹲下動作
+
+使用者:「武士架式條滿了後 沒有做出蹲下的動作」（追加88 把回復調慢後才變得填得滿，這 bug 才浮現）。
+
+**根因**：`BossStateMachine.UpdatePostureBroken()` 沒防 `CrossFadeInFixedTime` 的一幀延遲（這個坑 `AnimatorHasFinished()` / 攻擊路徑的 `_stateTimer` 下限早就有註解記錄）。架勢是靠**打武士的攻擊硬直**去累積的 → 破防幾乎都發生在 `Attack` state 中。破防當幀 `CrossFadeInFixedTime("Wushi_PostureKneel")` 還沒生效，`GetCurrentAnimatorStateInfo(0)` 仍回報**離開中的攻擊 clip**，其 `normalizedTime` 通常早就 > `PostureKneelNormalizedTime`(0.5) → 舊碼立刻 `animator.speed = 0`，把 Animator **凍在攻擊姿勢的 frame 0**，跪地 clip 根本沒開始播。結果：武士破防時只是卡住不動，沒有跪。
+
+**修法**：在取 `normalizedTime` 前先確認 Animator **真的進到跪地 state**（`!IsInTransition(0) && stateInfo.IsName(kneelName)`）；crossfade 若 1.5s 還沒 land（state 名錯/clip 缺）就 fallback 不卡死。純 `BossStateMachine.cs` 改動、無場景變更。
+
+**Play 實測驗證**：在武士 `Attack` state 時強制 `AddPostureDamage` 破防 → 確認 `state=PostureBroken`、Animator `IsName("Wushi_PostureKneel")=true`、`normalizedTime` 推進到 0.501、`animator.speed=0` **凍在跪姿**（不是 frame 0），3 秒後站起、回 combat。EditMode 240/240 綠。
+
+**同一個坑也修到屁孩王**：`UpdatePostureBroken` 是兩隻 boss 共用的，屁孩王(`PW2_KneelOnOneKneeAndStand`)先前若也在攻擊中被破防會有同樣症狀，一併修好。
+
+## 2026-09-01 (追加91) — 武士 Boss 開場演出（Timeline 過場，切片外探索）
+
+使用者用 `/grill-with-docs` 討論後定案（完整決策記錄 + 術語表見新檔 `Docs/BOSS_INTRO_EXPLORATION.md`）。**這是切片外的可丟棄技術探索**，驗證「Timeline 運鏡 + Signal + 舉刀起手式」pipeline，不接入正式遊戲、不動 GreyboxTest、**不在 Build Settings**。
+
+### grilling 定案
+S1 切片外探索 / S2 3D 過場（與 Live2D 演出並行、方向未定）/ C1 用 Cinemachine 3.x / A2 舉刀起手式（不加刀鞘）/ A1 `Wushi_SwordJudgment` 前搖 / E1 最小替身 / V1 複用 flipbook + 程序合成拔刀音效 / C3 Cinemachine Impulse。
+
+### 交付
+- **場景**：`Assets/_Project/Scenes/SamuraiBossArena.unity`（深色反射地板 + 壓暗 Directional + boss 頭頂 Spot；`Wushi.fbx` 實例當 `武士` scale 2.2 / 膠囊當 `Player` + `DemoPlayerController` / 空殼 `DemoBossAI` + `DemoBossHealthBar` + `PlayerUI` canvas）。
+- **腳本**（`Assets/_Project/Game/Cutscene/`，`Live2DAction.Runtime` asmdef，皆註明探索用）：
+  - `BossTrigger` — 進 trigger（tag Player）→ `BossIntroManager.StartIntro()` + 自身 inactive。
+  - `BossIntroManager` — **泛型 disable 清單**（`Behaviour[]` / `GameObject[]` / `PlayableDirector`），`StartIntro` 關控制/UI/AI/血條 + `Play()`；`introTimeline.stopped` 或 `duration+1.5s` realtime failsafe → 全開回來 + `CM_Vcam_Gameplay` 接手。
+  - `BossSignalReceiver`（掛 `武士`）— `OnBladeDrawSignal()` → `ps.Play()` + `AudioSource.Play()` + `CinemachineImpulseSource.GenerateImpulse()`。
+  - `DemoPlayerController`（新 Input System WASD 走路）/ `DemoBossAI`（空殼，log enable/disable）。
+- **Timeline** `Assets/_Project/Timeline/BossIntro.playable`：Animation Track（`武士` Animator ← `Wushi_SwordJudgment_InPlace` clip，nt 0–0.28、0.4× 速度）/ Cinemachine Track（Brain on CutsceneCamera，**硬切** Back→Face→Action）/ Signal Track（`武士` SignalReceiver，apex ~1.3s → `BladeDraw.signal` → `OnBladeDrawSignal`）。4 台 `CinemachineCamera`（Back/Face/Action/Gameplay）。
+- **`Assets/_Project/Timeline/Wushi_SwordJudgment_InPlace.anim`** — `Wushi_SwordJudgment` 去掉 `RootT.x`/`RootT.z`/`RootQ` 曲線的副本（**`RootT.y` 保留**，否則 Humanoid pose 塌到地上）。原 FBX / GreyboxTest 戰鬥不動。
+- **`Assets/_Project/Audio/Skills/KatanaDraw.wav`** — 程序合成金屬掃頻「鏘」（比照 `GunshotSfxSetup`），可替換。
+- `Live2DAction.Runtime.asmdef` 加 `Unity.Cinemachine` + `Unity.Timeline` 參照（不採用就刪 Cutscene 資料夾 + 這兩行）。
+- **測試** `BossIntroManagerTests`（EditMode，3 個：`StartIntro` 關掉清單裡每個 behaviour/GameObject、`stopped` 全開回來、null-safe idempotent）。**243/243 綠**、零編譯錯誤/警告。
+
+### 建置踩坑（記進探索檔第八節）
+1. 「Timeline `stopped` 立即觸發」是錯覺 —— Editor 空場景 >1000fps，整段 Timeline 在兩次取樣間就跑完 + `WrapMode.None` 把 time 歸零。
+2. `Wushi_SwordJudgment` 帶 root motion，Timeline 任何 trackOffset 壓不住 → boss 播放中漂 ~1m + 沉地板。解：in-place clip 副本（只刪水平 root 曲線）。
+3. **Meshy 模型退化 SkinnedMeshRenderer bounds**（extents ~44）→ 過場相機一沒對準幻影中心 boss 就被視錐剔除消失。解：`smr.updateWhenOffscreen = true`（GreyboxTest boss / 校園 FBX 同招）。
+4. 前搖範圍 0.5→**0.28**（0.5 會播到下劈蹲身、不像起手式）。
+
+### 待微調（Scene view 拖 vcam，非決策）
+Back/Face 框景 OK；Action 廣角要拉遠、平衡玩家與 boss 比例。Editor game view 目前超寬比例（2.78），正式 16:9 框景會不同。Signal 精確幀 / shot 切點 / Impulse 振幅 / 音色 / 燈光亮度都 in-Editor 調。**待使用者手動 Play 完整跑一次**（走進 trigger）確認交接手感。
+
+## 2026-09-01 (追加92) — Boss 開場演出「轉正」接入 GreyboxTest（過場完直接開打）
+
+使用者：「開場演出完能跟 boss 對打了嗎」→「繼續做完」。把追加91 的隔離 demo 接進真正的 `GreyboxTest.unity`：走近 `武士` → 過場舉刀演出 → 交還控制的同時 boss 直接進戰鬥。完整記錄見 `Docs/BOSS_INTRO_EXPLORATION.md` §9。
+
+### 改既有腳本（3 支）
+- **`BossStateMachine.cs`** — 加 `public void ForceEngage()`：從 `Dormant`/`ReturnHome`/`GateWatch` 直接 `_hasEngaged=true` + `ChangeState(Alert)`（跟 `UpdateDormant` 進 Alert 同路徑），讓過場一結束就接敵、玩家不用再走近 `alertRange`。terminal state / 已接敵 = no-op。
+- **`BossIntroManager.cs`** — 加 `cutsceneCameraRoot`（過場 SetActive(true)/結束 (false)）、`gameplayCamera` 反向切換、`UnityEvent onIntroComplete`（`RestoreControl` 尾端 fire 一次，接 `ForceEngage`）、`_finished` 一次性旗標。`EditorConfigure` 7-arg 簽章不動（demo 的 `SamuraiBossArenaSetup` 照用）。
+- **`BossTrigger.cs`** — 加 `playerRoot` Transform：`GreyboxTest` 的 `Player` 是 Untagged，改判「碰撞體在不在 `playerRoot` 底下」；沒設才 fallback 回 tag。
+
+### 新增
+- **`Assets/Editor/Bootstrap/BossIntroGreyboxSetup.cs`** — 選單 `Tools/Live2DAction/[Boss Intro] Wire Into GreyboxTest`（可重跑、idempotent、只在 GreyboxTest 為 active scene 時執行）。在場景加 `BossRoomTrigger`（BoxCollider trigger @ z=4，`alertRange`=6 外）、`BossIntroCutsceneRig`（起始 inactive：`IntroCam` Camera depth 20 + `CinemachineBrain` Cut + `CinemachineImpulseListener` + 3 vcam）、`BossIntroManagerObject`（`PlayableDirector` + `BossIntroManager`）；在真實 `武士` 掛 `BladeDrawVFX` 子物件（`Attack3SlashEffect` 實例）+ 拔刀 `AudioSource`（`KatanaDraw.wav`）+ `CinemachineImpulseSource` + `BossSignalReceiver` + Timeline `SignalReceiver`。
+- **`Assets/_Project/Timeline/BossIntro_Greybox.playable`** — 3 軌，複用 demo 的 `Wushi_SwordJudgment_InPlace.anim` + `BladeDraw.signal`。
+- `BossIntroManagerTests` 加第 4 個測試 `OnIntroComplete_FiresExactlyOnce_EvenOnDoubleStop`。
+
+### `BossIntroManager` 接線
+`playerControlScripts`（11）= `PlayerInputProvider`/`CharacterMovement`/`PlayerCombat`/`TargetLockController`/`UltimateAbility`/`PlayerGuard`/`ExecutionAbility`（`Player`）+ `ThirdPersonCameraController`（`Main Camera`）+ `CameraPossessionSwitcher`/`ViewFocusDirector`/`SpectatorCameraToggle`（過場中它們的 LateUpdate 會硬把 `Main Camera` 開回來，必須一起關）。`playerUi` = `PlayerCornerHud`。`bossCombatAI` = 真實 `BossStateMachine`。`bossHealthBar` 留 null（`WushiBossHudVisibility` 已按 state 開關）。`cutsceneCameraRoot`/`gameplayCamera` = rig / `Main Camera`。`onIntroComplete` = serialized persistent listener → `ForceEngage`。
+
+### 驗證
+- EditMode **244/244 綠**、零編譯錯誤。
+- Play（Editor 失焦、frame frozen，只驗控制交接）：`StartIntro` → 控制關 + `Main Camera` inactive + rig active ✅；模擬 `stopped` → 控制全開回 + `Main Camera` active + rig inactive + `PlayerCornerHud` 回來 + **`boss.CurrentState == Alert`**（`ForceEngage` 有觸發）✅。
+- **待使用者在有焦點 Editor 手動 Play**：走進 trigger → 過場 3 鏡頭 + 起手式 + Signal → 跑完 → 武士追來對打。
+- `GreyboxTest.unity` 存檔照例有 ~25k 行 Live2D mesh 重序列化 churn（追加91/追加90 commit 同樣量級，非本次改動造成）。
+
+### 追加92 續 — 相機框景修正（使用者：「視角不對 只看到 boss 的頭」）
+第一版估錯 4× 武士高度（當 7m，BakeMesh 實測 **腳 y≈0.6 / 頭 y≈4.6，~4m**），vcam 擺在頭頂以上。改用 viewport 投影 + 真 `Camera.Render()` 離線截圖對照重擺：`Face` (−1.6,3.25,4.1) fov42 正面全身、`Action` (−10.5,4,5.3) fov52 廣角、`Back` (0.85,3.95,14.6) fov50 貼身過肩（`BoundaryWall_North` 在 z=15.5，武士後方只有 4m，再退就拍到牆背面）。武士 `SkinnedMeshRenderer.updateWhenOffscreen=True`（Meshy 退化 bounds，Back 機位整個 boss 被視錐剔除）。`BossIntroGreyboxSetup.cs` 常數同步更新、場景已存。
+
+## 2026-09-01 (追加93) — 近戰判定實體提示：先做攻擊版 → 同日改成防禦版
+
+使用者：「參照 boss 攻擊時刀刃紅色範圍提示一樣，把 player 的刀也附上」→ 看過後：「我不要攻擊的碰撞顯示 改成防禦」。
+
+### 第一版（`PlayerAttackHitboxVisualizer`）—— 已移除
+比照 `BossHitboxVisualizer`，重建 `PlayerCombat.ResolveActiveHit` 的即時 `Physics.OverlapCapsule` 成綠色不透明 mesh、只在 Active 窗口顯示。做出來後使用者不要 → **元件 / 選單 / 測試檔全刪**。
+
+### 定案（`PlayerGuardVisualizer`）
+- **`PlayerGuardVisualizer.cs`**（新，`_Project/Game/Combat/`）—— Player 防禦的實體提示。`PlayerGuardUtility.IsFrontalBlock` 純看**水平角度**（`transform.forward` vs 來擊方向，flatten Y）在 `PlayerGuard.GuardArcDegrees` 內，所以提示是一片**平放的扇形**（pie slice），在玩家前方沿那個弧展開，只在 `PlayerGuard.IsBlocking`（右鍵按住、非死亡/硬直）時顯示。純幾何 `BuildFanVertices(arc, range, segments)` 抽出可測；扇形雙面、`range` 2m、`height` 1.1m、**藍色**（防禦色，跟 boss 紅、玩家攻擊綠都區隔）。runtime 若改 `guardArcDegrees` 會自動重建 mesh。
+- **`PlayerGuard.cs`** —— 加 `GuardArcDegrees` 唯讀 getter。
+- **`PlayerCombat.cs`** —— 保留第一版加的 `CurrentActiveAttack` + `AttackOrigin`（下一步「刀真的 swept collider」會用到）。
+- **`PlayerGuardVisualizerSetup.cs`**（新）—— 選單 `Tools/Live2DAction/Add Player Guard Telegraph`（＋`Remove …`），加到 GreyboxTest 的 Player、存檔。已執行。順帶清掉殘留的舊 attack 元件。
+- **測試**：EditMode `PlayerGuardVisualizerTests` 3 個（apex 在原點/rim 在 range、扇形邊在 ±half-arc、segment/range clamp）。**247/247 綠**、零編譯錯誤。離線 `Camera.Render()` 截圖 `player_guard_wedge.png` 確認扇形朝向與角度對。
+- **待使用者 Play 確認**：右鍵按住時藍扇出現、朝向跟隨轉身、平放在胸高會不會太懸空（要的話改貼地或加高度漸層）。
+
+## 2026-09-01 (追加94) — 隻狼式刀刃交鋒：防禦 / 一般格擋 / 完美彈反（Phase 1a：地基）
+
+使用者完整 spec（防禦輸入、Parry/Guard 窗口、GuardVolume、Boss sweep 整合、命中結果、視聽回饋、debug）。**優先擴充既有系統，不建新血量/傷害系統**。先做稽核，再分階段。
+
+### 稽核結論（既有可用）
+`Core/Health` + `Core/IIncomingDamageModifier`（傷害前置 hook）、`Combat/StancePoise`（`AddPostureDamage(float)` 註解就寫「for a future parry system」、`DamageInfo.ExplicitPoiseAmount`）、`Combat/PlayerGuard`（右鍵格擋 + `Blocked` event）、`Combat/Boss/BossHitbox`（**已是真實 swept CapsuleCast**、`HitWindow` normalized 時間軸、`_hitTargetsThisActivation` 去重、`ActiveWindowPart`）、`Combat/HitStopController`（scene-single）、`Camera/CameraShake`（Main Camera）、`Wushi.controller` `HitReaction`/`HitFlyUpTrigger`/`PostureBreakTrigger` + `BossState.HitReaction`/`PostureBroken`。**缺口**：無防禦動畫 clip（`NewAnimator` 共用，決議純程式碼驅動窗口）、無 Hurtbox/GuardWeapon/BossWeapon layer、輸入無 press-edge。
+
+### Phase 1a 交付（純程式碼地基，尚未接 runtime 行為）
+- **`ProjectSettings/TagManager.asset`** —— 新增 3 layer：`PlayerHurtbox`(3) / `PlayerGuardWeapon`(6) / `BossWeapon`(7)。
+- **`Input/IInputCommand` + `PlayerInputProvider`** —— 加 `GuardPressedThisFrame`（右鍵 `wasPressedThisFrame`，press-edge）。default false（AI 不防禦）。
+- **`Combat/BladeClash.cs`**（新）—— `BladeClashResult` enum（None/Guarded/Parried）、`BladeClashInfo` struct（attacker/傷害/架勢/交點/攻擊方向）、`IBladeClashReceiver` interface（`TryResolveClash`）、**`BladeClashUtility`** 純函式：`Classify(guarding, frontal, inParry, inGuard)` 固定優先序、`WithinParryWindow(now, guardStartTime, dur)`（從 press-edge 起算，hold 不刷新）、`ClashCooldownElapsed`。
+- **`Combat/PlayerGuard.cs`** —— 加：press-edge 記 `_guardStartTime`（放開/崩解/死亡清 -1）、`parryWindowDuration` 0.12、`CurrentDefense` getter（None/Guard/Parry）、實作 `IBladeClashReceiver.TryResolveClash`（Parry→玩家 0 HP + Boss `AddPostureDamage(parryBossPoiseDamage 14)` + `BossStateMachine.NotifyParried()` + hitstop 0.10 + shake；Guard→玩家 `AddPostureDamage(6)` + 可選 chip + hitstop 0.05 + shake）、`Parried`/`Guarded` event（交點）、clash 冷卻 0.1s。`guardArcDegrees` 預設 150→**120**。所有數值 Inspector 公開。
+- **`AI/Boss/BossStateMachine.cs`** —— 加 `NotifyParried()`：`_forcedHitReactionPending = true`（沿用 `RequestBeHitFlyUp` 的 `HitReaction` recoil，不含 launch；架勢若因此爆表，`UpdateHitReaction` 自己會轉 `PostureBroken`）。
+- **測試** `BladeClashUtilityTests`（10，對應 spec 六情境的可單元化部分：優先序 5 種、parry 窗從 press-edge 起算/hold 不刷新、無 press、冷卻）。**257/257 綠**、零編譯錯誤。
+- `PlayerGuard.ModifyIncoming` 暫時仍軟擋所有正面命中（含刀）—— Phase 1b 接上 clash volume 後才加「刀繞過防禦打到身體 = 全額傷害」的 gate，避免半接狀態下格擋退化。
+
+### Phase 1b 交付（接上 runtime）
+- **`Combat/PlayerGuardVolume.cs`**（新）—— trigger CapsuleCollider，僅 `PlayerGuard.IsBlocking` 時啟用，自己一個**未縮放** GameObject，每 FixedUpdate（`[DefaultExecutionOrder(-50)]`，排在 BossHitbox sweep 前）重定位。`GuardRoot`/`GuardTip` = spec 的「刀根/刀尖」。**（見下方修正：改成 hand-anchor + 前方延伸的 shield zone。）**
+- **`Combat/Boss/BossHitbox.cs`** —— `SweepCheck` 擴充 `TryResolveBladeClash(hitCount)`：只在 `_activeWindow.part == Weapon` 時，掃過的 hit 找最先命中的 active guard volume；若身體明顯在 guard 前面（>0.05m）才放行身體命中（spec C「繞過防禦」），否則呼叫 `receiver.TryResolveClash(BladeClashInfo{...})`；回 `None` fall-through、非 None 則吃掉這次 sweep（`_hitTargetsThisActivation` 去重）。傷害計算抽出 `ComputeHealthDamage()`（`TryResolveHit` 也改用它）。
+- **`Combat/PlayerGuard.cs`** —— 實作 `IBladeClashReceiver.TryResolveClash`（前一則已列）；修 `_guardStartTime` sentinel `-1f`→`float.NegativeInfinity`，`BladeClashUtility.WithinParryWindow` 拿掉 `guardStartTime < 0` 特判（會誤殺 session 早期的小值，改由上界自然過濾）。
+- **`Combat/PlayerGuardAnimatorLink.cs`**（新）+ **`NewAnimator.controller`** 加 `IsGuarding` bool（Player 專用；共用 controller 的中立者1/守望者不設它）。`Parried` event → 可選 `GuardParry` trigger（param 不存在就跳過）。Phase 3 接真 clip 用。
+- **`Combat/PlayerGuardVisualizer.cs`** —— 依 `CurrentDefense` 換色：Parry 白、Guard 藍、None 隱藏。
+- **`Editor/Bootstrap/PlayerDeflectSetup.cs`**（新）—— 選單 `Tools/Live2DAction/Wire Sekiro Deflect Into GreyboxTest`（可重跑）。已執行：`PlayerHurtbox`→`PlayerHurtbox` layer、`BladeHitbox`→`BossWeapon` layer、Player 加 `GuardVolume`（追蹤 katana `BladeMesh`，local X 2..18、radius 0.13）、`PlayerGuard.guardArcDegrees=120` / `parryWindowDuration=0.12`、`PlayerGuardAnimatorLink` + `IsGuarding`。
+- **驗證**：EditMode **257/257 綠**、零編譯錯誤。Play（frame-frozen，直接呼叫 `TryResolveClash` 驗解析）：S1 按下 0.05s 內＋正面 → **Parried**、Boss 架勢 0→14、`Parried` event、`NotifyParried` 有設 `_forcedHitReactionPending`；S2 提早按住(0.5s) → **Guarded**；S3 沒防禦 → None；S4 背後命中 → None；S5 連續兩次 → 第 2 次冷卻擋掉（架勢 +0）。
+- **待使用者在有焦點 Editor 手動 Play**：實際揮刀時 sweep 抓不抓得到 guard volume（物理整合，frozen 測不了）、彈反/格擋手感、Boss `HitReaction` 反應、`guardArcDegrees=120` 是否太窄、GuardVolume 的 `bladeLocalStart/End` 覆蓋範圍。
+
+### Phase 2 交付（視聽回饋 + debug + spec C gate）
+- **`Combat/PlayerClashFeedback.cs`**（新）—— 訂閱 `PlayerGuard.Parried`/`Guarded`（帶交點），在**武器交點**（非玩家中心）放火花 + 播音效。兩階：Guard 短白黃火花 8-12 顆 + 較鈍音；Parry 亮白核心 22-30 顆 + 較脆音（pitch range 1.03-1.14 vs guard 0.90-1.02）。全 Inspector 指派（PS/clip/source/`feedbackCooldownSeconds` 0.1）—— 無硬編路徑。setup 建 `Player/ClashFeedback`（AudioSource + `GuardSparks`/`ParrySparks` 程序化 additive PS，比照 `HitEffectSetup`），兩個 clip 都接 `KatanaClash.mp3`（parry 靠 pitch 區分）。
+- **`Combat/SekiroDeflectDebug.cs`**（新，F9 切換）—— Gizmos：玩家刀根→刀尖線、`GuardVolume` capsule、正面 120° 扇形、每個 active `BossHitbox` 的上一段 translation-sweep 路徑（新增 `BossHitbox.LastSweepFrom/To/HasSwept`）、最近命中點（Parry 白/Guard 青/Hit 紅）。OnGUI：`CurrentDefense` + 最近 outcome（None/Parry/Guard/Hit）+ 點 + 幾秒前。
+- **`Combat/PlayerGuard.ModifyIncoming`** —— 加 `if (WasBossWeaponStrike(incoming)) return incoming;`：刀繞過 guard volume 打到身體 = **全額傷害**（spec C），只有踢擊等非刀正面命中才軟擋。物理步序：`PlayerGuardVolume` FixedUpdate(-50) 先定位 → `BossHitbox` sweep → `OnTriggerEnter`，所以 sweep 先攔 clash，被攔的目標進 `_hitTargetsThisActivation` 後 `OnTriggerEnter` 的身體命中會被去重擋掉。
+- **`PlayerGuardClashSfx` 退役**（.cs 留磁碟）—— 它 gated 在 `ActiveWindowPart==Weapon` 的 `Blocked`，加了 gate 後刀不再走 `Blocked` → 全 inert。setup 刪 `Player/GuardClashSfx` child，`ClashFeedback` 取代。
+- **驗證**：EditMode **257/257 綠**。Play（frozen，直接觸發 Parry）：`ParrySparks` 在交點噴 22 顆、AudioSource pitch 1.09、`SekiroDeflectDebug._lastOutcome=Parry` + 點記錄正確。
+- **待使用者手動 Play**：火花/音效手感、扇形/sweep debug 顯示、spec C（刀繞過防禦）實測。
+
+### 追加94 Phase 1b 續 — 修「玩家防禦都沒觸發（沒聽到防禦音效）」
+使用者實機回報。診斷：`GuardVolume` 第一版沿 katana `BladeMesh` 的 local 軸展開，但這支佔位刀在 rest/guard pose **朝上朝後**（`GuardTip` z=−0.67，在玩家背後），而且只有 ~1.2m、y 1.0–1.4；武士刀 sweep 一律從前方（+Z）來 → **guard volume 永遠碰不到**。而且 Phase 2 剛加的 spec-C gate 讓沒攔到的刀直接全額打身體。
+- **`PlayerGuardVolume` 改**：不再沿刀的 local 軸，改成 **hand-anchor（`WolfsGravestone` 刀柄骨，跟著手臂動）＋朝 `facing.forward` 延伸的斜向 shield zone**：`nearRise` 0.9（腰）、`reach` 1.4、`farRise` 1.6（tip 高過頭）、`radius` 0.4。實測覆蓋 y 1.7–4.1 / z −0.4–1.8 —— 夠高攔得到 4× 武士的刀。理由：這支佔位刀的 pose 不可靠，「正面 120° + 0.12s parry window」才是真正的 block gate；蠻大的正面 zone 反而是隻狼的正確手感。此偏離已記錄。
+- **驗證**：Play（frozen，手動步進 `BladeHitbox.FixedUpdate` 掃過 shield zone）：Parry swing → `Parried` event ×1、`ParrySparks` 噴、audio pitch 1.09；Guard swing → `Guarded` event ×1、`GuardSparks` 10 顆、audio pitch 0.94。**物理 sweep→clash→火花/音效 全鏈路通。** 257/257。
+- 仍待使用者實機：實際戰鬥中手感、shield zone 會不會太寬鬆（可在 `PlayerGuardVolume` Inspector 收）。
+
+### 追加94 續 2 — 使用者實機回報 3 點修正
+1. **武士的踢擊也要能彈反** —— `BossHitbox` 的 clash 路由從只認 `part==Weapon` 改成 `IsClashablePart()`（Weapon + 雙手 + 雙腳；只有 `LandingAOE` 震波和純 `Body` 不可彈）。
+2. **玩家很靠近武士時防禦碰不到攻擊** —— `PlayerGuardVolume` 從「錨在刀柄骨、朝前延伸」改成 **錨在玩家身上的 shield zone**：`nearHeight` 0.8（腰）、`backReach` 0.35（近端在胸口後方，貼身攻擊也在體積內）、`reach` 1.5、`farHeight` 3.4（遠端高過頭）、`handLean` 0.35（保留一點跟手臂偏移的感覺）、`radius` 0.45。實測 point-blank（武士 1.2m）：覆蓋 y 1.4–4.9 / z −0.7–1.9。刀 + 踢擊 point-blank 都能彈反。
+3. **攝影機視角有點晃** —— 一般格擋 `guardShakeAmplitude` 0.04→**0**（spec 只要求彈反震鏡；每次擋刀都震＝畫面抖）、`guardHitStopScale` 新欄位 = 0.4（原本用 `HitStopController` 預設 0.05＝硬凍 95%，太頓）；彈反 `parryShakeAmplitude` 0.12→0.06、`parryHitStopScale` 0.15。都 Inspector 可調，setup 一併寫入。
+- 驗證：Play（frozen，手動步進）踢擊彈反 ✓、point-blank 刀彈反 ✓、shake 值套用 ✓。**257/257**、場景已存。
+
+### 追加94 續 3 — 修「沒辦法用單點防禦按鍵彈反（隻狼 tap-deflect）」
+
+**不是使用者技術問題，是真 bug。** 舊邏輯：`CurrentDefense`/`BladeClashUtility.Classify` 都要求 `GuardPressed` **當下按著**才會考慮彈反，而且 `GuardVolume` 只在按著時啟用。玩家「輕點」（按下→馬上放開）→ 刀命中那一刻按鍵已放開 → `IsBlocking` false → 直接吃刀。
+- **`BladeClashUtility.Classify`** 簽章改 `(isFrontal, withinParryWindow, guardHeld)`：彈反**只看 press-edge 有沒有落在 window 內**，按鍵放不放開無所謂；只有持續格擋（Guard）要按著。
+- **`PlayerGuard`**：加 `InParryWindow`（純 0.18s 計時器，從 press-edge 起算，不管 hold）；`CurrentDefense` = InParryWindow→Parry / IsBlocking→Guard / else None；`Update` 放開按鍵**不再**清 `_guardStartTime`（只有死亡/硬直清）；程序化持刀 pose 在 parry window 也會 flash 一下（tap 也看得到抬刀）。
+- **`PlayerGuardVolume`**：`guard.IsBlocking || guard.InParryWindow` 時啟用（tap 也要有 volume 讓 boss sweep 抓）。
+- **`parryWindowDuration` 0.12→0.18**（~11 幀，比較打得中；spec 的 0.12 只是起點）。
+- 驗證：Play（frozen）**輕點→放開、刀 0.08s 後命中 → `Parried` ✓**；輕點太早（0.3s 前）→ None，正常吃刀 ✓；按住 0.5s → Guarded ✓。**256/256**（少 1 是合併了一個 Classify 測試）。
+
+## 2026-09-01 (追加94 Phase 3) — 防禦動畫（`防禦.zip` → Guard.fbx）
+
+使用者提供 `防禦.zip`（Meshy `Meshy_AI_Parkside_Portrait_biped` 動作，同「連續刺刀」來源）。附註「動作遊戲的防禦彈反是一瞬間的事，要考慮動作長度與彈反的適配性」。
+
+### 評估（離線 `AnimationMode` 量測）
+2.03s / 62 幀 Humanoid。**root 漂移僅 ~0.15m**（vs ContinuousThrust 的 1.5m）、**chestYaw 穩定 6–19°**（不旋身）。結構：中性 → 雙手抬到胸口（nt 0.1–0.2）→ 收到腰前雙手持握 → **穩定 hold（nt 0.5–1.0）**。剛好是 spec 的三段防禦。**可用。**
+
+### 交付
+- **`CombatAnimations/Meshy/Guard.fbx`** —— 匯入 Humanoid + `lockRootPositionXZ`（原地化）+ clip 名 `Guard`。`ASSET_LICENSES.md` 已登記（Meshy 付費方案、可 ship）。
+- **`NewAnimator.controller`** 加 Player 專用 2 state（比照 追加87 ExecuteThrust 的做法，中立者1/守望者不設參數故不受影響）：
+  - `Guard` —— Guard clip、`cycleOffset 0.5`（**直接從「收到腰前 hold」那段起播，跳過抬手 wind-up**，0.09s blend 內就到位）、非 loop（clamp 在最後一幀＝hold）；`AnyState → Guard [IsGuarding]`（不自我打斷）、`Guard → Locomotion [IsGuarding IfNot]`。
+  - `GuardParry` —— 同 clip、**`speed 2.4`**（抬手在 ~0.16s 內完成 ≈ 0.18s parry window）、one-shot、`AnyState → GuardParry [GuardParry trigger]` blend 0.03、`GuardParry → Locomotion` exitTime 0.35（還按著的話 AnyState 再抓回 Guard）。
+  - 新 trigger param `GuardParry`。
+- **`PlayerGuard`** 加 `useProceduralPose` bool（`PlayerDeflectSetup` 設 false）—— 有真 clip 後停用 `LateUpdate` 的程序化 2 骨 pose（否則兩者打架）。找不到 Guard.fbx 時 fallback 回程序化。
+- **`PlayerGuardAnimatorLink`**（既有）驅動：`IsGuarding` bool ← `guard.IsBlocking`；`Parried` event → `GuardParry` trigger。
+- **對「一瞬間」的適配**：Guard 用 `cycleOffset` 跳過 wind-up 直接到 hold；Parry 用 `speed 2.4` 壓縮成快閃、one-shot 不逗留。
+- 驗證：Play（手動步進 Animator）`IsGuarding=true → Guard state` ✓、`GuardParry trigger → GuardParry state → 回 Guard` ✓、`useProceduralPose=false` ✓。**256/256**、零編譯錯誤、場景+controller 已存。
+- **待使用者手動 Play**：hold 姿勢像不像持刀防禦、parry 快閃節奏對不對。
+
+### 追加94 Phase 3 續 — 使用者實機回報 2 點
+1. **一直按著就把手舉著、鬆開才放下** —— 原 `Guard` state 播完整 clip（會慢慢把手放下）。改成播新的**短循環 sub-clip `GuardHold`**（Guard.fbx 第 7–15 幀 = 雙手舉到胸口的峰值，`loopTime`）→ 按著手就一直舉著，鬆開才 `Guard→Locomotion`(0.15s) 放下。AnyState→Guard blend 0.14s 當「抬刀」。
+2. **點按判定不了彈反** —— 放寬：
+   - `parryWindowDuration` 0.18→**0.28**（~17 幀）
+   - 新 `tapGuardWindowSeconds` **0.55** —— 點按稍微失準（過了 parry window 但還在 0.55s 內）**仍算一般格擋**（軟擋），不會直接吃滿刀
+   - `clashCooldownSeconds` 0.1→**0.06**（多段攻擊每段各自結算得到）
+   - `GuardVolume` 啟用條件從 `IsBlocking || InParryWindow` → `IsBlocking || InTapGuardWindow`（點按後 0.55s 內 volume 都在，sweep 抓得到）
+   - `PlayerGuardAnimatorLink`：`Guarded`（非按住時）也觸發 `GuardParry` flash，所以點按格擋也有手臂動作
+- 驗證：Play（frozen）點按放開 0.10s/0.25s → **Parried**；0.40s → **Guarded**（grace）；0.70s → None；按住 → Guarded；held → Guard state 循環 `GuardHold`。**256/256**、場景+controller 已存。
+
+### 追加94 Phase 3 續 2 — Guard Collider 改回「貼刀身」（使用者明確要求，只補強判定不重做攻擊/生命）
+
+`PlayerGuardVolume` 從「錨在玩家的 shield zone」改回**貼著武士刀刀身的細膠囊**（`GuardWeapon` layer）：
+- 沿刀刃方向的 CapsuleCollider：`bladeStart` 0.12（跳過握柄）、`radius` 0.2（細）、追隨 `weaponMount`（`WolfsGravestone`）。
+- **防禦時把 `weaponMount` 轉向**（`FromToRotation` blend，`poseBlendSpeed` 12）—— 讓刀尖朝前上方（上段の構え）；放開就 blend 回、動畫接手。視覺刀跟著轉。
+- 啟用：`IsBlocking || InTapGuardWindow`（按住或點按 grace 內）+ pose weight > 0.15；放開/受擊/崩解/死亡即關。
+- `OnDrawGizmos`：畫刀根→刀尖線 + 兩端 wire sphere + 正面 120° 錐，依狀態變色（灰=關/藍=Guard/白=Parry）。
+- Inspector：`bladeStart`/`bladeEnd`/`radius`/`bladeRise`/`poseBlendSpeed`/`drawGizmo`；角度在 `PlayerGuard.guardArcDegrees`。
+
+**⚠️ 一個必要偏離**：`bladeEnd` = **3.2m**（遠超視覺刀身 ~0.9m）、`bladeRise` 2.6（刀近乎垂直向上）。原因：**4× 武士的刀刃有效幀落在世界 y≈2.5–4.5 的柱狀範圍**（正常身高玩家的頭頂上方），真刀身長度的 collider 物理上搆不到。這條 collider 是「沿刀刃方向、細、隨武器+動畫」（符合 spec 精神），只是**比視覺刀長很多**。等**武士刀刃攻擊的 hit window 重新對準玩家高度**（改 `BossAttackDefinition`，非重做攻擊）後就能收成真刀長。
+
+- **BossHitbox** 不變（既有刀根→刀尖 sweep，`TryResolveBladeClash` 已優先檢測 guard volume；`IsClashablePart` = 刀+手+腳）。命中 → 交點火花 + `KatanaClash.mp3` + `clashCooldownSeconds` 0.06 冷卻。
+- **驗證**（Play，乾淨場景）：正面 overhead / chest 揮刀 → **Parried** ✓；背後命中 → P=0 G=0（正常受傷）✓。**256/256**、場景已存。
+- **待使用者手動 Play**：上段舉刀姿勢觀感、彈反命中率、`bladeRise`/`bladeEnd` 微調（`PlayerGuardVolume` Inspector）。
+
+### 追加94 Phase 3 續 3+4 — Guard Collider 拉鋸戰的結論：改回「守備範圍體積」
+
+**續 3（已 revert）**：試著把 4 個 `Wushi_Attack_*.asset` 的 `hitWindows` nt 值重新對準玩家高度，讓 Guard Collider 能收成貼刀身。用離線 `AnimationMode` 量測 —— 但這些 Meshy 攻擊 clip 帶 root motion，離線 sampler 的 XZ/rotation 偏移讓量測不可信，且 `Wushi_Attack_DoubleCombo` 的 designNotes 早就寫過「clip 起點在 root 後方 ~3 units、`useRootMotion=0` 下刀刃連身體都勉強打得到」。→ **4 個 window 值全部 `git checkout` 還原**（原值是 2026-08-26 相對 root 正確量測過的）。
+
+**續 4（定案）**：`PlayerGuardVolume` 從「貼刀身細膠囊」改回**錨在玩家的守備範圍膠囊**（`nearHeight` 0.9 / `backReach` 0.35 / `reach` 1.5 / `farHeight` 3.4 / `handLean` 0.35 / `radius` 0.45，覆蓋 rel-y 0.5–3.9）。
+- **原因**：4× 武士的刀刃攻擊**連打到玩家身體都是勉強的**（Meshy clip「起點在 root 後方」的老問題），一條貼刀身的細 collider 完全攔不到頭頂砸下來的攻擊。用真實 trajectory（從唯一一次可信的 real-FSM 量測：刀刃 rel-y 1.5–3.5、rel-z −0.5–0、砸在玩家頭上）測 → shield zone **`Parried=1`、火花 29 顆、音效 pitch 1.05 有播** ✓。
+- **保留**：`rotateWeapon`（防禦時把視覺武士刀轉成上舉朝前，看起來像持刀防禦，`bladeRise` 1.1）、`GuardWeapon` layer、`OnDrawGizmos`（刀線+球+正面錐，依狀態變色）、Inspector 全欄位。
+- **這就是「你聽不到彈反聲音」的原因**：續 2 的貼刀身 collider 太細太窄、頭頂攻擊全數穿過。改回大體積後，直接呼叫 + 真實 trajectory 測都有 Parried + 音效。
+- EditMode **256/256**、場景已存、window asset 已還原。
+- **待使用者手動 Play** 確認實機命中率；F9 debug 看藍體積 vs 紅 sweep。真的要「貼刀身精準判定」得等有正常比例的 boss + 對玩家高度校準過的攻擊。
+
+### 追加94 Phase 3 續 5 — 隻狼式「防連按」+ 彈反窗口回到 0.2s（使用者引用隻狼資料拆解）
+
+隻狼標準彈反窗 ≈ 12 幀 @60 = **0.2s**；且**反覆放開再按會逐步縮短彈反窗、最差變 0，成功彈反後恢復**。照這個設計：
+
+- `PlayerGuard.parryWindowDuration` 0.28→**0.2**（base）。
+- **`_parryScale` (0..1)**：實際彈反窗 = `parryWindowDuration × _parryScale`（`EffectiveParryWindow`）。
+  - 按下的那次若距上次按下 < `mashResetSeconds`(0.35s) → 算連按 → `_parryScale -= mashShrinkPerTap`(0.4)，下限 `minMashScale`(0=可歸零)。
+  - 不連按時 `_parryScale` 以 `mashRecoverPerSecond`(1.2/s) 回充向 1。
+  - **成功彈反** → `_parryScale` 直接回 1（`restoreScaleOnParry`）。
+- 沒抓準的連按（過了縮短後的彈反窗但還在 `tapGuardWindowSeconds` 0.55s 內）→ 一般格擋（玩家架勢 +6）—— 這就是「亂點的代價」：變擋不變彈、累積自己的架勢。
+- `SekiroDeflectDebug` OnGUI 顯示 `ParryWin: XXXms (xScale)`，連按縮短時變黃/紅。
+- 全部 Inspector 可調（`PlayerGuard` 的「Anti-mash」區）。
+
+**實測**（Play）：間隔 0.5s 按 → scale 1.0、窗 200ms；連按 4 下（0.1s 間隔）→ scale 1.0→0.6→0.22→**0**、窗 200→120→45→**0ms**；scale 0.2 時成功彈反 → 立刻回 1.0。EditMode **256/256**、場景已存。
+
+### 追加94 續 7 — 武士攻擊調整（使用者實機演藝後）
+
+1. **OverheadSlam 改為每 30 秒定時觸發**（原本在隨機池）。`BossStateMachine` 加 `periodicSlamAttack` 欄位 + `periodicSlamIntervalSeconds`(30) + `_periodicSlamTimeAccumulated`/`_periodicSlamPending`（比照 `breakdance`/`leapSlam` 的 combat-time timer pattern）+ `TryEnterPeriodicSlam()`（優先序在 breakdance/leapSlam 之後、普通攻擊之前，`BeginAttack(periodicSlamAttack)` 走一般 Attack state）。timer 在 disengage/getting-up/CancelAllPending 一併清。GreyboxTest 的 `武士`：`Wushi_Attack_OverheadSlam` 從 `normalAttackPool` 移除、接到 `periodicSlamAttack`。屁孩王共用 `BossStateMachine` 但欄位留 null → 不受影響。驗證：`TryEnterPeriodicSlam` pending 時 → `Attack` state、`_currentAttack = OverheadSlam`、pending 清、timer 歸 0。
+2. **SwordJudgment 放慢**（使用者：「快速連劈…看不見完整揮刀軌跡…很難反應」）：`Wushi.controller` 的 `Wushi_SwordJudgment` state speed **1.35 → 1.0**（clip 實際長度 2.44s → 3.30s，揮刀軌跡更看得清、反應時間 窗1 0.74s→0.97s / 窗2 1.79s→2.42s）。DoubleCombo（也是 2 窗連劈）暫時不動，待使用者確認要不要一起放慢。
+
+EditMode **256/256**、零編譯錯誤、`Wushi.controller` + GreyboxTest 場景已存。
+
+### 追加94 續 8 — 武士刀刃有效傷害幀全面收緊 + 對齊（使用者定原則）
+
+使用者定案：一般斬傷害窗 0.10–0.16s、重斬 0.14–0.20s、同一次攻擊對同目標只結算一次、彈反窗 0.20s。
+
+**「有效幀持續」= 傷害判定開啟時間**（`BossHitbox` collider 啟用 + swept CapsuleCast 掃描的那段），不是揮刀視覺時間。**「只結算一次」已內建**：`BossHitbox._hitTargetsThisActivation`（`HashSet<Transform>`，`Activate()` 清空）—— 每個 hit window activation 對每個 target root 只結算一次（傷害/格擋/彈反共用同一個去重）。多段攻擊（SwordJudgment/DoubleCombo）的每個 window 各自 activate → 各自結算一次，是刻意的連段。
+
+用 **blade-rel-Hips（去 root-drift）** 逐幀量測每招刀刃在有效幀時的高度，把 window 收到「刀刃真的掃過玩家軀幹/頭高（rel-hips y ≈ −2~+0.5）且還在移動」的那段：
+
+| 招式 | 舊 window | 新 window | 出手→命中 | 傷害窗 |
+|---|---|---|---|---|
+| SwordJudgment（重斬，speed 1.35→1.0）| 0.16-0.21 / 0.59-0.72 | **0.175-0.225 / 0.61-0.66** | 0.93s / 2.36s（前刀後 1.44s）| **165 / 165ms** |
+| DoubleCombo（一般，speed 1.4）| 0.23-0.31 / 0.60-0.66 | **0.24-0.32 / 0.61-0.68** | 0.70s / 1.23s（前刀後 0.53s）| **115 / 101ms** |
+| ChargeCut（一般，speed 1.3→**1.15**）| 0.19-0.29 | **0.21-0.28** | 0.57s（放慢後 0.53→0.57）| **124ms** |
+| OverheadSlam（重擊，speed 1.4）| 0.55-0.66 | **0.56-0.64** | 1.41s | **145ms** |
+| SpartanKick（踢擊）| — | 未動 | 0.57s | 109ms |
+
+- **舊 window 常常在刀刃還在頭頂/身後就開判定** → 這是「還沒出手就被擊退」「刀還沒落就受傷」的主因。新 window 對齊刀刃到位那一下 → 應改善。若還有殘留，`knockbackForce`（SwordJudgment 4、DoubleCombo 3）可再降。
+- `Wushi.controller`：`Wushi_SwordJudgment` speed 1.35→1.0（使用者：連劈太快看不見軌跡）、`Wushi_ChargeCut` 1.3→1.15（使用者：0.5s 偏快，給更明顯蓄力）。
+- ChargeCut 的「刀身發光/蓄力音效」telegraph = 待做（VFX）。
+- EditMode **256/256**、4 個 asset + controller + 場景已存。
+- **待使用者手動 Play**：F9 看每招有效幀時紅 sweep 是否貼在玩家身上（不再提前）；SwordJudgment 0.93s 首刀會不會太慢（想要 0.8 附近就把 speed 調 1.1）。
+
+### 未做
+ChargeCut 蓄力 telegraph VFX；一般格擋的「被推開」反應（spec B）需另一段 clip；`BeginGuard`/`EndParryWindow` Animation Event（窗口是純程式碼計時器，spec 允許）。
+
+### 追加94 續 9 — 戰鬥系統現況說明文件（給 AI 分析）
+
+使用者：「把目前 玩家 武士 物件跟所有相關戰鬥系統機制的繼續細節整理一個說明文件 我要給 ai 分析」。
+
+- 新增 `Docs/COMBAT_SYSTEM_SNAPSHOT.md`：把玩家 / 武士兩個 GameObject（階層、每個元件的場景序列化值）、傷害管線（`DamageInfo`→`Health.ApplyDamage`→`IIncomingDamageModifier`）、`StancePoise` 架勢系統、`BossHitbox` 掃掠判定 + 一次性去重、隻狼式彈反系統全套（`BladeClash.cs` / `PlayerGuard` 窗口與 anti-mash / `PlayerGuardVolume` / spec C routing / `PlayerClashFeedback` / `SekiroDeflectDebug` / Animator Guard-GuardParry state）、`BossStateMachine` 21 state + cascade + 攻擊選擇 + 週期計時器、`Wushi_Tuning` 關鍵值、武士每招 hit-window/傷害/knockback/反應時間表、三個 combat layer、`HitStop`/`CameraShake`/`Execution`/`Knockback`、以及所有已知限制（刀身級 guard 做不到、Meshy root-drift、失焦幀凍結、共用 Animator、手調值權威清單）攤平成一份參考文件。
+- 純文件，無程式/場景改動。
+- 過程中確認：`BossAttackDefinition.startupSeconds` / `recoverySeconds` 在 `BossStateMachine` 中**未被消費**（純 metadata）；真正命中時機只由 `hitWindows` normalized 區間 + clip 長度 + Animator state speed 決定（`t_接觸 ≈ 0.08 crossfade + startNormalized × clipLen ÷ stateSpeed`）。
+
+### 追加94 續 10 — 玩家左鍵揮刀音效（`9月1日.mp3` → `KatanaSwing.mp3`）
+
+使用者提供 `9月1日.mp3`（0.76s / 44.1kHz 立體聲）當左鍵攻擊音效。背景：追加85 的 `KatanaClash.mp3` 在 2026-09-01 移去做防禦/彈反刀刃碰撞聲（`PlayerClashFeedback`），左鍵揮刀從此無聲。
+
+- 匯入 `Assets/_Project/Audio/Combat/KatanaSwing.mp3`（import：forceToMono + DecompressOnLoad + PCM，同 `KatanaClash` 慣例）。
+- 新增 `PlayerAttackSfx.cs`（`Combat/`，`[RequireComponent(AudioSource)]`）：訂閱 `PlayerCombat.Hit`，每個 Active combo 段落播一次（**揮空也播**——這是刀劃過空氣的聲音，不是命中聲），隨機 pitch 0.92–1.10、volume 0.85。
+- 新增 `PlayerAttackSfxSetup.cs`（選單 `Tools/Live2DAction/Add Player Katana Attack SFX`，可重跑）：在 `Player/AttackSfx` 子物件建 3D `AudioSource`（min/max 3/45、log rolloff、blade 高度 y≈1）+ `PlayerAttackSfx`，wire `PlayerCombat` + clip，存 `GreyboxTest.unity`。
+- 已跑選單：`Player/AttackSfx` 就位、clip 0.758s mono、無編譯錯誤。
+- 場景 Player 子物件：`AttackSfx`（左鍵揮刀）＋ `ClashFeedback`（防禦/彈反刀刃碰撞）並存，各司其職。
+- **待使用者對焦 Editor Play 實聽**：左鍵連段音效節奏、與 `KatanaClash` 防禦聲是否會混淆。
+- `ASSET_LICENSES.md`：新增 `KatanaSwing.mp3` 列 + 更新 `KatanaClash.mp3` 列（用途改為防禦/彈反）。
+
+### 2026-09-01 — 外部 AI 戰鬥系統改造規格歸檔
+
+使用者提供 `Wushi_Combat_System_Engineering_Spec_v1.0.docx`（外部 AI 依 `COMBAT_SYSTEM_SNAPSHOT.md` 產出的 9 項改造工程規格，M1–M5，共 63 點）。pandoc 轉 Markdown 歸檔 `Docs/WUSHI_COMBAT_ENGINEERING_SPEC.md`，加進 `CLAUDE.md` 文件索引。9 項：1 DeflectReaction／2 Tap Guard 一致性／3 Boss 旋轉 Sweep／4 玩家武器 Sweep／5 Boss 空間位移比例／6 格擋架勢用每招 Poise／7 處決生命節點永久死亡／8 特殊招式排程＋架勢單一權威／9 最終數值調校。實作進度以本 CHANGELOG 為準。
+
+### 追加94 續 11 — spec 項目 6：一般格擋改用每招 PoiseDamage（M1）
+
+規格 §7：先前所有一般格擋固定加玩家 6 點架勢，輕斬/重劈/大招對防禦壓力幾乎一樣。改為由該招自己的 poise 決定。
+
+- `PlayerGuardUtility.GuardPoiseGain(attackPoise, guardMul, fallback)`（新純函式）：`attackPoise > 0 ? attackPoise : fallback`，再 × `guardMul`（負值 clamp 0）。
+- `PlayerGuard`：新 `[SerializeField] guardPoiseMultiplier`（預設 1，"Clash outcome - Guard" header）。
+  - Guarded 分支：`stance.AddPostureDamage(GuardPoiseGain(info.PoiseDamage, guardPoiseMultiplier, guardPlayerPoiseDamage))`——`info.PoiseDamage` 是 `BossHitbox` 已算好的 `BasePoiseDamage × window.damageMultiplier`（`BladeClashInfo` 早就帶著）。
+  - `ModifyIncoming`（踢擊軟格擋）：poise 改用 `incoming.ExplicitPoiseAmount ?? FullPoiseAmount(...)` 再過 `GuardPoiseGain`。**行為變更**：被格擋的 SpartanKick 玩家架勢 5 → 14（本來 `Amount×0.2`，現在用該招 poise 14）。
+  - 舊 flat `guardPlayerPoiseDamage`（6）降級為「該招無 poise 時的 fallback」，數值不變。
+- `PlayerDeflectSetup.cs`：重跑時寫入 `guardPoiseMultiplier = 1`。
+- **Parry 完全不變**（玩家 +0、Boss `AddPostureDamage(14)`）；血量傷害不變；FSM 不變。
+- 序列化遷移：只加一個 MonoBehaviour float 欄位，預設 1（缺欄位回落 C# 初始值）。
+- **玩家 guard-break 縮短**（2026-09-01 續）：場景 Player `StancePoise.staggerDurationSeconds` **6 → 1.2s**（原本沿用 Boss 處決僵直的 6s，但沒有東西會處決玩家；spec §7.4 建議 0.8–1.5s）。`maxStance` 100 不變。GreyboxTest 已存。精確秒數留待 spec 項目 9 調校。
+- per-window `guardPoiseMultiplier`（spec 7.2）依 spec「第一版 = 1.0」先略過。
+- 測試：`PlayerGuardUtilityTests` +3（`GuardPoiseGain`）→ **EditMode 262/262 全綠**。`PlayerGuardPlayModeTests` +2（Guarded 重招比輕招多加架勢；Parry 玩家架勢不動、Boss 架勢上升；已移除會在凍結 play 卡死的 `WaitForSeconds`，改用 `clashCooldownSeconds=0`）——MCP PlayMode runner 持續卡 `tests_running`（本專案老問題），**待使用者從 Test Runner 視窗手動跑**。
+- **待使用者 Play 測**：連續格擋 SwordJudgment（22）約 5 次觸發 guard-break（現在只僵直 1.2s）；格擋 ChargeCut（12）壓力明顯較低。
+
+### 追加94 續 12 — spec 項目 1：DeflectReaction（每個 hit-window 決定彈反是否中斷連段）（M1）
+
+規格 §2：目前每次成功彈反都 `NotifyParried()` → 強制 HitReaction，而 HitReaction 優先序高於 Attack → DoubleCombo / SwordJudgment 被彈第一刀就整招中止。改為：彈反永遠造成架勢傷害 + 火花/音效/hitstop，但**是否中斷由每個 hit-window 自己決定**。
+
+- `BladeClash.cs`：新 enum `DeflectReaction { Recoil=0, ContinueCombo=1, CancelAttack=2 }`。**Recoil=0 是舊行為**，所以所有沒設定的 window 自動維持原樣、零資產遷移。`BladeClashInfo` + `Reaction` 欄位（ctor 第 6 參數，預設 Recoil）。
+- `BossHitWindow.cs`：+ `public DeflectReaction deflectReaction = DeflectReaction.Recoil;`（`Live2DAction.Combat.Boss` 巢狀在 `Live2DAction.Combat` 下，enum 直接可見）。所有既有 15 個 `Wushi_/PW2_` 攻擊資產的 window 缺此 key → 反序列化為 0 = Recoil = 原行為。
+- `BossHitbox.TryResolveBladeClash`：把 `_activeWindow.deflectReaction` 塞進 `BladeClashInfo`。
+- `PlayerGuard.TryResolveClash` Parried 分支：`NotifyBossParried(info.Attacker, info.Reaction)` → `boss.NotifyParried(reaction)`（不再無條件 Recoil）。
+- `BossStateMachine`：`NotifyParried()` → `NotifyParried(Recoil)`；新 `NotifyParried(DeflectReaction)` switch：
+  - `ContinueCombo` → 不動 FSM，這招後續 window 照播（架勢傷害 PlayerGuard 已加；若因此爆架勢，`TryEnterPostureBroken()`（cascade 最高優先）下一幀仍會接手）。
+  - `CancelAttack` → `CancelAttackInProgress()` + 若在 Attack → `ChangeState(Idle)`。
+  - `Recoil`（default）→ `_forcedHitReactionPending = true`（原行為）。
+- 資產：**只改 2 個**——`Wushi_Attack_SwordJudgment.asset` / `Wushi_Attack_DoubleCombo.asset` 的**第 1 個 window** → `deflectReaction: 1`（ContinueCombo），第 2 個 window → `0`（Recoil，結束連段）。其餘 13 個資產不動（= Recoil）。符合 spec §2.3 表。
+- SpartanKick / ChargeCut / OverheadSlam / LeapSlam / ContinuousThrust：維持 Recoil（spec §2.3）。
+- 測試：`BladeClashUtilityTests` +3（`BladeClashInfo` 5-arg 預設 Recoil／帶明確 reaction／`BossHitWindow.deflectReaction` 預設 Recoil）。
+- **尚未編譯/測試**：Unity MCP test runner 卡在 `tests_running`（`manage_editor stop` + `clear_stuck` 都沒解，連 `refresh_unity` 都被擋）——**需使用者點一下 Unity Editor 視窗解鎖**，然後編譯 + 跑 EditMode 全套 + 2 個新 PlayMode 測試。
+- **驗收（GreyboxTest Play）**：彈 DoubleCombo 第 1 刀 → 第 2 刀仍照動畫發生；彈第 2 刀 → Boss 短後震、連段結束；第 1 刀彈反直接爆架勢 → 立即 PostureBroken、第 2 window 不啟用；一般 Guard 不觸發任何 DeflectReaction。
+
+### 追加94 續 13 — spec 項目 2：Tap Guard / GuardVolume / Animator 一致性（M1）
+
+規格 §3：`GuardVolume` 在 `IsBlocking ‖ InTapGuardWindow` 時啟用，但 Animator `IsGuarding` 只跟 `IsBlocking` → 快點放開後動畫退出防禦、膠囊還活 0.55s = **隱形格擋**。
+
+- `PlayerGuard`：新 `DefenseActionActive`（= `CanDefend && !_defenseSuppressed && (IsBlocking ‖ InTapGuardWindow)`）——**唯一**「玩家正在防禦動作中」訊號。`CurrentDefense` 改用 `PlayerGuardUtility.DefenseStateCode(InParryWindow, DefenseActionActive)`（不再看 `IsBlocking`）。`Update` 的移動減速 + 姿勢混合改讀 `DefenseActionActive`。
+- 新 `CancelDefenseAction()`：`_guardStartTime = -∞` + `_defenseSuppressed = true`（按鍵還按著也強制結束防禦；放開時自動解除）。`IsBlocking` getter 加 `_defenseSuppressed` 檢查。死亡/僵直在 `Update` 呼叫它。
+- 讀取端統一：`PlayerGuardVolume.ShouldBeActive` → `guard.DefenseActionActive`（原本自己組 `IsBlocking‖InTapGuardWindow`）；`PlayerGuardAnimatorLink` `SetBool("IsGuarding", guard.DefenseActionActive)`（原 `IsBlocking`）+ 移除「按住時不播 parry flash」的 `if (guard.IsBlocking) return`（spec §3.4：彈反成功即使按著也要播 ParryImpact）。`PlayerGuardVisualizer` / `SekiroDeflectDebug` 已讀 `CurrentDefense` → 自動跟上。
+- Execution / Ultimate 進場 → `GetComponent<PlayerGuard>()?.CancelDefenseAction()`（`ExecutionAbility.BeginExecution` / `UltimateAbility.ThrowSequence`）。
+- Animator：`NewAnimator.controller` `AnyState→Guard` 轉場 **0.14 → 0.05s**（spec §3.4：0.14s 讓大半個 0.2s 彈反窗還在抬刀）。`PlayerDeflectSetup.WireGuardStates` 常數同步。中立者1/守望者不設 `IsGuarding` → 不受影響。
+- `PlayerGuardUtility.DefenseStateCode(inParryWindow, defenseActionActive)`（新純函式，None=0/Guard=1/Parry=2）。
+- **未做（spec 項目 2 Part C，需動畫素材）**：專用上半身 AvatarMask Layer + 自製 GuardImpact / ParryImpact clip（目前 parry flash 借用 `GuardParry` state）。
+- 測試：`PlayerGuardUtilityTests` +1（`DefenseStateCode`）→ **EditMode 263/263 全綠**。`PlayerGuardPlayModeTests` +4（released tap 仍算 active defense／staggered 時 DefenseActionActive false／CancelDefenseAction 按著也生效+放開恢復），寫成凍結-play-耐受（純 getter + 反射設 `_guardStartTime`，無 `WaitForSeconds`）——MCP PlayMode runner 仍卡（本專案老問題），**待使用者從 Test Runner 視窗跑**。
+- **驗收（Play）**：快點放開 → 姿勢/減速/膠囊/UI 同幀結束；按住 2s → 前 0.2s Parry 之後 Guard；僵直中按防禦無效；後方攻擊不算 Guard/Parry。
+
+### 追加94 續 14 — MCP PlayMode test runner 卡死的真正解法（反射清 stale flag）
+
+使用者問「mcp 真的沒辦法嗎」。查出 `run_tests` 一直回 `tests_running` 的根因：上一 session 被 abort 的 PlayMode run 把 `MCPForUnity.Editor.Services.TestRunStatus._isRunning`（internal static）留在 `true`，而 `run_tests(clear_stuck)` / `manage_editor(stop)` **都不碰這個 flag**（它們只清 MCP 自己的 `TestJobManager` 記帳）。`EditorStateCache` 讀 `TestRunStatus.IsRunning` → `editor_state.tests.is_running` 卡 true → Python 端 gate 擋掉所有 `run_tests`。
+
+- **解法**（`execute_code` 反射，已驗證）：`TestRunStatus.MarkFinished()` + `TestRunnerNoThrottle.SetTestRunActive(false)` + `RestoreThrottling()` + SessionState key `TestRunnerNoThrottle_TestRunActive=false` + `TestJobManager._currentJobId=null` + `EditorStateCache.ForceUpdate()`。清完 `run_tests` 立即恢復。
+- **EditMode via MCP 現在可靠**：清完後跑 263/263 → 之後 270/270 全綠。
+- **PlayMode via MCP 仍不行**：清完後認真試一次（`init_timeout` 120s、editor 回報 focused），PlayMode 有進去、`Time.time` 有前進（這次沒凍幀），但 NUnit `[UnityTest]` 執行卡在第 1 個測試 `completed:0` 超過 5 分鐘（那些測試全是 `yield return null`）。`manage_editor(stop)` 解不開，又得反射清一次。**確認是死路 —— PlayMode 測試一律 Test Runner 視窗手動跑。**
+- 已同步 `Docs/AGENT_NOTES.md` §3。
+
+### 追加94 續 15 — spec 項目 4 第一步：`PlayerWeaponHitbox` + `WeaponSweepUtility`（M2，未接線）
+
+規格 §5：玩家近戰現在是從 Player root 發 `Physics.OverlapCapsule`（Range/Radius 0.5），視覺刀刃與命中點脫鉤。項目 4 要改成沿刀身多點 swept cast（對稱 `BossHitbox`）。**這是最低風險的第一步 —— 只做元件 + 純邏輯 + 測試，不碰 `PlayerCombat`、不碰 `AttackData`、不碰場景。**
+
+- **新增 `Combat/WeaponSweepUtility.cs`**（純 static，`Live2DAction.Combat`）：`SubdivisionCount(travel, maxSampleTravel)`（一步移動超過刀寬就細分，防快揮穿透）、`SubSegmentStart` / `SubSegmentLength`（等分子段）、`ResolveMidpoint`（無 bladeMid transform 時取 root/tip 幾何中點，spec §4.2）。
+- **新增 `Combat/PlayerWeaponHitbox.cs`**（MonoBehaviour，Player 專屬、**尚未掛任何物件**）：讀 `PlayerCombat.CurrentActiveAttack`（追加93 留的 getter）當 sweep gate；每 FixedUpdate 對刀身 root/mid/tip 三點做 prev→curr 的 `SphereCastNonAlloc`（沿用 BossHitbox 的固定 buffer 無 GC 慣例）；`_hitThisAttack` HashSet 一次揮刀對同 root 只結算一次、可命中多個不同敵人（spec §5.4）；命中走 `damageable.ApplyDamage(new DamageInfo(...))` + `IKnockbackReceiver`，鏡像 `AttackResolver`。`combat.UltimateDamageMultiplier` 照乘。green gizmo（root→tip 線 + 三點球）。
+- **已知限制**：靜止刀身（travel 0）的 zero-length SphereCast 對 initial-overlap 不可靠 —— 玩家近戰窗口短、揮刀時刀恆在動，暫不處理；真要「走上靜止刀刃」的 case 留到接線階段看 playtest。
+- **未做（下一步）**：`PlayerCombat.useSweptBladeHitbox` feature flag（預設 false，Enemy/dummy/貓/中立者維持舊 OverlapCapsule）+ setup 選單（放 BladeRoot/Mid/Tip 空物件、掛元件、GreyboxTest Player 設 flag）+ PlayMode 測試（spec §5.4 驗收表：貼近但揮外側不中 / 刀尖穿過但 root 遠仍中 / 單次揮刀一次）。
+- 測試：`WeaponSweepUtilityTests` +7（EditMode）→ **270/270 全綠**（MCP 跑過）。編譯乾淨、Console 無錯。
+- 回退：元件沒掛任何物件 = 完全 dormant；`PlayerCombat` 一行沒動。
+
+### 追加94 續 16 — spec 項目 4 第二步：接線進 `PlayerCombat` + GreyboxTest（M2）
+
+續 15 的元件現在真的接上了。
+
+- **`PlayerCombat.cs`**：新 `[SerializeField] bool useSweptBladeHitbox`（預設 **false**）+ `[SerializeField] PlayerWeaponHitbox sweptBladeHitbox`。`UseSweptBlade` = 兩者皆備。`ResolveActiveHit` 的 candidate 查詢包進 `if (UseSweptBlade) { hitPoints = 空 } else { 原 OverlapCapsule/OverlapSphere }` —— **flag off（Enemy / dummy / 中立者1-3 / 貓）逐位元不變**。swept 分支仍照跑尾段：whiff VFX（`AlwaysSpawnHitEffect`）+ `Hit` 事件（count 0，`PlayerAttackSfx` 揮刀聲照響）。`FixedUpdate` 加 `combat.isActiveAndEnabled` 檢查（貓附身時 `PlayerCombat` 停用，不從凍結的揮刀狀態繼續掃）。
+- **`PlayerWeaponHitbox.cs`**：新 optional `hitEffectPrefab` —— 命中點 spawn 共用火花（swept 版的 `PlayerCombat.hitEffectPrefab`）。per-attack `HitEffectOverride`（劍氣類）仍是 swing-level、留給 `PlayerCombat`。
+- **新選單 `PlayerWeaponHitboxSetup.cs`**（`Tools/Live2DAction/Add / Remove Player Swept Blade Hitbox`，可重跑）：在 `WolfsGravestone`（血刀 wrapper，~80x 骨骼 lossyScale）底下建 `BladeSamples/BladeRoot`+`BladeTip` 空物件 —— **世界座標放置**（沿 `-wrapper.up`，root 偏移 0.12、長 0.90），Unity 自動反推微小 localPos（避開「80x scale 甩飛 localPosition」陷阱，見 memory `player-weapon-mount`）。實測落點與可見刀刃 mesh（`defaultMaterial_2` world bounds）幾乎完全吻合（Y 0.87→1.12、Z 0.10→0.84）。掛 `Player/WeaponHitbox`（`PlayerWeaponHitbox`），wire combat / attackerRoot=Player / bladeRoot / bladeTip / 共用火花；`PlayerCombat.useSweptBladeHitbox=true` + ref。已跑，GreyboxTest 存檔（場景 +15 GO / +16 MB，含本次前既有的 deflect churn）。
+- **偏離 spec §5.3 step 8-9**：沒有「新舊並行、debug 比對」——直接 flag 切換（回退 = flag 設 false 或跑 Remove 選單，舊 `OverlapCapsule` 路徑一行沒刪）。理由：並行會製造雙重傷害/困惑，flag 本身就是 A/B 開關。
+- **`AttackData` 仍沒動**：玩家攻擊目前無 poise 概念；`PoiseDamage` / `SweepRadius` per-attack 欄位（spec §5.4 表）留待需要時再加。
+- 測試：新增 `PlayerWeaponHitboxPlayModeTests`（4 個，spec §5.4：刀尖穿過遠目標命中 / 刀揮向外側點放不中 / 單次揮刀對同目標一次 / 一次揮刀命中兩個不同目標）—— 用 reflection 驅 `PlayerCombat` 進 Active window + `WaitForFixedUpdate` 推掃。EditMode 仍 **270/270**（`PlayerCombat` 改動有 guard，無回歸）。**PlayMode 待使用者從 Test Runner 跑**（MCP 又試一次：init timeout 120s 內連測試都沒列出來，反射清乾淨後 EditMode 照常）。
+- **待使用者 Play 驗收**：GreyboxTest 揮左鍵 → 選 `Player/WeaponHitbox` 看 green gizmo 貼在刀刃上；打武士/敵人傷害正常；`BladeRoot`/`BladeTip` 位置不對就在 hierarchy 直接拖（gizmo 即時跟）。不想用 → `Remove Player Swept Blade Hitbox`。
+
+### 追加94 續 17 — spec 項目 3：Boss 刀根/中段/刀尖旋轉 sweep（M2）
+
+規格 §4：`BossHitbox.SweepCheck` 現在只掃 collider **中心** 的平移（外加 `distance < 0.0001` 早退）。刀繞手腕旋轉時刀柄幾乎不動、刀尖掃一大弧 → 中心掃法漏掉整條刀尖弧線（追加86 那句「刀亮紅時機正確但始終沒碰撞」的殘留成因之一）。
+
+- **`BossHitbox.cs`**：新 `[SerializeField] bool useRotationalSweep`（預設 **false**）+ `bladeSweepMaxSampleTravel`（0.25，spec §4.2）。`SweepCheck` 重構：
+  - 舊中心掃法抽成 `SweepCentreShape(distance, direction, out hitCount)` —— **邏輯逐位元不變**（EditMode 270/270 驗證），只是包成回傳 bool 的方法。
+  - `useRotationalSweep && hitCollider is CapsuleCollider` → 改走 `MultiPointBladeSweep`：`CapsuleWorldEnds` 算膠囊在**上一姿勢**和**當前姿勢**的 root/mid/tip 世界座標（沿用中心掃法那套 lossyScale 縮放規則），三點各自 prev→curr 做 subdivided `SphereCastNonAlloc`（用 `WeaponSweepUtility` 的 `SubdivisionCount`/`SubSegmentStart`/`SubSegmentLength`，跟玩家 `PlayerWeaponHitbox` 同一套），依 collider 去重塞進 `_sweepHitsBuffer`。**不吃 `distance` 早退**（重點：旋轉時中心不動）。
+  - 之後的 `TryResolveBladeClash` + `TryResolveHit` 迴圈兩條路共用、完全沒動。
+  - `LastSweepFrom/To`（SekiroDeflectDebug overlay）旋轉路徑改設成刀尖弧線 chord。
+- **新選單 `BossRotationalSweepSetup.cs`**（`Tools/Live2DAction/Enable / Disable 武士 Rotational Blade Sweep`，可重跑）：只把 root 名為「武士」且有 `CapsuleCollider` 的 BossHitbox（＝ `KatanaMesh/BladeHitbox`）設 `useRotationalSweep=true`。**已跑** —— 只有那一個 hitbox 被改，屁孩王全部 + 武士的 LandingAOE/RightFoot（sphere）維持 false。GreyboxTest 存檔（+16 行，GO count 不變）。
+- **已知限制 / 偏離**：`TryResolveBladeClash` 的接觸點/最近距離估算仍用中心 delta（多點掃法下略不準，只影響火花位置）。膠囊本身很短（世界 root→tip ~1.0、r 0.32；4x 武士刀「連身體都勉強碰到」是既有問題）—— sample 弧線抓對了，長度/命中窗校準留給 spec 項目 5/9。`targetMask` 維持 `~0`（跟既有 BossHitbox 一致；追加94 已加 layer 但收窄 mask 是另一項風險，暫不動）。
+- 測試：新增 `BossHitboxRotationalSweepTests`（3 個：刀尖弧線命中兩幀間會 tunnel 的目標 / flag off 平移命中照常 / 一次啟用對同目標一次）。EditMode **270/270**（`SweepCentreShape` 抽取無回歸）。**PlayMode 待使用者從 Test Runner 跑**。
+- **待使用者 Play 驗收**：GreyboxTest 開武士戰，選 `武士/.../BladeHitbox` 看 SekiroDeflectDebug（F9）刀尖 sweep 線；旋轉刀招（SwordJudgment 多段斬、ChargeCut）現在刀尖掃到玩家該命中/該可彈；不想要 → `Disable 武士 Rotational Blade Sweep`。
+- **M2（項目 3+4）程式完成**。下一步 spec M3 = 項目 5（Boss scale/root-motion/clip 空間，5A 程式位移→5B scale→1→5C 精確 guard），依賴 M2 除錯資料，需先讓使用者 Play。
+
+### 追加94 續 18 — spec 項目 5 sub-step 5A：程式化攻擊位移（M3）
+
+使用者「測試過了 繼續」（M1+M2 Play 驗收通過）。5A = 全 spec 最危險項目 5 的**安全第一小步** —— **不碰 Boss scale、不碰 shared Animator**，只加程式化前衝讓 gameplay root 追上「前進位移烤進骨骼」的 clip（ChargeCut / DoubleCombo）。
+
+- **新 `Combat/Boss/BossAttackMotionProfile.cs`**（`[System.Serializable]`）：`moveStart/EndNormalized`、`forwardDistance`（0＝關，預設）、`movementCurve`（EaseInOut）、`stopOnDeflectRecoil`。`TravelFraction01(normalized)` 純函式 —— 窗外 clamp 0/1、窗內取曲線、結果 clamp 0..1。
+- **`BossAttackDefinition.cs`**：+`attackMotion`（`new BossAttackMotionProfile()`）+ `AttackMotion` getter。`forwardDistance 0` = 每個既有攻擊逐位元不變（缺 key 反序列化成 C# 預設，`HasDisplacement` false）。
+- **`BossStateMachine.cs`**：
+  - `BeginAttack`：若 `attack.AttackMotion.HasDisplacement` → 鎖 `_attackMotionOrigin` + `_attackMotionDir`（flat 朝目標，或 `transform.forward`）—— **不無限追蹤**（spec §6.2）。`_attackMotionApplied` / `_attackMotionHalted` 歸零。
+  - `UpdateAttack`：新第一分支 —— profile 有位移 → 依 `TravelFraction01(normalized) × forwardDistance` 算該幀應到位置，換成 `_horizontalVelocity`（`ApplyMotion` 照舊 `× dt` 消化）。取代原「plants feet / creep」（互斥）。`useRootMotion` 攻擊不走這條。
+  - `NotifyParried(Recoil)`：若 `stopOnDeflectRecoil` → `_attackMotionHalted = true`（剩下的衝刺凍結，不滑穿玩家）。
+  - `EndAttack` / `CancelAttackInProgress`：reset。terminal state（DodgeCounter/LeapSlam/PostureBroken/Dead/…）本來就 `_horizontalVelocity=0` + 只有 `BossState.Attack` 跑 `UpdateAttack`，安全。
+- **新選單 `BossAttackMotionSetup.cs`**（`Set / Clear ChargeCut Attack Lunge (5A)`）：只給 `Wushi_Attack_ChargeCut` 寫起始 profile（`forwardDistance 5.5`、`0.38-0.92`、EaseInOut）—— 該 clip designNotes 白紙黑字「hips 前進 ~6 units、刀尖落在靜止 boss 前方 6-8m」。**已跑**，只有 ChargeCut 一個資產改。**DoubleCombo 留 inert**（它的 clip 是「起點在 root 後方 3 units 往前追」，反方向，硬推前衝會更糟 —— 留給使用者 Play 後在 Inspector 調）。
+- 數值是起始值，`forwardDistance` / `moveStart` / `moveEnd` 全在資產 Inspector，Play 後調。
+- 測試：`BossAttackMotionProfileTests` +6（EditMode）→ **276/276 全綠**（`BossStateMachine` 改動無回歸）。5A 的整合面（boss 真的衝過去）**待使用者 Play**。
+- **待使用者 Play 驗收**：開武士戰引 ChargeCut → boss 下砍後身體跟著往前衝（不再原地、刀尖不再打空 6m 外）；彈反第一刀 → 衝刺應該停住不滑穿。不對 → `Clear ChargeCut Attack Lunge (5A)` 或 Inspector 調 `forwardDistance`。ChargeCut 第 2 段命中窗（nt 0.83-0.9，designNotes 有測量值）尚未 wire —— 想接就在資產加一個 hitWindow。
+- **⚠️ 5B（scale 4→1 + 拆 Player/中立者/守望者共用 Animator）+ 5C（精確刀身 guard）各自需要另外的完整風險摘要 + 明確確認才做** —— 那才是項目 5 的大頭（spec 13 點、明訂拆兩段）。
+
+### 追加94 續 19 — spec 項目 7：處決生命節點 + 永久死亡（M4）
+
+使用者「先做 c」（跳過危險的 5B/5C，先做 M4 —— spec §11.1 說 M4 只依賴 M1）。規格 §8：`ExecutionAbility` 只扣當前血量 50% → 處決本身殺不死；武士 `permanentDeath=false` → 打死了 5 秒後自己復活。跟「處決 / Boss 戰結束」語意衝突。
+
+- **新 `Core/Execution.cs`**：`enum ExecutionOutcome {Refused, PhaseTransition, Killed}`；`interface IExecutable {CanBeExecuted / OnExecutionStarted / ResolveExecution}`；`static ExecutionNodeLogic.Deathblow(remainingBefore)` 純函式（>0→減 1 + 判斷 phase/kill，0→refused）。
+- **新 `AI/Boss/BossLifeNodeController.cs`**（`IExecutable`，掛武士）：`maxDeathblowNodes 2` / `remainingNodes 2` / `restoreHealthOnPhaseChange` / `executionWindupSeconds 1.7`。`CanBeExecuted` = 未執行中 + 有節點 + boss 在 `PostureBroken`。`OnExecutionStarted` → `boss.BeginExecutionHold()`。`ResolveExecution` → `ExecutionNodeLogic.Deathblow` → phase 轉換 or 永久死亡。`NodeConsumed` event 給未來 UI。
+- **`BossStateMachine.cs`**：
+  - `BeginExecutionHold(s)` / `EndExecutionHold()`：finisher 動畫期間凍結 `PostureBroken` 跪姿（`UpdatePostureBroken` 的「站起來」判斷加 `&& !ExecutionHoldActive`）+ `health.SetInvulnerable(this, true)`。`OnExitState(PostureBroken)` 有 safety net 解除（動畫中斷不留無敵，spec §8.3）。
+  - `DeathblowPhaseTransition(restoreHealth)`：`CancelAllPending` + `CloseAllHitboxes` + （選擇性）`health.ResetHealth` + 鎖 Phase2 + `stance.EndStagger` + 全新架勢條 + `ChangeState(GettingUp)`（沿用既有起身 i-frame）。
+  - `DeathblowFinalKill(executor)`：`_deathblowFinalKill = true` → 走傷害管線觸發 `Died`→`OnBossDied`→`Dead`；`UpdateDead` 的復活判斷改成 `if (tuning.PermanentDeath || _deathblowFinalKill) return;`。**只擋這一次死亡** —— 一般把血打到 0（非處決）仍照舊 5 秒復活（2026-08-24 明確需求不變）。
+- **`ExecutionAbility.cs`**：新 `[SerializeField] bool instantKillNonExecutableTargets`（預設 **false**）。`BeginExecution` 抓 target 的 `IExecutable`，`CanBeExecuted` → 存 `_pendingExecutable` + `OnExecutionStarted`。`ResolveExecution`：有 `_pendingExecutable` → 交給它、`return`（它自己管血量 + stagger）；否則 fallback（`instantKill` ? 當前血量全扣 : ×0.5，**預設維持 2026-08-18 的 50%**）。`EnemyExecutionAbility` **完全沒動**。
+- **新選單 `BossLifeNodeSetup.cs`**（`Add / Remove 武士 Deathblow Life Nodes (item 7)`）：只給 GreyboxTest 的**武士**掛 `BossLifeNodeController`（2 節點）。**已跑** —— 屁孩王沒掛（elite 不是戰鬥終結 boss，維持一般處決）。全部 `ExecutionAbility.instantKillNonExecutableTargets` 維持 false。GreyboxTest 存檔（GO count 不變）。
+- **行為變更聲明**：武士被處決後不再無限復活（第 1 刀處決 → Phase 2 滿血重戰、第 2 刀處決 → 永久死亡）。非處決死亡不變。普通敵人處決不變（除非翻 `instantKillNonExecutableTargets`）。
+- 測試：`ExecutionNodeLogicTests` +3（EditMode）→ **279/279 全綠**（`BossStateMachine` + `ExecutionAbility` 改動無回歸）。新增 `ExecutionAbilityRoutingTests`（3 個 PlayMode：executable target 只走 IExecutable 不吃 fallback / 非 executable 照吃 50% / executable 拒絕 → 退回 50%）—— **待使用者 Test Runner 跑**。
+- **未做（spec §8.3 剩項）**：處決期間玩家端 i-frame（boss 已在 PostureBroken 無害，暫略）；Phase transition / permanent death 的過場信號 / Boss UI 關閉（`NodeConsumed` event 是 hook，UI 另做）；Phase 2 的實際強化（目前只換 `Phase` flag + 滿血 + 新架勢條，強度靠既有 phase-scaled tuning）。
+- **待使用者 Play 驗收**：削武士架勢到爆 → 跪地 → F → 起身演出 + 滿血 Phase 2 繼續打；再削爆一次 → F → 永久倒地不復活。中途切場景/玩家死不留無敵。不想要 → `Remove 武士 Deathblow Life Nodes`。
+
+### 追加94 續 20 — spec 項目 8：特殊招式排程 + 架勢單一權威（M4）
+
+規格 §9。使用者「好」。
+
+**§9.1–9.2 特殊招式排程**：Breakdance/LeapSlam/OverheadSlam 各自 15/20/30s 計時，多個 Pending 同時到期時會依 cascade 優先序**連續幀釋放**（60s 戰鬥理論上 9 次週期特殊招式）。
+
+- **`BossStateMachine.cs`**：新 `[SerializeField] float sharedSpecialCooldownSeconds`（預設 **0 = 關 = 舊行為**）+ `_lastSpecialFireTime`。
+  - `SharedSpecialReady`（走新純函式 `SpecialScheduleUtility.SharedCooldownReady`）：`cooldown<=0` 或距上次特殊招式夠久。
+  - `TryEnterBreakdance` / `TryEnterLeapSlam` / `TryEnterPeriodicSlam`：pending 檢查後加 `if (!SharedSpecialReady) return false;`（pending 保持 armed，冷卻過了才發 —— spec §9.2「計時器只代表取得資格」）。發動時 `MarkSpecialFired()`。
+  - `TryEnterTooCloseKick`：發動時 `MarkSpecialFired()`（**占用**冷卻，防止「踢完立刻接 LeapSlam」）但**不受**冷卻 gate（安全機制恆可用）。
+  - `TryEnterUltimate`：發動時 `MarkSpecialFired()`（延後普通特殊招式，spec §9.2）。
+  - **未動**：Vanish / DodgeCounter（各有自己的 cycle / reaction gating，spec §9.2 的排程模型就是週期池 + TooCloseKick + Ultimate）。
+  - **未做**：spec §9.2 的 `Score: overdue + contextWeight...` 加權選擇 —— cascade `else if` 順序目前就是優先序，全 scoring 重寫留給項目 9 調頻階段。
+- **新 `Combat/Boss/SpecialScheduleUtility.cs`**：`SharedCooldownReady(lastFireTime, now, cooldownSeconds)` 純函式。`SpecialScheduleUtilityTests` +3。
+- **新選單 `BossSpecialCooldownSetup.cs`**（`Set / Clear 武士 Shared Special Cooldown (item 8)`）：只設**武士** = 7（spec 建議 6–10）。**已跑**，屁孩王維持 0。GreyboxTest 存檔。
+
+**§9.3 架勢單一權威 + 重複 UltimateEnergy**：
+
+- **架勢**：查證後 —— `StancePoise` **早就是**唯一權威（`CurrentStance` / `IsStaggered` / regen / grace 全在它自己的 `Update`；`BossStateMachine` 只讀值 + 呼叫 `EndStagger`/`RestoreStanceFractionAfterRecovery`，**沒有**第二套 regen 迴圈）。`BossTuning.postureRegenDelaySeconds` / `postureRegenPerSecond` 是**死欄位**（有 getter 沒人讀）→ 加 `UNUSED` 註解 + tooltip，不刪（免 Wushi_Tuning/PW2_Tuning 兩個資產 re-serialize）。
+- **重複 UltimateEnergy**：查證後 —— spec 的前提**在本專案是錯的**。玩家 root 上的兩個 `UltimateEnergy` 不是重複：`id=4541594`（Max 100，regen 5/3s）= 必殺能量（`UltimateAbility` / `UltimateReadyAura` / 角落 HUD 讀它）；`id=4541612`（Max 500，regen 30/1s，idle-delay 3）= **飛行體力**（`CharacterMovement.flightEnergy` / 飛行 HUD 讀它）。`UltimateEnergy` class header 就說它是通用可重用元件。**不動。**
+- 測試：EditMode **282/282 全綠**（`BossStateMachine` 排程改動無回歸）。整合面（兩個特殊招式不連發）**待使用者 Play**（把 `sharedSpecialCooldownSeconds` 設 7 後，戰鬥 60s 內不該看到 Breakdance→LeapSlam 貼著發）。
+- **待使用者 Play 驗收**：長時間戰鬥觀察特殊招式間隔 ≥7s；踢擊後不會立刻接 LeapSlam；`[Boss FSM]` log 看 `pending=true` 但延後發動。不想要 → `Clear 武士 Shared Special Cooldown`。
+- **M4（項目 7+8）程式完成。** 剩：M3 5B/5C（需風險簽核）、M5 項目 9（最終數值調校，依賴 M1–M4 全部完成 + 大量 Play 數據）。
+
+### 追加94 續 21 — 修「玩家完全傷害不到武士」（項目 4 swept blade bug）
+
+使用者實測回報。查出根因（兩個疊加）：
+
+1. **`PlayerWeaponHitbox._nearestPerTarget` 會被非傷害碰撞體霸佔 slot**：SphereCast 掃到武士時常同時命中武士**自己的**攻擊 hitbox（`BladeHitbox` / `RightFootHitbox` —— 這些 collider 身上沒有 `IDamageable`，Health 在 parent）。舊碼把「每個 target root 最近的 collider」存進 `_nearestPerTarget`，若最近的是那些非 hurtbox collider → 之後 `TryGetComponent<IDamageable>` 失敗 → `continue` → **整個武士被跳過、零傷害**。
+   - 修：`AccumulateSweep` 收集時就加 `if (!hit.collider.TryGetComponent(out IDamageable _)) continue;`（只認身上帶 `IDamageable` 的 hurtbox —— 跟 `AttackResolver` 同一個 gate）。武士的 `BodyHurtbox` + root `CharacterController` 都是 same-GO `IDamageable`，武士自己的攻擊 hitbox 不是。
+2. **`sweepRadius 0.12` 對 4x 武士太細**：`PlayerWeaponHitboxSetup.SweepRadius` 0.12 → **0.25**，重跑選單。
+   - 附帶查到既有 rig 問題（**不是本次造成**）：武士的 `BodyHurtbox` bounds 飄在 Y≈8–12（4x scale × 骨骼 local offset 甩上去），視覺身體在 Y 0.5–4.4。武士**目前只能透過 root `CharacterController` 受擊**（它在正確高度、same-GO 有 Health）。舊 OverlapCapsule 路徑也是靠打到 CharacterController。刀身 sweep 現在同樣打得到它。
+- 測試：`PlayerWeaponHitboxPlayModeTests` +1（`NearerNonDamageableCollider_DoesNotBlockTheHurtboxHit` —— 較近的非 damageable 子 collider 不擋後方 hurtbox）。EditMode **282/282**。**整合面待使用者 Play 確認打得到武士**。
+- **立即退路**：還是打不到 → `Remove Player Swept Blade Hitbox` 回到舊 OverlapCapsule（一行 flag，確定可用）。
+
+### 追加94 續 22 — 武士 BladeHitbox 加長到符合可見刀身 + 攻擊距離
+
+使用者：「武士的刀不夠長 或著是刀柄和刀尖連成的攻擊判定區域沒有做得很好 也沒有搭配武士的攻擊距離」。實測資料：
+
+- 武士 `BladeHitbox` CapsuleCollider 世界長度**只有 ~1.0m**（local height 0.52 × 3.2 blade lossyScale），且 center=(0,0,0) 貼在刀柄側 → 蓋在 **~3m 可見武士刀**的中間三分之一，**刀尖完全沒判定**。
+- 舊 tip 端離武士 root 只有 flat **2.84m**，但刀招 `maxDistance` 是 2.5–3.5（ChargeCut 3.0 / DoubleCombo 2.5 / OverheadSlam 3.2 / SwordJudgment 3.5）→ boss 從那些距離出手時刀根本搆不到。
+- （這也拖累 續 17 的項目 3 旋轉 sweep —— 它 sample 這個 capsule 的 root/mid/tip，capsule 只有 1m 時「刀尖 sample」根本不在真刀尖。）
+
+**修 —— 新選單 `WushiBladeHitboxSetup.cs`（`Resize 武士 Blade Hitbox To Visible Katana`，可重跑）**：每次執行時**現場量測** `KatanaMesh` renderer bounds，把 8 個角投影到 capsule 的 local 軸（dir 0），找出刀尖端／刀柄端，把 capsule 設成從「刀柄往刀尖跳過 14% 握把」到「刀尖」。已跑：
+
+- capsule `height` 0.52 → **0.862**（world **~2.76m**，原 ~1.0m）；`center.x` 0 → **0.149**；`radius` 0.1（world ~0.32m）不變。
+- 新 tip 端世界座標 Z=8.25 —— **可見刀尖在 Z=8.26，完全對上**。
+- flat dist boss-root → 刀尖端 **3.20m**（原 2.84）。ChargeCut/DoubleCombo/OverheadSlam 的 maxDistance 現在都在刀身可及範圍內（前揮時手還會往前 → 更遠）。
+- **SwordJudgment maxDistance 3.5 略超**靜止刀身 3.2 —— 它是前衝多段斬、startup 會 creep/track，實戰應搆得到；Play 若還是打空，把它的 `maxDistance` 砍到 3.2。**本次沒動任何 `Wushi_Attack_*.asset`**（它們是 `measured` 值，待 Play 數據）。
+- 純場景 + 新 editor script，無 runtime 改動。EditMode **282/282**。GreyboxTest 存檔。
+- **待使用者 Play 驗收**：F9 看武士刀紅色 sweep 線現在覆蓋整條可見刀身到刀尖；武士從中遠距出招打得到玩家；旋轉刀招（SwordJudgment/ChargeCut）刀尖弧線判定正常。不對 → 選 `武士/.../BladeHitbox` 在 Inspector 微調 capsule，或重跑選單。
+
+### 追加94 續 23 — Play 回報三修：swept blade 退回 / 貓受擊 / 凍結鍵
+
+使用者實測：「1.player 無法對任何物件造成傷害 2.cat 沒有正確受到傷害 3. 提供一個按鍵讓畫面可以直接停止(模擬 play mode stop)」。
+
+1. **玩家 swept blade 整個退回**：續 15/16/21 的 `PlayerWeaponHitbox` 在真 Play 完全打不到任何東西（凍結 play mode 下無法 debug 根因）。跑 `Remove Player Swept Blade Hitbox` → `PlayerCombat.useSweptBladeHitbox=false`、`Player/WeaponHitbox` 移除 → **回到舊 `Physics.OverlapCapsule` 路徑（確定可用）**。swept blade 全套（`PlayerWeaponHitbox` / `WeaponSweepUtility` / `PlayerWeaponHitboxSetup` / 3 個測試）留在磁碟，spec 項目 4 待日後在真 Play 前一起重做。**`BossHitbox` 旋轉 sweep（項目 3）不受影響 —— 那是武士出招用的，仍 live。**
+
+2. **貓加受擊框**：查證 —— 貓只有 root 上一顆極小 `CharacterController`（world Y ~0.5–1.3、寬 0.4）當受擊目標，4x 武士的刀/踢弧線從貓頭上掃過去。跟玩家早先的 `HurtboxLink` 修法一樣：新選單 `Add Cat Hurtbox`（`PlaytestFixesSetup.cs`）→ `Cat/CatHurtbox`（CapsuleCollider trigger r0.6 h1.9 dir Y，world Y **0.10–2.00**）+ `HurtboxLink` → 貓 `Health`。**已跑**，GreyboxTest 存檔。（傷害到 Health → `StancePoise.OnDamaged` 也照吃，架勢正常。）
+
+3. **凍結鍵**：新 `Dev/DevTimeFreeze.cs`（runtime，`Live2DAction.Dev`）—— toggle `Time.timeScale` 0↔1（模擬 Play mode stop：物理/動畫/移動全停）。`OnDisable` 保證不會卡在凍結。凍結時畫面上方顯示 "PAUSED" banner。選單 `Add Dev Time Freeze Key (Backquote)` → `DevTools/DevTimeFreeze`。
+   - 鍵位歷程：Backspace（使用者指出佔用 —— 是 `VehicleController` 翻車鍵）→ F10 → **`` ` `` Backquote**（`Key.Backquote`，鍵盤 1 左邊/Tab 上面，經典 dev console 鍵；使用者指定）。想換直接改 `DevTools/DevTimeFreeze` Inspector 的 `toggleKey`。
+
+### 追加94 續 24 — 武士出招 Console log 一致化 + Portal domain-reload 例外修掉
+
+使用者：「檢查動作名稱是對映 console，確定出招前列印出的動作是正確名稱」。
+
+- 查證：`logStateChanges` 對武士是開的。舊 log 不一致 ——
+  - 普通池 4 招：`PickAttack: chose ChargeCut (...)` + `PlayState: Wushi_ChargeCut`（兩種命名）。
+  - 定時 OverheadSlam / 貼身 SpartanKick / 派生招：**只有** `PlayState: Wushi_X`（`TryEnterPeriodicSlam`/`TryEnterTooCloseKick`/`EndAttack` 直接呼 `BeginAttack`，繞過 `PickAttack`）。
+- **`BossStateMachine.BeginAttack` 開頭加一行**：`Log($"BeginAttack: {attackId} (clip {ClipName})")` —— **每一條進攻路徑都會印**（池/派生/貼身/定時）。`attackId` 是招式本名、`ClipName` 是即將 CrossFade 的 Animator state。名稱對映確認無誤（attackId = ClipName 去掉 "Wushi_"，Animator state 同名）。
+- **LeapSlam** 走 LeapSlamWindup→LeapSlam 不經 `BeginAttack`，但本來就有 `leapSlamPending=true` / `LeapSlamWindup: charging` / `LeapSlam: teleported to...` 明確命名 —— 不動。
+- **順手修 `Portal.cs`**（**非本次 request、非我造成**）：script 在 Play 中重編譯 → domain reload 把非序列化的 `_propertyBlock` 清成 null，`Update()` 續跑 → `GetPropertyBlock` 每幀 `ArgumentNullException` 洗版。`ApplyVisualState` 加 lazy `_propertyBlock ??= new()`。這是使用者要「看乾淨 console」的直接障礙。
+- EditMode **282/282**。
+
+**武士招式名稱對照**（Console `BeginAttack: X` → 中文）：SwordJudgment=劍裁 / DoubleCombo=雙連斬 / ChargeCut=蓄力斬 / SpartanKick=斯巴達踢 / OverheadSlam=頭頂劈（定時30s）/ LeapSlam=躍擊（看 `LeapSlamWindup: charging`）。
+
+### 追加94 續 25 — 武士 moveset 調整（移除 ChargeCut / 重命名 / DoubleCombo 放慢 / LeapSlam 50s）
+
+使用者 4 項要求，全部生效、EditMode 282/282：
+
+1. **移除 ChargeCut**：`Wushi_Attack_ChargeCut.asset` + `.meta` 刪除；從 GreyboxTest 武士 `normalAttackPool` 移除（pool 4→3：SwordJudgment / SpartanKick / DoubleCombo）；刪 `Editor/Bootstrap/BossAttackMotionSetup.cs`（那個選單只服務 ChargeCut 的 5A lunge profile）。**保留在磁碟**：`Wushi_ChargeCut.fbx` + Animator state `Wushi_ChargeCut`（unwired，比照 ContinuousThrust）；`BossAttackMotionProfile` + `BossAttackDefinition.attackMotion` 欄位 + 6 個測試（通用，任何攻擊可在 Inspector 設）。
+2. **SwordJudgment → 蓄力斬（只改標籤，使用者選）**：`Wushi_Attack_SwordJudgment.asset` 的 `attackId` `SwordJudgment` → **`ChargeCut`**。clip / Animator state / 檔名 / 傷害 32 / 架勢 22 / 2 段命中窗 / maxDist 3.5 **全部不變**。查證 `attackId` 純作 log/label 用（無字串 key lookup，只有 `CatAttackPose` 比對貓自己的 id）。Console 現在會印 `[Boss FSM] BeginAttack: ChargeCut (clip Wushi_SwordJudgment)`。
+3. **DoubleCombo 兩段劈砍間隔變長**：`Wushi.controller` `Wushi_DoubleCombo` state speed **1.4 → 1.0**。命中窗（normalized 0.24-0.32 / 0.61-0.68）不動 —— speed 降 → 整個 2 段連招在真實時間拉長 ~40%，兩刀之間的停頓明顯變長（也順帶把每刀變慢、命中窗變寬、更好看/更好彈）。**若只想要「間隔」變長不想每刀變慢**，那要動 clip 本身（另一件事）。
+4. **LeapSlam 20s → 50s**：`Wushi_Tuning.leapSlamTriggerSeconds` **20 → 50**。（OverheadSlam periodicSlam 仍 30s；兩者共享 7s 冷卻不變。）
+
+- 改動檔案：`Wushi_Attack_ChargeCut.asset`(刪) / `Wushi_Attack_SwordJudgment.asset` / `Wushi.controller` / `Wushi_Tuning.asset` / `GreyboxTest.unity` / `BossAttackMotionSetup.cs`(刪)。
+- **待使用者 Play**：戰鬥不再出現 ChargeCut（原蓄力斬）；「劍裁」現在 Console 叫 ChargeCut；DoubleCombo 兩刀之間停頓變長；LeapSlam 頻率降到 50s。
+
+### 追加94 續 26 — Play 回報三修：武士能量 50s / DoubleCombo 第二刀 / 踢擊彈反
+
+1. **武士能量條 → 50 秒滿格**：查證 —— LeapSlam 觸發實際是走 `leapSlamEnergy`（= 武士 root 的 `UltimateEnergy`），**續 25 改的 `leapSlamTriggerSeconds` 是 fallback、被忽略**。該能量條 `max 100 / regen 5 每 1s` = 20s 滿。改 **`regenAmount 5 → 2`（每 1s）→ 50s 滿**。這條也是 `WushiBossHud/武士_能量` 顯示的條。
+
+2. **DoubleCombo 第二刀（左下→右上 rising cut）打不到 / 紅提醒不亮 / 彈不了**：離線量測（`AnimationMode.SampleAnimationClip`）確認 —— 第二刀命中窗（nt 0.61-0.68）時刀身在 `Y 0.14-1.71`，但更關鍵是 **clip 把角色烤成「起點在 root 後方 ~3 units、往前走」**（DoubleCombo designNotes 早記過：「hit 2 blade retracts toward the body by nt 0.67」），`useRootMotion=0` → 第二刀揮出去時可見刀身已縮回武士身邊、搆不到玩家。
+   - **修**：給 `Wushi_Attack_DoubleCombo.asset` 加 **5A `attackMotion` 前衝 profile**（續 18 的機制，續 25 刪的只是 ChargeCut 專用選單、機制還在）：`forwardDistance 2.5`、`nt 0.30-0.64`、EaseInOut。武士在兩刀之間往前衝 2.5 units，把第二刀的刀身帶回玩家距離。
+   - `stopOnDeflectRecoil` 生效：彈反第一刀（ContinueCombo）**不**停衝刺（第二刀照樣接近）；彈反第二刀（Recoil）才停。
+
+3. **踢擊（SpartanKick）不能被彈反**：**使用者猜「底盤較低」—— 量測後確認是錯的**。踢擊命中窗（nt 0.58-0.75）foot hitbox 在 `Y 1.4-3.0`，完全在 `PlayerGuardVolume` 的 Y 範圍內。真正原因：**`PlayerGuardVolume` 是一根陡峭的斜膠囊**（近玩家端低 Y~1.8、遠端高 Y~4.3，為 4x 武士的**頭頂刀招**調的）—— 水平的胸口高度踢擊只擦到膠囊最靠玩家的低端，那裡身體也在旁邊 → `TryResolveBladeClash` 的「body 比 guard 近就走 body hit」判定 bail 掉彈反。
+   - **修**：`PlayerGuardVolume` 加粗放平 —— `radius 0.45 → 0.6`、`farHeight 3.4 → 2.9`、`nearHeight 0.9 → 0.7`。膠囊變短胖、比較水平，胸口高度的水平攻擊（踢擊 / rising cut）更容易被 sweep 掃到。
+
+- 純資料改動（`Wushi_Tuning` 沒動、無 code）。EditMode **282/282**。改動：`GreyboxTest.unity`（武士 UltimateEnergy + Player GuardVolume）/ `Wushi_Attack_DoubleCombo.asset`。
+- **待使用者 Play 驗收**：(1) 武士能量條 ~50s 滿 → LeapSlam；(2) DoubleCombo 兩刀都打得到、都能彈、紅提醒都亮；(3) 踢擊能彈反。#2/#3 是幾何微調，數字可能還要再調 —— 不對回報，或 Inspector 直接改 `Wushi_Attack_DoubleCombo.attackMotion` / `Player/…/GuardVolume`。
+
+### 追加94 續 27 — SwordJudgment(蓄力斬) 第一段命中窗提前
+
+使用者：「Wushi_SwordJudgment 很難彈反，紅色判定太晚，揮刀已經進行一半了才出現，應該要蓄力剛出手就開始判定」。
+
+離線量測 `Wushi_SwordJudgment` clip（3.30s，Animator speed 1.0）刀尖軌跡：
+- nt 0.00-0.05：靜止蓄力（刀在身後 -2.0）
+- nt 0.08-0.14：**上抬 → 舉過頭**（tip Y 2.4→5.0、速度 16→36）← 「出手」在這裡
+- nt 0.17-0.20：**下劈 crash**（tip Y 4.5→1.5、速度峰值 73.6）← 真正命中
+- 舊命中窗 **0.175-0.225** 正好卡在 crash 峰值 → 玩家看到紅色時刀已經舉起+開始下劈了，反應不及。
+
+**修**：`Wushi_Attack_SwordJudgment.asset` 第一段命中窗 **0.175-0.225 → 0.09-0.23**。紅色/彈反判定現在從刀開始上抬就亮（nt 0.09 ≈ 0.30s），一路開到下劈結束（nt 0.23 ≈ 0.76s）。
+- **不會提前受傷**：nt 0.09-0.17 刀尖在 Y 3.6-5.0（舉過頭），站立玩家（身體 Y 0.3-2.1）搆不到；真正的低點傷害仍在 nt 0.20。但玩家可以在舉刀階段就 parry（guard volume 頂端 ~Y 4.4 跟舉起的刀有重疊）。
+- 第二段窗（0.61-0.66 / Recoil）不動。`deflectReaction` 第一段仍 ContinueCombo。
+- 純資產改動（`Wushi_Attack_SwordJudgment.asset` 一個）。無 code、無場景、EditMode 不受影響。
+- **仍嫌快** → 降 `Wushi.controller` 的 `Wushi_SwordJudgment` state speed（目前 1.0，可到 0.8）讓整個揮刀更慢更好讀。
+
+### 追加94 續 28 — Play 回報四修：踢擊彈反距離帶 / 粗糙格檔音 / 連續彈反 / 開場 360 運鏡
+
+1. **踢擊離太近/太遠都很難彈反**：`*Cast` 忽略「開始時就已重疊」的 collider → 貼身踢擊 foot 一開始就在 guard volume 裡 → 永遠不判成 clash、直接走 body hit。
+   - `BossHitbox.TryResolveBladeClash` 加 **`Physics.OverlapSphereNonAlloc` 探針**（`OverlapProbeRadius()` = collider 尺寸 + 0.35m）抓「hitbox 現在坐在 guard volume 裡」（距離 0、guard 贏）。
+   - `SweepCheck` 重構：hitbox 這幀幾乎沒動時，clashable window **仍跑 clash 檢查**（讓探針有機會發動），不再直接 `return`。
+2. **完美彈反音效複製 + 粗糙版**：ffmpeg `KatanaClash.mp3` → **`KatanaClash_Rough.mp3`**（0.52s、highpass 150 + lowpass 2600 悶掉金屬泛音 + acrusher grit + 壓縮 + fade）。`PlayerClashFeedback` 新 `blockClip`/`blockPitch`/`blockVolume` + 訂閱 `PlayerGuard.Blocked`（踢擊軟格檔，之前無聲）。`guardClip`+`blockClip` → rough；`parryClip` → clean。完美彈反維持清脆，一般格檔 + 踢擊格檔 = 悶悶粗糙 clank。
+3. **雙連斬連續彈反**：`PlayerGuard` 新 `comboParryGraceSeconds`（預設 **0.8s**）—— 成功彈反後這段時間內，防禦沒放下 → 下一記正面 clash **自動算 Parry**（免重新 press edge），且重按防禦**不吃 anti-mash 懲罰**。`InComboParryGrace` getter。可調（太寬降 0.5）。
+4. **武士開場 360 運鏡**：新 `Cutscene/IntroOrbitCamera.cs`（掛 boss-intro vcam，驅動自己 transform：0-2.5s 繞武士轉一圈 radius 4.6/height 3.1/起始角 200°，然後 0.7s smoothstep 拉到正面固定機位並保持）。`BossIntroGreyboxSetup` 運鏡段重寫：3 機位 → **單一 `CM_Vcam_Intro` + `IntroOrbitCamera`**；Timeline 4.35s = Cinemachine 單鏡 0-4.35s + 武士揮刀 clip（`Wushi_SwordJudgment_InPlace` nt 0-0.40、speed 0.8、start 2.3s）+ Signal（刀光）~3.3s。已跑選單，GreyboxTest 存檔。運鏡數字在 `CM_Vcam_Intro` Inspector 調。
+- 順手修 `Portal.cs`（recompile-during-Play → `_propertyBlock` null → 每幀 `ArgumentNullException` 洗版）：`ApplyVisualState` lazy init。
+- 改動：`BossHitbox.cs` / `PlayerGuard.cs` / `PlayerClashFeedback.cs` / `Portal.cs` / 新 `IntroOrbitCamera.cs` / `BossIntroGreyboxSetup.cs` / `KatanaClash_Rough.mp3` / `GreyboxTest.unity` / `BossIntro_Greybox.playable`。EditMode **282/282**。
+- **待使用者對焦 Editor Play**：(1) 踢擊各距離都彈得到；(2) 一般格檔/踢擊 = 悶聲、完美彈反 = 清脆；(3) 雙連斬第一記彈反後能順接第二記；(4) 走進 `BossRoomTrigger` → 360 環繞 2.5s → 轉正 → 武士揮刀 + 刀光 → 開打。
+
+### 追加94 續 29 — Play 回報三調：雙連斬頻率 / 架勢速度 / 僵直姿勢落地
+
+1. **雙連斬施展次數太少**：pool 3 招都 weight 1，但 DoubleCombo `maxDistance 2.5` 比 SwordJudgment(3.5) 窄 → 玩家在 2.5m 外時只出 SwordJudgment。改 **`selectionWeightPhase1/2` 1 → 2.5**、**`maxDistance` 2.5 → 3.0**（續 26 加了前衝 profile，搆得到更遠了）。
+
+2. **武士架勢條太快滿**：`maxStance` 60、玩家左鍵 25 傷 × `stanceGainMultiplier 0.2` = 5/擊、彈反 `parryBossPoiseDamage 14`/次 → ~3 次彈反或 3 套連段就爆。改 **武士 `StancePoise.maxStance` 60 → 100**（對齊玩家）+ **`PlayerGuard.parryBossPoiseDamage` 14 → 9**。約需 2 倍努力才削爆。（都是可迭代的手調值。）
+
+3. **僵直姿勢浮在空中 → 躺地板**：`Wushi_PostureKneel` 其實是 `falling_down` clip（前撲倒地）。舊 `postureKneelNormalizedTime 0.5` 把 Animator 凍結在**下墜途中**（spine 61° 半蹲、hipY 1.0）= 「浮空」。量測：nt 0.75-0.9 才真的趴平（spine 83°、hipY 0.94）。
+   - 改 **`tuning.postureKneelNormalizedTime` 0.5 → 0.78**（凍結在真的趴地那刻）。
+   - `Wushi_PostureKneel.fbx` importer：`lockRootPositionXZ = true`（倒地不滑）、`lockRootRotation = true` + `keepOriginalOrientation = true`（把倒地旋轉烤進 pose、保留武士自身朝向 → 朝面前方向倒）。
+   - `heightFromFeet` 試 true → 身體反而陷進地板（腳在空中當基準），已 revert 回 false。
+   - **待使用者 Play 確認角度**：若還是浮/陷，微調 `postureKneelNormalizedTime`（0.72-0.92 都是趴地）。**已知**：hold 結束後從趴地站起是硬 pop（沒有像 Dead→GettingUp 那樣倒放起身）—— 使用者沒抱怨這個，要的話另做。
+
+- 純資料 / import 改動（`Wushi_Attack_DoubleCombo.asset` / `Wushi_Tuning.asset` / `GreyboxTest.unity` 武士 StancePoise + Player PlayerGuard / `Wushi_PostureKneel.fbx.meta`）。無 code。EditMode **282/282**。
+
+### 追加94 續 30 — 一般格檔音效換成 `9月1日 (3).mp3`
+
+使用者提供 `9月1日 (3).mp3`（0.63s / 44.1kHz 立體聲）取代原本的一般格擋音效。
+- ffmpeg 轉 mono + 尾端 fade → `Assets/_Project/Audio/Combat/KatanaGuard.mp3`（0.68s，import：forceToMono + DecompressOnLoad + PCM）。
+- `PlayerClashFeedback.guardClip`（**一般刀刃格檔**）：`KatanaClash_Rough` → **`KatanaGuard`**。
+- 沒動：`blockClip`（踢擊軟格檔）仍 `KatanaClash_Rough`；`parryClip`（完美彈反）仍 `KatanaClash`（清脆）。
+- `ASSET_LICENSES.md` 更新。GreyboxTest 存檔，無 code、EditMode 不受影響。
+
+### 追加94 續 31 — 僵直姿勢真的貼地（程式強制拉低，不再只靠調 nt）
+
+使用者：「五適硬值時仍然是在空中躺平，而非貼齊地板表面」（續 29 只調了 `postureKneelNormalizedTime`，姿勢對了但高度還是浮）。
+
+用 `SkinnedMeshRenderer.BakeMesh` 量測真實頂點（不信任 Meshy 退化 bounds）：nt 0.78 的網格 Y span **0.17–1.87**（有肢體戳穿地板、軀幹卻還懸在半空）——`falling_down` clip 把 Hips 的高度曲線烤死在骨骼動畫裡，而武士的 **Animator 就掛在 root 本身**（沒有獨立 Visual 子物件可單獨位移），root 在 PostureBroken 期間又完全不受 CharacterController 影響 → 光調 nt 治不好，純鬼畫符式浮空。
+
+**改用程式強制拉低 root**（比照 LeapSlam 的「凍結期間跳過 CC.Move，直接寫 transform」手法）：
+- `BossTuning` 新 `postureBrokenGroundDropOffset`（預設 **0.35**，手動調校值，因為網格 bounds 不可信、只能憑肉眼調）。
+- `BossStateMachine`：kneel 凍結那一刻（`_postureKneelReached` 剛變 true 的兩個分支）呼叫 `ApplyPostureBrokenGroundDrop()` → `transform.position += Vector3.down * offset`（一次性，冪等）。
+- `ApplyMotion` 新增 guard（跟 LeapSlam 那條並列）：`CurrentState==PostureBroken && _postureBrokenDropApplied` 時**整個跳過 `_controller.Move()`**——否則 CC 每幀都會把 capsule 重新頂回地面高度、把手動下拉的效果吃掉。
+- `EndPostureBroken()` 呼叫 `RestorePostureBrokenGroundDrop()`（往上加回同樣的量），`OnExitState(PostureBroken)` 加 safety net（被 Dead 提前打斷時也一定復原，不會卡在地底）。
+- 全程式改動，`Wushi_Tuning.asset` 沒動（新欄位缺值時吃 C# 預設 0.35，資產不用重新序列化）。EditMode **282/282**。
+- **待使用者 Play 驗收角度/高度**：`postureBrokenGroundDropOffset` 是手動值，不對就在 `Wushi_Tuning` Inspector 直接調（往上/往下微調 0.05-0.1 一次）。
+- **續 31 續（2026-09-02）**：用 `SkinnedMeshRenderer.BakeMesh` 量真實骨骼位置（Hips/Spine/Head 團在世界 Y 0.91-1.09、地板 ~0.5）→ `postureBrokenGroundDropOffset` **0.35 → 0.4**（明確寫進 `Wushi_Tuning.asset`）。腳趾骨會稍陷地板一點，比整個軀幹懸空好看。
+
+### 追加94 續 32（2026-09-02）— spec 項目 9 §10.2：戰鬥數據儀表（下階段起點）
+
+工程文件 M5 = 項目 9「最終數值調校」，spec §10.2 第一步是「必須收集的指標」。之前的調校（架勢/頻率/彈反窗/音效…）全靠感覺，這次把數據收起來。
+
+- **`SekiroDeflectDebug.cs` 擴充**（既有 F9 overlay，已掛 `Player`、wire 到 `武士`）：新增 session tally——
+  - clash 結果：Parry / Guard / HitBlocking（防禦中被打）/ HitOpen（沒防被打）計數 + **ParryRate %**
+  - 武士 PostureBroken 次數 + **平均間隔秒數**（削爆節奏）
+  - 玩家 stagger 次數
+  - 雙方**累積掉血**（用 delta，復活/phase 補血不算「掉」）
+  - session 時長（從第一次事件起算）
+- `resetKey` **F8** 歸零。overlay 第 2、3 行顯示這些。
+- `Awake` 從 `boss` transform 抓 `Health`/`StancePoise`/`BossStateMachine`；PostureBroken / stagger 用 `Update` 邊緣偵測；HP 用逐幀 delta。
+- 純程式（`SekiroDeflectDebug.cs` 一個檔），無場景/資產，EditMode **282/282**。
+- **用法**：Play → F9 開 overlay → 打一場 → 看 ParryRate、削爆間隔、雙方掉血比 → F8 重來。這些數字餵給後續 spec §10.3 的調校順序（前搖→命中窗→架勢壓力→傷害→彈反窗）。
+
+**工程文件剩餘卡點**（見對話 recap）：
+- 項目 4（玩家 swept blade）——續 23 Play 完全沒傷害已退回，重做需**對焦 Editor 陪同 Play** 逐步 debug（盲改風險太高）。
+- 項目 5B/5C（Boss scale 4→1 + 拆共用 Animator + 精確刀身 guard）—— 全 spec 最高風險，需**明確簽核**才動。
+
+---
+
+### 追加94 續 33（2026-09-02）— spec 項目 5B「做法 A」：武士 gameplay root scale 4→1（幾何完全保留）
+
+使用者簽核「玩家可以正常造成傷害 請做 5B/5C」→「做A（將來完全複製一份武士做B）」。**做法 A** = 只把 gameplay root 正規化到 `localScale 1`，可見模型／骨架／刀／所有骨綁 hitbox **一格不差**；把「縮小可見武士 + 重做 clip」的重活留給未來一份完整武士副本（做法 B）。
+
+- **`Assets/Editor/Bootstrap/WushiRootScaleSetup.cs`**（新）——選單 `Tools/Live2DAction/[5B] Normalise 武士 Root Scale To 1` ＋ `[5B] Restore 武士 Root Scale To 4`。
+  - 每個 **direct child**：`localScale *= 4`（lossyScale 不變）＋ `localPosition *= 4`（相對 root 的世界位移不變）。更深層自動繼承不變的鏈。
+  - 例外：`BladeDrawVFX` 的 ParticleSystem `scalingMode = Local`（只讀自身 transform.localScale、無視階層），所以它**不乘 localScale**（乘了會大 4 倍），只乘 localPosition。
+  - `CharacterController` 的 `height/radius/center/skinWidth/minMoveDistance` 全 `*= 4`（隨 root lossyScale 縮放）；`stepOffset` 維持 0（刻意）、`slopeLimit` 是角度不動。
+  - idempotent + 可逆：Normalise 只在 root ≠ 1 時作用；Restore 放回 factor 0.25。
+- **GreyboxTest.unity 已套用並存檔**。世界量測逐項驗證前後一致：
+  - root `pos=(0,0.6,11)` `lossyScale (1,1,1)`
+  - CC world `c=(0,2.44,11) size=(0.90,3.88,0.90)`、底部 Y=0.500
+  - `RightFootHitbox c=(-0.61,0.93,11.21)`、`BladeHitbox c=(-1.39,2.03,9.57) size=(1.03,1.16,2.66)`（`lossyScale 3.2` 保留 → `BossHitbox` 膠囊縮放數學不變）
+  - `BodyHurtbox c=(0,9.78,11)`（仍是 rig 缺陷浮空，武士只能靠 root CC 受擊——不變）
+  - `LandingAOEHitbox c=(0,1.80,11) size 6`、`ChestAimPoint world=(-0.02,3.15,10.76)`、`SMR char1 c=(-0.02,2.48,11.10) size=(3.31,4.42,2.67)`
+- 純 Editor 工具 + 場景序列化值，無 runtime 程式改動。EditMode **282/282**。
+- **好處**：`transform.position` / CC / hurtbox 世界尺寸現在是可讀的公尺數（spec §6.3），也是 5C 的前置。
+- **5C 仍卡住**：需要做法 B（把可見武士縮到人身尺寸 + 依玩家身高重新校正每招 + 拆共用 Animator），留給未來完整武士副本。
+
+---
+
+### 追加94 續 34（2026-09-02）— spec 項目 9 §10.4：武士出招真實時序報表（M5 groundwork 第 2 步）
+
+使用者「5C先跳過 接下來的項目」。spec 剩下的就是項目 9（7、8 已完成，4 卡在需陪同 Play）。項目 9 §10.1 說「前 8 項穩定才能開始真正調數值」，但 §10.4 驗收條件之一是可先做的工具：**「調整 state speed 後，自動重新計算並顯示實際首次接觸與有效窗毫秒數」**。續 32 做了 §10.2 的數據儀表，這次做 §10.4 的量尺。
+
+- **`Assets/_Project/Game/Combat/Boss/BossAttackTimingUtility.cs`**（新，純靜態，Runtime asmdef）：
+  - `RealClipSeconds(clipLength, stateSpeed)` — 套 Animator state speed 後的真實秒數（speed ≤ 0 視為 1）
+  - `NormalizedToSeconds(normalized, realClipSeconds)` — normalized time → 秒
+  - `WindowMilliseconds(startN, endN, realClipSeconds)` — hit window 有效毫秒（反向/空窗 = 0）
+  - `ParryDifficultyRatio(windowMs)` — 對玩家 0.20s 彈反窗的比值（>1 好抓、<1 靠前兆撐）
+- **`Assets/Editor/Bootstrap/BossAttackTimingReport.cs`**（新）——選單 `Tools/Live2DAction/[9] 武士 Attack Timing Report`。讀每個 `Wushi_Attack_*` 定義 + `Wushi.controller` 對映的 state（`clipName` → state 名，遞迴含子 state machine）的 `speed` 與 clip 長度，印出每個 hit window 的真實 contact 秒數區間、有效 ms、parry 比值；`<-- tight vs parry` / `very wide` / `EMPTY WINDOW` 旗標。**唯讀，不改任何東西**，是 §10.3 調校順序（先 state speed + 前兆 → 再 hit window 位置 → 最後才動窗長）的量尺。任何 Animator state speed 或 `Wushi_Attack_*.asset` 窗編輯後重跑。
+- 首跑輸出（供後續調校參考）：SwordJudgment 窗 1 現在 462ms/parry ×2.31（續 27 為了「刀一起手就判定」刻意放寬）、窗 2 165ms/×0.83；DoubleCombo 227ms + 198ms；OverheadSlam 145ms/×0.72；SpartanKick 154ms/×0.77；LeapSlam AOE 728ms（旗標 very wide，本來就是 AOE 不是可彈反刺擊）。
+- `BossAttackTimingUtilityTests` +6 → EditMode **288/288**。
+- 純程式 + 純 Editor 工具，無場景/資產改動。
+- **§10.3 實際調校 pass 仍待**：需要對焦 Editor Play + F9 儀表（續 32）跑幾場收 ParryRate / 削爆間隔 / 雙方掉血 的實測數據。
+
+### 追加94 續 35（2026-09-02）— spec 項目 9 §10.3 調校 pass #1：Boss state speed（步驟 16「第一刀可讀」）
+
+使用者對焦 Editor 打了一場（F9 儀表，64s）：
+- Parry 8 / Guard 7 / HitBlocking 6 / HitOpen 7 → **ParryRate 38%**
+- 武士 PostureBreak x2（mean 17.7s）、玩家 Stagger **x0**
+- 掉血 玩家 311 / 武士 1000（武士死、玩家收在 304/500）
+
+讀數：**HitOpen 7（25% 的攻擊完全沒防就中）= 可讀性問題**（步驟 16）；PlayerStagger 0 = 玩家格擋架勢壓力太低（步驟 18，之後做）；玩家只掉 311 就打死 boss = 風險/報酬偏弱（步驟 19，之後做）。§10.3 規定照順序、先做 16。
+
+**改動（`Wushi.controller` state speed，兩個 attack）**：
+- `Wushi_OverheadSlam` **1.40 → 1.05**（spec §10.4 明講這招要「慢重擊、適合高架勢壓力」，1.40 根本不慢）。timing report：real 1.81s→**2.41s**、contact 1.01s→**1.35s**、窗 145ms→**193ms**、parry ×0.72→**×0.97**。
+- `Wushi_SpartanKick` **1.40 → 1.15**（report 一直標 "placeholder timing" ×0.77；normal pool + tooCloseAttack 兩處都用它，出招頻繁）。real 0.90s→**1.10s**、contact 0.52s→**0.64s**、窗 154ms→**187ms**、parry ×0.77→**×0.94**。
+- SwordJudgment（speed 1.0，窗1已超寬）、DoubleCombo（speed 1.0，ratio ~1.0）不動。
+
+確認：`normalAttackPool` = [SwordJudgment, SpartanKick, DoubleCombo]，**ContinuousThrust 沒在池裡**（追加89 已退，timing report 仍讀得到它的 dead state 純屬雜訊）。開場武士浮空 = LeapSlam 起跳 + LandingAOE telegraph，**不是**續 31 的姿勢浮空 bug。
+
+純 `Wushi.controller` 改動，無 code / 無場景 / 無資產。EditMode 不受影響。
+**待使用者對焦 Play 再打一場**：F8 歸零 → 開打 → 回報 (1) HitOpen 有沒有降；(2) 現在哪一招還是反應不及（講招名）；(3) ParryRate / PostureBreak 間隔 / 雙方掉血。收到數據後做步驟 17（hit window 位置）或步驟 18（玩家架勢壓力）。
+
+### 追加94 續 36（2026-09-02）— §10.3 pass #1 結果：步驟 16 收斂，等步驟 17/18 的主觀輸入
+
+續 35 改完後使用者再打一場（F9，**143s**）：
+- Parry **40** / Guard 8 / HitBlocking 12 / HitOpen 9 → **ParryRate 38% → 67%**
+- HitOpen rate 0.109/s → **0.063/s**（每秒少一半沒防中招）
+- 武士 PostureBreak x5（mean **27.3s**，前一場 17.7s）、玩家 Stagger **x0**
+- 掉血 玩家 **545** / 武士 1000（玩家這場疑似死一次、武士死）
+
+判讀：
+- **步驟 16（可讀性）基本收斂** — ParryRate 大幅上升、沒防中招砍半。OverheadSlam/SpartanKick 減速有效。
+- **PlayerStagger x0 不急著當調校缺口**：這場玩家 40 parry / 只 8 guard，根本沒 turtle；guard poise 路徑吃每招 `basePoiseDamage`（SwordJudgment 22，規格 item 6），配 `StancePoise.regenPerSecond 20`（1.5s 延遲後 5s 回滿）→ 攻擊間隔 >~2.5s 就歸零。玩家不龜就不崩，屬正常；步驟 18 待「玩家改龜縮打法會不會被崩」的實測。
+- **步驟 20（架勢節奏）**：27.3s 一次削爆對 Sekiro-like 偏慢，但 §10.3 排在後面，先不動。
+
+**這輪無改動**（純判讀 + 記錄）。等使用者回報：(1) HitOpen 現在主要哪一招打中；(2) 這場有沒有死、太硬/太拖/剛好 → 決定接步驟 17 或 19。
+
+### 追加94 續 37（2026-09-02）— §10.3 pass #2：SpartanKick 再減速 + 延遲混招減速 + 步驟 19 起手（重擊傷害拉開）
+
+使用者回報（續 36 兩問）：HitOpen 主要來自 **① SpartanKick 前踢 ② 第二段延遲混招**；手感 **「還是太簡單」**（即使掉 545、疑似死一次）。
+
+**改動：**
+1. **SpartanKick**（步驟 16 收尾）：`Wushi.controller` state speed **1.15 → 1.0**。real 1.10s→**1.27s**、contact 0.64s→**0.73s**、窗 187ms→**215ms**、parry ×0.94→**×1.08**（終於穩過 0.20s 窗）。
+2. **SwordJudgment**（延遲混招可讀性，續 27 早標過可降速）：state speed **1.0 → 0.9**。第二刀 contact 2.01s→**2.24s**、窗 165ms→**183ms**、parry ×0.83→**×0.92**。整招 real 3.30s→3.67s，起手更好讀。
+3. **步驟 19 起手（重擊 vs 輕擊拉開差距，§10.2「未防禦死亡所需命中」）**：
+   - `Wushi_Attack_SwordJudgment.baseHealthDamage` **32 → 42**（8.4% of 500）
+   - `Wushi_Attack_OverheadSlam.baseHealthDamage` **28 → 40**（8%）
+   - 輕擊不動：SpartanKick / DoubleCombo 仍各 25（= 5% of max）。現在重擊 ≈ 輕擊 ×1.7，站錯位置吃一記重劈很痛。
+   - LeapSlam 仍 500（沒閃 = 死）、poise 值全不動。
+
+`Wushi.controller`（2 state）+ 2 個 attack asset 的 `baseHealthDamage`。無 code、無場景。EditMode 不受影響。
+**待使用者對焦 Play 打一場**：F8 → 開打 → 回報 (1) SpartanKick / 延遲第二刀現在擋得到嗎；(2) 重擊變痛後還「太簡單」嗎；(3) ParryRate / PostureBreak 間隔 / 雙方掉血。若仍太簡單 → 步驟 20（武士架勢上限往上、削爆變難）＋ 檢查 phase2 是否該加壓。
+
+### 追加94 續 38（2026-09-02）— 修：武士出招站位（1.7m）幾乎貼著踢擊圓圈 → 把 SpartanKick 移出隨機招式池
+
+使用者回報：「武士靠近我進行攻擊時，範圍進入到腳底圓圈導致頻繁觸發踢擊」。澄清本意（**確認保留**「圓圈 = 玩家極限攻擊距離」的設計）：「如果玩家攻擊武士的最遠距離就一定是站在圈內的，這樣武士的踢擊才有意義，為的就是防止玩家一直近身；而武士的所有攻擊手段一定都是大於圓圈的，不然就會頻繁觸發踢擊。」
+
+實測數字：
+- 玩家 katana `MaxAttackReach` = Σ combo step `Range+Radius` = 0.5+0.5 = **1.0m**（LightAttack1–4 都是 0.5/0.5）。
+- 故 `EffectiveTooCloseDistance` = `Max(tuning.TooCloseDistance 1.6, 1.0)` = **1.6m**（圓圈其實只有 1.6m，不是先前誤判的 ~3m）。
+- `AttackReadinessDistance()`（武士 approach 停下來出招的距離）= 招式池裡**最小的 MaxDistance** → SpartanKick 的 **1.7m**。武士走到 1.7m 才停 = 只在圓圈外 0.1m，玩家稍動一下就進圈 → 每 2s 強制踢擊、打斷武士自己的招。
+
+**修（不動 `EffectiveTooCloseDistance` 邏輯，維持 `Max(1.6, playerReach)`；`BossStateMachine.cs` 只還原註解、無邏輯改動）：**
+- **把 `Wushi_Attack_SpartanKick` 從 `武士.normalAttackPool` 移除** → 池子剩 `[SwordJudgment (maxDist 3.5), DoubleCombo (maxDist 3.0)]`。`AttackReadinessDistance()` 現在 = **3.0m**，武士在圓圈外 1.4m 就停下出招，走近揮刀不再自己踩圈。
+- SpartanKick **仍是 `tooCloseAttack`**（玩家貼身滿 2s 的強制懲罰踢 + 擊退）——這正是它該有的角色，本來就不該被隨機 roll。
+- 場景改動（`武士` component 序列化陣列）＋ GreyboxTest 存檔。編譯無錯、EditMode 不受影響。
+
+先前一版（拿掉 `Max(…, MaxAttackReach)` 耦合、把圓圈固定 1.6m）方向錯誤、已完全還原——使用者要的是圓圈涵蓋玩家攻擊距離，問題在武士出招站位太近。
+**待使用者 Play 確認**：站著不動等武士過來 → 武士在 ~3m 停下揮刀、不再自己觸發踢擊；只有玩家主動走進 ~1.6m 連砍滿 2s 才吃踢擊 + 擊退。
+
+### 追加94 續 39（2026-09-02）— 武士出招後若卡在踢擊圈內 → 主動退到 standoff 再出手
+
+使用者回報：「發動 Wushi_OverheadSlam 武士會突然很接近玩家且處於踢擊範圍內」。查出 `Wushi_Attack_DoubleCombo`（招式池權重最高）帶 `attackMotion.forwardDistance 2.5` —— 從 3m 出手會前衝到離玩家 ~0.5m，之後武士停在那繼續下一招 / 觸發強制踢擊。續 38 只擋了 approach 停下距離，沒管「前衝招 / 強制招把武士自己塞進圈裡」。
+
+**修（`BossStateMachine.cs` + `BossTuning.cs`）：**
+- 新 `BossTuning.forcedAttackStandoffMargin`（預設 **0.6**，已寫進 `Wushi_Tuning.asset`）。
+- 新 `AttackStandoffFloor` = `EffectiveTooCloseDistance + forcedAttackStandoffMargin`（≈ 1.6+0.6 = 2.2m，在踢擊圈外、又低於 approach 的 ~3m readiness）。
+- **`UpdateApproach`**：新最高優先分支 —— `distance < AttackStandoffFloor` 時**往反方向退**（新 `MoveAwayFromTarget` helper，直線、不走 NavPath），把 gap 重新拉開到 standoff 才停。
+- **`UpdateIdle`**：出手前若 `distance < AttackStandoffFloor` → 直接轉 `Approach`（讓上面那條退位），不從貼身出招。
+- **`TryEnterPeriodicSlam`**：`distance < AttackStandoffFloor` 時保持 pending（不從圈內放 OverheadSlam）。
+- **`EndAttack`**：剛結束的招若帶 `AttackMotion.HasDisplacement`（= 前衝招，只有 DoubleCombo）→ 歸零 `_tooCloseTimer`，前衝拉近的距離不算「玩家貼身」，玩家有完整 2s 再決定要退還是繼續貼。
+
+淨效果：武士只從 ~2.2m 外出招；DoubleCombo 前衝進來打完 → 退回 ~2.2m → 下一招又從外面來。玩家主動走進 1.6m 連砍滿 2s 才吃踢擊（設計不變）。
+
+改 4 處（`BossStateMachine.cs`）＋ 1 新 tuning 欄位。編譯無錯。
+
+**續 39 修正（同日）— 「退開」被使用者否決**：使用者：「我要的不是退開，而是這些招數始終都能在同一個位置下打到玩家（必須是踢擊圈外，或需要調整武士刀長度和大小？）」。要的是**武士站在圈外一個固定 standoff、所有招都從那打得到**，不前衝也不後退。
+- **已還原**：`UpdateApproach` 退位分支、`UpdateIdle` 太近→Approach、`MoveAwayFromTarget` helper、`EndAttack` 的 `_tooCloseTimer` 歸零。
+- **保留**：`AttackStandoffFloor` 屬性 + `forcedAttackStandoffMargin` tuning 欄位（只剩 `TryEnterPeriodicSlam` 用作「不從圈內放週期 slam」的保險）；SpartanKick 移出 pool（續 38）。
+- **現況**：`AttackReadinessDistance()` = pool 最小 maxDistance = min(SwordJudgment 3.5, DoubleCombo 3.0) = **3.0m** → 武士本來就站 3.0m 出招（圈外）。SwordJudgment 無前衝、實戰能從 ~2.5-3m 打到 + 被彈反。**DoubleCombo 才是問題**：它自己的 designNotes 寫「clip 角色起始位置在 root 後方 ~3 單位、往前走過來」，`useRootMotion=0` 下 blade 落後、**超過 ~1.7m 就打空** → 當初加 2.5m 前衝就是為了讓它打得到。離線 AnimationMode 取樣不可靠（clip root motion 沒被 retarget 成 runtime 那樣），blade 前伸量測不出穩定值。
+- **決策待使用者選**（見對話 AskUserQuestion）：DoubleCombo 要 (A) 移出 pool、(B) 縮短前衝到剛好圈外、(C) 重烤 clip + 加長 BladeHitbox 讓它原地打得到、(D) 全域加大武士刀 hitbox。
+- **EditMode 待跑**（revert 後）。
+
+### 追加94 續 40（2026-09-02）— DoubleCombo 移除 + 全域加大武士刀 hitbox（使用者選定）
+
+使用者選：「先移除 Wushi_DoubleCombo，然後全域加大武士刀 hitbox」。
+
+**改動：**
+- **`武士.normalAttackPool` → 只剩 `[Wushi_Attack_SwordJudgment]`**（DoubleCombo 移除，前衝招不要了）。
+- `Wushi_Attack_SwordJudgment.asset`：`disallowImmediateRepeat` 1 → **0**（現在是唯一 pool 招，不能不准重複，否則 PickAttack 每隔一次回 null、武士半發呆）。SwordJudgment 的 `derivedAttack` = OverheadSlam（deriveChance P1 0.6 / P2 0.85）→ 連段仍有變化：SwordJudgment →常→ OverheadSlam。
+- **`BladeHitbox` capsule 加大**（場景 instance 上，非 prefab 本體）：`radius` 0.10→**0.14**、`height` 0.8625→**1.25**、`center.x` 0.149→**0.35**。世界尺寸：長 2.76m→**4.0m**、半徑 0.32m→**0.45m**（+45% 長、+40% 粗，且往刀尖方向外推）。SwordJudgment / 衍生 OverheadSlam / 週期 OverheadSlam 都吃這個更大的判定，從 ~3m standoff 打得到。
+- `AttackReadinessDistance()` 現在 = SwordJudgment 的 maxDistance **3.5m**（唯一 pool 成員）→ 武士站 3.5m 出招，遠在踢擊圈 1.6m 外。全部招式原地打、不前衝不後退。
+
+**副作用要注意**：`BossHitbox.TryResolveBladeClash` 的彈反探針 = `collider 尺寸 + 0.35` → hitbox 變大 = 彈反判定也變寬鬆（可能更好彈、也可能覺得太容易）。Play 時留意。
+
+`GreyboxTest.unity` 存檔 + `Wushi_Attack_SwordJudgment.asset`。編譯無錯，**EditMode 288/288 綠**。
+續 39 的「退開」程式已全部還原；保留 `AttackStandoffFloor` + `forcedAttackStandoffMargin`（只給 `TryEnterPeriodicSlam` 當保險）+ SpartanKick 移出 pool（續 38）。
+
+**待使用者 Play 確認**：(1) 武士站 ~3.5m 揮刀，SwordJudgment / OverheadSlam 都打得到、不再打空；(2) 武士不前衝、不進踢擊圈、不亂踢；(3) 彈反判定有沒有因為 hitbox 變大而變得太寬鬆；(4) 只剩一招 + 衍生 OverheadSlam 會不會太單調（要的話再加一招原地劍招）。
+
+### 追加94 續 41（2026-09-02）— 武士新增第二招式：Wushi_CrossSlash（Meshy 原地雙擊斬）
+
+使用者提供 `Meshy_AI_Parkside_Portrait_biped.zip`，要武士加入這個攻擊動作（承續 40「只剩一招會不會太單調」）。
+
+**匯入 + 量測（離線 AnimationMode.SampleAnimationClip，逐 0.01 nt 追 BladeHitbox 世界 Y / 前伸 / 速度）：**
+- clip「Scene」92 幀 / 3.03s → `Wushi_CrossSlash.fbx`（Humanoid、`keepOriginalPositionY`）。
+- **原地雙擊**（hips localZ 全程 0.4-0.7、**無前衝**，跟被移除的 DoubleCombo 相反）：
+  - 命中 1（nt 0.19-0.30）：刀從 Y 3.6 斜劈下砍到 Y 1.0，速度峰值 50 u/s @ nt 0.20，前伸 -1.3→+3.3 —— 過頭斜劈。`deflectReaction` ContinueCombo。
+  - 命中 2（nt 0.68-0.76）：前伸橫掃，reach 2.4→**4.1m** @ nt 0.68-0.71，速度峰值 44 u/s，刀在軀幹高度 —— 全 clip 最遠前伸，從 3.5m standoff 穩穩打到。`deflectReaction` Recoil。
+
+**接線：**
+- `Wushi.controller` 新 `Wushi_CrossSlash` state（speed 1.0、WD=true 對齊其他 state）。
+- `Wushi_Attack_CrossSlash.asset`（新，guid 401db810...）：attackId `CrossSlash`、maxDistance 3.5、maxAngle 65、startup 0.4 / recovery 0.55、傷害 30 / poise 20、cooldown 1.5、命中窗 nt 0.20-0.29 + 0.68-0.76（measured）、無 attackMotion / 無 useRootMotion / 無 derivedAttack、isMajorAttack 0。
+- `武士.normalAttackPool` → **[SwordJudgment, CrossSlash]**（SwordJudgment `disallowImmediateRepeat` 還原 1 → 兩招交替）。
+- timing report：CrossSlash 窗1 contact 0.61-0.88s（273ms、parry ×1.37）、窗2 2.06-2.31s（243ms、×1.21）—— 兩窗都好讀。
+- `ASSET_LICENSES.md` 新增一列（Meshy 付費輸出、可商用、可進 Build）。
+
+`GreyboxTest.unity` + `Wushi.controller` + 2 新資產 + `Wushi_Attack_SwordJudgment.asset`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 確認**：(1) 武士會交替出 SwordJudgment / CrossSlash；(2) CrossSlash 兩段都從 ~3.5m 打得到、不打空、不前衝進踢擊圈；(3) 兩段的紅光/彈反時機好不好讀；(4) 傷害 30 / poise 20 手感。
+
+### 追加94 續 42（2026-09-02）— CrossSlash Play 回報兩修：偏右 → 往左轉；紅光太晚 → 命中窗提前
+
+使用者：「Wushi_CrossSlash 攻擊比較偏右，你可能要讓武士稍微往左轉一點才能打到玩家；而且感覺兩段劈砍都是揮刀完才亮紅色。」
+
+**1. 偏右 → 新 per-attack yaw 偏移：**
+- `BossAttackDefinition` 新欄位 `facingYawOffsetDegrees`（Range -60..60，負=往左、正=往右）。套在 `faceTargetSnapOnStart` 的 snap 與 `UpdateAttackState` 每幀 `FaceTarget(trackAmount, offset)` 兩處（`FaceTarget` 加選用參數 `extraYawDegrees`）。
+- `Wushi_Attack_CrossSlash.asset`：`faceTargetSnapOnStart` 0→**1**、`facingYawOffsetDegrees` **-15**（clip 揮刀烤在角色右側，武士左轉 15° 讓正前方玩家吃到）。可在 Inspector 調。
+
+**2. 紅光太晚 → 命中窗提前**（同 SwordJudgment/OverheadSlam 的老 bug「揮刀完才紅」）：
+- 離線量測：hit 1 刀在 nt 0.14-0.18 舉在頭上、nt 0.19-0.26 才下砍；hit 2 nt 0.58-0.65 蓄、0.66-0.72 快掃。舊窗（0.20-0.29 / 0.68-0.76）卡在下砍/快掃的**中後段** → 紅光出現時揮刀已過半。
+- 新窗：hit 1 **0.13-0.28**（紅光在舉刀階段就亮）、hit 2 **0.58-0.77**（前掃一蓄就亮）。real 時序（speed 1.0）：窗1 contact 0.39-0.85s、窗2 1.76-2.33s。
+
+改 `BossAttackDefinition.cs` / `BossStateMachine.cs`（`FaceTarget` 選用參數 + 2 處套用）/ `Wushi_Attack_CrossSlash.asset`。編譯無錯。**EditMode 待跑**（使用者正在 Play）。
+**待使用者 Play 確認**：(1) CrossSlash 現在打得到正前方玩家（不夠再調 `facingYawOffsetDegrees`，-20/-25…）；(2) 兩段紅光在揮刀**前/中**就亮、來得及彈反。
+
+### 追加94 續 43（2026-09-02）— Play 回報三修：只有踢擊擊退 / CrossSlash 快一點 / 縮短出招間隔
+
+使用者三點：(1) 只有踢擊能把玩家擊退；(2) CrossSlash 銜接快一點但動作完整明顯；(3) 武士動作間隔休憩太長、出招慢，玩家來不及削架勢條。
+
+**1. 只有踢擊擊退：** `knockbackForce` → **0** 於 SwordJudgment(4→0) / CrossSlash(4→0) / OverheadSlam(4.5→0) / DoubleCombo(3→0) / LeapSlam(5→0) / ContinuousThrust(1.5→0)。**SpartanKick 維持 4.5**（唯一擊退，也是 tooCloseAttack 把玩家推出圈的機制）。玩家被劍招打中不再被推開 → 站得住、繼續輸出。
+
+**2. CrossSlash 快一點：** `Wushi.controller` `Wushi_CrossSlash` state speed **1.0 → 1.15**。real 3.03s → 2.64s，動作全程仍完整（1.15 不會糊）。timing report：窗1 contact 0.34-0.74s（396ms、×1.98）、窗2 1.53-2.03s（501ms、×2.51）—— 紅光現在都在揮刀前/中就亮。
+
+**3. 縮短出招間隔：** `Wushi_Tuning.attackRecoveryTailCutNormalized` **2（=停用）→ 0.15**（比照屁孩王 PW2_Tuning 的實證值）。武士的招現在在最後命中窗結束後 nt +0.15 就 `EndAttack`，砍掉「揮完刀慢慢站回架勢」的長尾巴：SwordJudgment 省 ~0.7s、OverheadSlam 省 ~0.5s、CrossSlash 省 ~0.4s。武士的 `globalRest`(0.05-0.15) / `majorAttackExtraRest`(0.1-0.3) / `decisionInterval`(0.05-0.12) 本來就很短，長尾巴才是主因。→ 出招頻率明顯上升 → 玩家有更多彈反/命中機會削架勢。
+
+純資料 / controller / tuning 改動，無 code（`facingYawOffsetDegrees` 的 code 在續 42）。編譯無錯。**EditMode 待跑**（使用者正在 Play；續 42 的小 code 改動也還沒補跑 runner，但編譯乾淨）。
+**待使用者 Play 確認**：(1) 只有踢擊會把你推開；(2) CrossSlash 節奏 OK、動作看得清楚；(3) 武士出招變密、架勢條削得動；(4) CrossSlash 偏右修正（-15°）夠不夠。
+
+### 追加94 續 44（2026-09-02）— Play 回報：彈反時武士動作「突然消失」/「被自身打斷」→ 全部命中窗改 ContinueCombo
+
+使用者：(1) 每個攻擊動作有被自身打斷的跡象；(2) CrossSlash 第二段被彈反時動作軌跡突然消失。
+
+根因：武士**沒有 hit-reaction / flinch clip**。`behitFlyUpClipName` 指到 `Locomotion`（blend tree），所以任何 `deflectReaction: Recoil(0)` 的命中窗被彈反 → `NotifyParried(Recoil)` → `_forcedHitReactionPending` → `TryEnterHitReaction` → `PlayState(Locomotion)` = 揮刀中途硬切回站/走姿 = 「動作軌跡突然消失」。ParryRate ~67% → 幾乎每招都會踩到 → 看起來「每個攻擊都被自身打斷」。
+
+**修：武士所有命中窗 `deflectReaction` → ContinueCombo(1)**（SwordJudgment 窗2、CrossSlash 窗2、OverheadSlam 窗1、DoubleCombo 窗2、SpartanKick 窗1；窗1 本來就多半是 1）。彈反照樣結算架勢傷害 + 火花回饋（`PlayerGuard` 那邊做的），但**不再把武士拽進壞掉的 HitReaction**——揮刀動畫自然播完，架勢削爆時才由 `TryEnterPostureBroken`（跪地 clip）接管。這也是 Sekiro-like 的正解：單次彈反不硬直，架勢條累滿才崩。
+
+純資料改動（5 個 `Wushi_Attack_*.asset` 的 hitWindows deflectReaction）。無 code。編譯無錯。
+**已知未解**：武士缺真正的受擊/彈反 flinch 動畫（`behitFlyUpClipName=Locomotion` 是佔位）——`RequestBeHitFlyUp`（大招擊飛路徑）仍會踩到同一個問題，但目前沒觸發。要「完美彈反時武士明顯一頓」得另外弄個短 flinch clip。
+**待使用者 Play 確認**：(1) 彈反 CrossSlash 第二段不再「消失」；(2) 攻擊不再像被自身打斷。若還有「被打斷」感 → 是續 43 的 `attackRecoveryTailCutNormalized 0.15` 砍尾巴砍太多（尤其 SwordJudgment→衍生 OverheadSlam 的銜接），回報就把它調到 0.25-0.3 換平順。
+
+### 追加94 續 45（2026-09-02）— 暫不做彈反動畫（招式播完再接）／硬直改新倒地 clip／匯入剪刀腳摔（尚未上場）
+
+使用者三點：(1) 先不做彈反動畫，單純讓每個動作做完再接下一個；(2) 架勢削爆硬直改用 `跌倒.zip`；(3) 加入新攻擊 `跳躍頭部剪刀腳摔.zip`。
+
+**1. 招式播完再接：** `Wushi_Tuning.attackRecoveryTailCutNormalized` **0.15 → 2**（= 停用，續 43 那次砍尾巴撤回）。武士每招現在完整播到底才 `EndAttack`。配合續 44 全 ContinueCombo（彈反不打斷），攻擊動作永遠完整。武士的 rest/decision interval 本來就 <0.15s，所以「播完立刻接」。
+
+**2. 硬直倒地 clip：** `跌倒.zip`（`falling_down`，2.27s）→ `Wushi_PostureFall.fbx`（Humanoid + `lockRootPositionXZ`/`lockRootRotation`/`keepOriginalOrientation` 原地倒）→ `Wushi.controller` 新 `Wushi_PostureFall` state。`武士.kneelStandClipName` 由 `Wushi_PostureKneel` 改指 `Wushi_PostureFall`；離線量測趴平 pose 在 nt ~0.75（spine 91°、hipsWorldY 1.06）→ `Wushi_Tuning.postureKneelNormalizedTime` 0.78 → **0.75**。`postureBrokenGroundDropOffset` 維持 0.4（新舊 clip hips 高度幾乎一樣）。舊 `Wushi_PostureKneel` state + fbx 留著沒刪。
+
+**3. 剪刀腳摔（匯入但未上場）：** `跳躍頭部剪刀腳摔.zip`（`Jumping_Head_Scissor_Takedown`，3.67s）→ `Wushi_ScissorTakedown.fbx`（Humanoid）→ `Wushi.controller` `Wushi_ScissorTakedown` state ＋ `Wushi_Attack_ScissorTakedown.asset`（跳躍 command grab：hips 前進 ~10 單位、Y 1.7→4.2 起跳→0.69 摔下，命中窗 nt 0.50-0.72，傷害 45/poise 24、useRootMotion 1、knockback 0、ContinueCombo）。
+- **未加入 `normalAttackPool`**：`useRootMotion` 需要 `武士` Animator GameObject 上有 `BossAnimatorRootMotionRelay`（屁孩王 有、**武士沒有**）＋ `applyRootMotion`；沒有的話 ~10 單位前跳的 root 位移吃不到，模型會飛出 CharacterController。武士 Animator 又直接掛在 root（同 CC），全域開 `applyRootMotion` 會影響所有現有招式。**要上場得另做**：加 relay + 比照 LeapSlam 的落點鎖定，然後陪同 Play 調前跳距離。asset/state/clip 都留著。
+
+`Wushi_Tuning.asset` / `Wushi.controller` / `GreyboxTest.unity`（kneelStandClipName）/ 2 新 fbx + 1 新 asset。編譯無錯，**EditMode 288/288 綠**。`ASSET_LICENSES.md` 更新。
+**待使用者對焦 Play 確認**：(1) 攻擊不再有「被自身打斷」感（全程完整）；(2) 架勢削爆武士倒地 pose 對不對、有沒有浮空/陷地（不對就調 `postureKneelNormalizedTime` 0.68-0.88 或 `postureBrokenGroundDropOffset`）。
+
+### 追加94 續 46（2026-09-02）— 剪刀腳摔上場：FSM 驅動的「撲向玩家」前跳（不用 root motion relay）
+
+使用者要 (1) 幫武士 Animator 加 root motion 元件 (2) 前跳鎖定玩家落下（比照 LeapSlam）(3) 陪同 Play 調距離。
+
+**改用更省風險的做法（不加 relay、不開全域 applyRootMotion）：**
+- `Wushi_ScissorTakedown.fbx` **重匯入 `lockRootPositionXZ`**（把烤進 clip 的 ~10 單位前跳位移剝掉，跳躍高度保留）。
+- 新 `BossAttackDefinition.lungeDistanceFromTargetGap`（+ `lungeTargetGapMeters` 1.4 / `lungeMaxMeters` 7）：為 true 時，`BeginAttack` 把 `attackMotion` 的位移距離**換成 commit 當下與玩家的實際水平距離 − 1.4m**（clamp 0..7），沿鎖定方向、用既有的 `attackMotion` 曲線在 nt 0.05-0.55 內走完 → **不管玩家站多遠都落在他面前 ~1.4m**。
+- `BossStateMachine`：`_attackMotionDistanceOverride` 欄位；`BeginAttack` 的 attackMotion 啟動條件加 `|| LungeDistanceFromTargetGap`；`UpdateAttack` 位移套用讀 override。
+- `Wushi_Attack_ScissorTakedown.asset`：`useRootMotion` 1→0、`lungeDistanceFromTargetGap` 1、attackMotion window 0.05-0.55、命中窗 nt 0.57-0.72（807ms→~550ms）、傷害 45/poise 24、knockback 0、ContinueCombo、weight 0.5/0.6、cooldown 7s、minDist 2 / maxDist 7。**加入 `武士.normalAttackPool`** → [SwordJudgment, CrossSlash, ScissorTakedown]。
+- `Wushi.controller` `Wushi_ScissorTakedown` state（speed 1.0，續 45 已建）。
+
+改 `BossAttackDefinition.cs` / `BossStateMachine.cs` / `Wushi_Attack_ScissorTakedown.asset` / `Wushi_ScissorTakedown.fbx.meta` / `GreyboxTest.unity`。編譯無錯，**EditMode 288/288 綠**。既有 `attackMotion`（DoubleCombo 那條）行為不變——override 只在新 flag 為 true 時生效。
+**待使用者對焦 Play 調校**：(1) `lungeTargetGapMeters` 落點距離；(2) attackMotion window nt 0.05-0.55 對不對得上畫面跳躍弧線；(3) root 釘在原地、腳只靠骨骼動畫離地，跳躍看起來 OK 嗎（不 OK 的話才需要走 relay + 真 root motion 那條路）；(4) 命中窗 nt 0.57-0.72、傷害 45。
+
+### 追加94 續 47（2026-09-02）— 三招 Meshy 動作 + 新 `cancelClipBodyDrift` 系統（治 Meshy clip 烤入位移的通病）
+
+使用者給 `武士刀前刺.zip` / `扭轉前劈.zip` / `滑行翻滾.zip` 要加入。
+
+**發現：這批 Meshy clip 有系統性問題。** 全部把「往前走好幾公尺」烤進 **Hips 肌肉動畫**（不是 root motion 曲線）——`lockRootPositionXZ` 完全無效（實測：開了鎖，身體照樣前進）。各 clip 身體前進量：ScissorTakedown 14m、SlideRoll 20m、TwistCleave 6.6m、ThrustStab 4.5m、CrossSlash 只有 0.07m（例外）。
+
+**新系統 `BossAttackDefinition.cancelClipBodyDrift`（+ `BossStateMachine`）：**
+- `Awake` 快取 `_hipsBone`（`animator.GetBoneTransform(Hips)`）。
+- 攻擊每幀：算 Hips 相對 root 的 XZ 位移，跟該招第一幀的基準比，把**增量**反向加到 `_horizontalVelocity` → 畫面身體釘住原地。delta-based，基準稍有誤差也不會累積。
+- 之後 `attackMotion` / `lungeDistanceFromTargetGap` 再加「這招真正該有的」可控前移。
+- 純加法、對沒開旗標的招零影響。
+
+**接線（`Wushi.controller` + 各自 asset + pool）：**
+- **`Wushi_Attack_ThrustStab`**（武士刀前刺，3.03s，2 段刺）：`cancelClipBodyDrift` + `lungeDistanceFromTargetGap`（gap−1.7m, clamp 0..4）。傷害 28/poise 18、命中窗 nt 0.18-0.32 + 0.53-0.70。**加入 pool**。
+- **`Wushi_Attack_TwistCleave`**（扭轉前劈，2.03s，早揮 + 大劈 speed 63）：`cancelClipBodyDrift` + lunge（gap−1.6m）。傷害 34/poise 22、isMajor、命中窗 nt 0.10-0.22 + 0.36-0.50。**加入 pool**。
+- **`Wushi_SlideRoll`**（滑行翻滾，2.77s，前進 **20m**）：clip + state 匯入，**未接線**——20m 位移最極端，而且這比較像**閃避/翻滾**不是攻擊。待使用者決定：當 boss 迴避動作？還是翻滾攻擊？
+- `Wushi_Attack_ScissorTakedown`（續 46）現在也可以用 `cancelClipBodyDrift` 救回，但仍留在 pool 外（使用者已跳過）。
+
+`normalAttackPool` = [SwordJudgment, CrossSlash, **ThrustStab, TwistCleave**]。改 `BossAttackDefinition.cs` / `BossStateMachine.cs` / 2 新 asset / 3 新 fbx / `Wushi.controller` / `GreyboxTest.unity`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 調校**：(1) ThrustStab / TwistCleave 的 `cancelClipBodyDrift` 有沒有把身體釘穩（腳會不會滑）；(2) `lungeTargetGapMeters` 落點；(3) 命中窗 nt；(4) SlideRoll 要當什麼用。
+
+### 追加94 續 48（2026-09-02）— 滑行翻滾接線為「翻滾撲擊」（使用者選 b）
+
+`Wushi_Attack_SlideRoll.asset`（新，guid 5bf4cca7...）：
+- nt 0-0.68 貼地翻滾前衝（`cancelClipBodyDrift` 釘住身體 + `lungeDistanceFromTargetGap` gap−1m / clamp 0..9 帶動前移 → 3.5m standoff 滾 ~2.5m、8m 外滾 ~7m，真 gap-closer）→ nt 0.72-0.80 起身下劈。
+- 命中窗 nt 0.74-0.90（起身那記劈，blade speed 42）→ contact 2.05-2.49s（443ms、×2.21）。前搖 0.30s + ~1.7s 翻滾 = 長前兆，好讀。
+- 傷害 32/poise 20、knockback 0、ContinueCombo、weight 0.5/0.7、cooldown 6s、minDist 2.5 / maxDist 9。
+- **加入 pool** → `normalAttackPool` = [SwordJudgment, CrossSlash, ThrustStab, TwistCleave, **SlideRoll**]（5 招）。
+
+`Wushi.controller` `Wushi_SlideRoll` state（續 47 已建）。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：翻滾撲擊的距離/落點/命中時機；翻滾途中要不要加一個輕的碰撞命中（nt 0.15-0.35）。
+
+### 追加94 續 49（2026-09-02）— 三招位移統一設計（有效行程 1~4m，我方設計、待使用者測）
+
+使用者：「先都給你自行設計，範圍 1~4m，我來測試結果。」
+
+三招都 `cancelClipBodyDrift=1`（歸零 Meshy clip 烤入的 4~20m 位移）＋ `lungeDistanceFromTargetGap=1`（自動對準玩家、`forwardDistance` 不用），調 gap/max 讓有效行程落在 1~4m、且**結束位置 ~1.6-2.2m（剛好在踢擊圈 1.6m 外，刀還搆得到）**：
+
+| 招 | lungeTargetGapMeters | lungeMaxMeters | window(nt) | 3.5m standoff 行程 | 5m 行程 |
+|---|---|---|---|---|---|
+| ThrustStab | 1.8 | 4 | 0.08-0.40 | ~1.7m | ~3.2m |
+| TwistCleave | 2.2 | 3 | 0.10-0.42 | ~1.3m | ~2.8m |
+| SlideRoll | 1.6 | 4 | 0.00-0.66 | ~1.9m | ~3.4m |
+
+CrossSlash / SwordJudgment 不動（本來就無 drift、原地打）。純 asset 值改動，無 code、無 EditMode 影響。
+**待使用者 Play**：三招行程/落點/命中感；不順就改 `lungeTargetGapMeters`（往上 = 停更遠）或 `lungeMaxMeters`。
+
+### 追加94 續 50（2026-09-02）— 三個位移招改為「遠距 gap-closer」，近距只出原地招
+
+使用者：「這幾招由於都有位移，改為玩家距離較遠時才觸發，作為快速接近玩家手段。」
+
+- **`BossStateMachine` 的 approach-time gap-closer filter** 從 `a => a.UseRootMotion` 放寬成 `a => a.UseRootMotion || a.LungeDistanceFromTargetGap`。原本這條（追加29「有連續位移的可以不用綁死近戰距離」）只讓 root-motion 招在 approach 途中直接出；現在 `lungeDistanceFromTargetGap` 招（會追玩家實時位置）也算，作為從遠處衝進來的手段。
+- **`ThrustStab` / `TwistCleave` `minDistance` 0→4.0、`maxDistance`→11；`SlideRoll` `minDistance` 2.5→4.5、`maxDistance`→13。** → 近距 standoff（`AttackReadinessDistance` 仍 3.5，取 pool 最小 maxDistance = SwordJudgment/CrossSlash 的 3.5）時 `PickAttack()` 永遠 roll 不到這三招（3.5 < 4）；只有 approach 途中、玩家 ≥4m 時那條 gap-closer 路徑會選它們。
+- 效果：玩家 4m+ → 武士不再慢慢走過來，直接前刺/扭劈/翻滾衝進來（落點 ~1.6-2.2m，續 49 調的）→ 貼近後用 SwordJudgment / CrossSlash 原地打 → 玩家拉開距離 → 再衝一次。
+- 近距 pool 實質剩 [SwordJudgment（+衍生 OverheadSlam）, CrossSlash] + SpartanKick（貼身）+ 週期 OverheadSlam + LeapSlam。
+
+改 `BossStateMachine.cs`（1 行 filter）+ 3 asset 的 min/maxDistance。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：(1) 玩家站遠時武士會衝進來（三招輪替）；(2) 衝的距離感；(3) 貼近後切回原地招順不順。
+
+### 追加94 續 51（2026-09-02）— 修：黃點鎖定亂跳 + 武士貼近後還一直衝 → `cancelClipBodyDrift` 撤掉，改真 root motion
+
+使用者：用三個位移招時 (1) 玩家對武士的黃點鎖定亂挑、定位到錯位置；(2) 武士明明已經衝到玩家面前還一直做位移招，「是不是距離判定有問題」。
+
+**根因確認：`cancelClipBodyDrift`（續 47）把 root 往後推來抵銷 Hips 前飄 → `transform.position` 跟畫面上武士的實際位置脫鉤。**
+- `LockOnTarget` 掛在 root（`aimPoint = ChestAimPoint`）→ root 被推到武士身後 2~3m → 黃點指到空的地方 / 掃描距離爆掉導致重挑目標。
+- `HorizontalDistance()` = `target.position − transform.position`（root）→ 武士畫面上已到玩家面前，但 root 在後面，距離讀成「玩家還很遠」→ approach gap-closer 條件一直成立 → 一直衝。
+
+**改成真 root motion（比照屁孩王 LeapSmash/ChargeSlam，transform / capsule / 鎖定點一起動、不脫鉤）：**
+- **`武士` Animator GameObject 加 `BossAnimatorRootMotionRelay`**（空 `OnAnimatorMove` + `applyRootMotion=true`；對非 `useRootMotion` state 零影響，FSM 只在 `useRootMotion` 招才讀 `deltaPosition`）。
+- 三個 clip **重匯入 `lockRootPositionXZ=false`** → RootT 曲線驅動 transform。實測 RootT 真實位移：ThrustStab **2.2m**、TwistCleave **0.8m**、SlideRoll **5.4m**（續 47 的「4.5/6.6/20m」是 `AnimationMode` 取樣不套 root motion 的假象、嚴重高估）。
+- 新 `BossAttackDefinition.rootMotionScale`（Range 0-2，乘在 `deltaPosition` 上）：ThrustStab **1.3**（→2.9m）、TwistCleave **1.5**（→1.2m）、SlideRoll **0.55**（→3.0m）。都在 1~4m。
+- 三招改 `useRootMotion=1` / `cancelClipBodyDrift=0` / `lungeDistanceFromTargetGap=0`；`rootMotionEndNormalized` 0.65-0.85 收在位移做完。gap-closer filter 還原回 `a => a.UseRootMotion`（現在剛好涵蓋這三招）。min/maxDistance（4/11、續 50）不變。
+- `cancelClipBodyDrift` / `lungeDistanceFromTargetGap` 程式與欄位**留著**（沒別的招用，當備援）。
+
+改 `BossStateMachine.cs`（deltaPosition × scale、filter 還原）/ `BossAttackDefinition.cs`（新 `rootMotionScale`）/ 3 asset / 3 fbx.meta / `GreyboxTest.unity`（武士 + relay）。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play**：(1) 鎖定黃點不再亂跳、跟著武士；(2) 武士衝到面前就切原地招、不再連續衝；(3) 三招位移距離（不對就調 `rootMotionScale`）；(4) 真 root motion 下模型有沒有跟 capsule 分家（若有殘留脫鉤，`cancelClipBodyDrift` 可再疊回去微調）。
+
+### 追加94 續 52（2026-09-02）— gap-closer 衝不到玩家 → root motion 改「按實際距離縮放」；TwistCleave 退回近戰
+
+使用者：「有觸發但沒衝到玩家面前，所以都是空砍。」續 51 用**固定** `rootMotionScale`（ThrustStab ×1.3=2.9m、SlideRoll ×0.55=3m），但 gap-closer 從 4~11m 開打，固定 3m 位移 → 差 1~8m → 空砍。
+
+- **新 `BossAttackDefinition.rootMotionAimAtTarget`**（+ `rootMotionAimGapMeters` 1.8 / `rootMotionAimMaxMeters` / `rootMotionClipForwardMeters`）：為 true + `useRootMotion` 時，`BeginAttack` 依 `HorizontalDistance()` 算出「要落在玩家前 1.8m」需要的位移，除以 clip 自己的實測淨前進量得出**這一次施展的縮放值**（clamp 0~2）。`_rootMotionScaleRuntime`；`ApplyMotion` 的 `deltaPosition ×` 讀它。仍是真 root motion、不脫鉤。
+- **ThrustStab**：`rootMotionAimAtTarget`、clipFwd 2.2、min 4 / max 7。gap 5m 時縮放 ~1.45 → 走 3.2m → 落玩家前 1.8m。
+- **SlideRoll**：`rootMotionAimAtTarget`、clipFwd 5.4、min 4.5 / max 13。gap 7m → 縮放 ~0.96 → 走 5.2m；gap 13m → clamp 2.0 → 走 10.8m → 落前 ~2.2m。
+- **TwistCleave 退回近戰池**：它 clip 淨前進只有 **0.8m**，當 gap-closer 沒意義。改 `minDistance` 0 / `maxDistance` 3.6、`rootMotionAimAtTarget` off、固定 `rootMotionScale` 1.6（從 3.5m standoff 小步進 ~1.3m）。
+- 近戰池 = [SwordJudgment, CrossSlash, **TwistCleave**]；gap-closer（只走 approach 路徑）= [ThrustStab, SlideRoll]。`AttackReadinessDistance` 仍 3.5。
+
+改 `BossAttackDefinition.cs`（新 4 欄位）/ `BossStateMachine.cs`（`_rootMotionScaleRuntime` 在 BeginAttack 算、ApplyMotion 用）/ 3 asset。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：(1) ThrustStab / SlideRoll 現在衝得到玩家、不空砍；(2) 落點 1.8m 對不對（調 `rootMotionAimGapMeters`）；(3) TwistCleave 近戰步進感；(4) 鎖定黃點正常（續 51 的脫鉤已解）。
+
+### 追加94 續 53（2026-09-02）— 加入 `Wushi_TwinStrike`（雙重連擊，原地雙擊）
+
+使用者 `雙重連擊.zip` → `Wushi_TwinStrike`。檔名 `Double_Combo_Attack`、2.83s，與已退役的 `Wushi_DoubleCombo` 同源 clip。
+
+**這次量對了**：實測真 RootT 淨前進只有 **0.63m**（舊 DoubleCombo designNotes 說「起始在 root 後 3m、往前走」是 `AnimationMode` 取樣不套 root motion 的假象——當初為此加的 2.5m 前衝根本是在補一個不存在的位移）。→ 這其實是**原地雙擊下劈**。
+
+- 匯入 Humanoid（`lockRootPositionXZ=false`）→ `Wushi.controller` `Wushi_TwinStrike` state（speed 1.0）。
+- `Wushi_Attack_TwinStrike.asset`（新，guid eaffe536...）：`useRootMotion=1` + `rootMotionScale 1.4`（0.63m→~0.9m 小步進）、`rootMotionAimAtTarget=0`、近戰 pool（minDist 0 / maxDist 3.6）。
+- 命中窗 nt 0.18-0.32（第一劈）+ nt 0.52-0.68（第二劈，`damageMultiplier 1.15`）→ contact 0.51-0.91s（397ms、×1.98）/ 1.47-1.93s（453ms、×2.27）。傷害 22（第二劈 25.3）/ poise 16、knockback 0、ContinueCombo、weight 1.2/1.3、cooldown 2s。
+- **加入近戰 pool** → `normalAttackPool` = [SwordJudgment, CrossSlash, ThrustStab, TwistCleave, SlideRoll, **TwinStrike**]（近戰 4 + gap-closer 2）。
+
+`Wushi.controller` + 2 新 asset + 1 新 fbx + `GreyboxTest.unity`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：TwinStrike 兩劈的命中時機、傷害 22/25.3、小步進感。
+
+### 追加94 續 54（2026-09-02）— 屁孩王新增 4 個機動招（跑酷翻越 / 繩索後空翻 / 剪刀腳摔 / 滑行翻滾）
+
+使用者為屁孩王（菁英怪）加入 4 個 Meshy 動作。屁孩王 Animator 掛在 `Visual` 子物件、已有 `BossAnimatorRootMotionRelay`，所以真 root motion 直接可用。
+
+實測真 RootT 淨前進（clip `averageSpeed.z × length`）：ParkourVault **2.1m**、BackflipCrouch **5.6m**、ScissorTakedown **4.5m**（左偏 2.2m）、SlideRoll **5.4m**。全部 `useRootMotion=1`，`lockRootPositionXZ=false` 匯入。
+
+| PW2_Attack_* | clip | 觸發 | 命中 | 傷害 | 說明 |
+|---|---|---|---|---|---|
+| **ParkourVault** | Parkour_Vault_with_Roll 2.10s | 近距（min 0 / max 3.6）| Body nt 0.55-0.70 | 20 | 翻越 + 前滾撞擊，`rootMotionScale` 1（~2m） |
+| **BackflipCrouch** | Rope_Hang_Backflip_to_Crouch 1.90s | gap-closer（min 4.5 / max 13、`rootMotionAimAtTarget`）| Body nt 0.58-0.72 | 26 | 高處後空翻 → 落地蹲，戲劇性長距入場 + 落地衝擊 |
+| **ScissorTakedown** | Jumping_Head_Scissor_Takedown 3.67s | gap-closer（min 4 / max 11、aim）| RightFoot nt 0.48-0.68 | 30 | 前跳剪腿摔 |
+| **SlideRoll** | sliding_rool 2.77s | gap-closer（min 4 / max 13、aim）| RightHand nt 0.72-0.88 | 26 | 貼地翻滾 → 起身手擊 |
+
+全部 knockback 0、ContinueCombo、weight 0.5-1.0。`PiHaiWangV2.controller` 加 4 state；`屁孩王.normalAttackPool` = [PunchCombo1, HighKick, GuardKick, ChargeSlam, **ParkourVault, BackflipCrouch, ScissorTakedown, SlideRoll**]。
+
+4 新 fbx（PW2 命名）+ 4 新 asset + `PiHaiWangV2.controller` + `GreyboxTest.unity`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 調校**：(1) 各招衝到玩家的距離（`rootMotionClipForwardMeters` / `rootMotionScale` —— 屁孩王 1.5x scale 下實際位移可能是量測值的 1.5 倍，要調）；(2) 命中窗時機（`part` / nt）；(3) BackflipCrouch 起手在空中會不會怪（clip 起始 hipY 2.1，屁孩王站地上）；(4) 傷害。
+
+### 追加94 續 55（2026-09-02）— 武士開場演出觸發範圍縮小（本來擋住去屁孩王的路）
+
+使用者：武士開場演戲的觸發範圍讓玩家沒辦法接近屁孩王。
+
+`BossRoomTrigger`（`BossTrigger` → 武士 intro Timeline）的 BoxCollider 本來是 **30(寬) × 4 × 1** 的橫牆，位在 Z=4，橫跨整張地圖 X[-15..15]。從出生點（-2.5, 0）往北走去**任何**北側目標都會穿過它 → 被迫看武士開場。屁孩王在 (12, 12)。
+
+- 改成 **8 × 4 × 4** 的方塊，移到武士正前方（pos (0, 1.6, 8)，world X[-4..4] Z[6..10]）。
+- 從出生點直線往北走向武士（X≈-2.5）→ 進方塊 → 武士 intro 照常觸發。
+- 從出生點斜走向屁孩王（X=12）→ Z=6 時人在 X≈4.8、已在方塊外 → 不觸發。
+
+純場景改動（`GreyboxTest.unity` 的 `BossRoomTrigger` transform + BoxCollider）。無 code、EditMode 不受影響。
+**待使用者 Play 確認**：(1) 走向屁孩王不再被武士 intro 攔截；(2) 正面走向武士仍會觸發開場。
+
+### 追加94 續 56（2026-09-02）— 十足蟲關掉自動追擊 ＋ 新增「Boss 動作除錯模式」
+
+**1. 十足蟲不自動追擊**：`TenLeggedBugController` 新 `autoAggro`（預設 true）；`TickPatrol` 的 detection→Chase 現在 gate 在它上面。GreyboxTest 的 `十足蟲` 實例設 **false** → 永遠留在 Patrol（在出生點附近晃），除非被外部（除錯工具/腳本）驅動。被打不會 aggro（本來就沒這條路徑）。
+
+**2. Boss 動作除錯模式**（`BossAnimationDebugMode.cs` in `_Project/Game/Debug/` ＋ 選單 `Tools/Live2DAction/[Debug] Setup Boss Animation Debug Mode`）：
+- **F7** 進/出。進入時：切到守望者的 `Viewpoint` 攝影機（其他 active 攝影機快照→關閉→離開時還原，同 `SpectatorCameraToggle` 手法）；把所有 target 的 `BossStateMachine` / `NavPathFollower` / `HealthRegeneration` / `BossLifeNodeController` / `BossSignalReceiver` 關掉並把 root transform 釘在原地。
+- **Tab** 循環 target（武士 ↔ 屁孩王）。
+- **數字 1–9、0** 播該 target 的第 1–10 個 Animator state（`CrossFadeInFixedTime`）。畫面左上 `OnGUI` 列出 target + state 清單 + 對應鍵。
+- **P** 暫停/繼續、**R** 重播、**-/=** 慢放/快放（animator.speed 0.05–2）、**,/.** 環繞攝影機。
+- 離開時全部還原（攝影機、被關的元件、animator.speed）。無 gameplay 依賴、預設不啟用。
+- 設定工具讀 `Wushi.controller`（16 state）/ `PiHaiWangV2.controller`（13 state）的 Base Layer state 名（排除 Locomotion）自動填。守望者攝影機每幀被工具重新定位到框住當前 target（`cameraOffset` / `aimHeight` 可調）。
+- Boss 有新招時重跑選單即可。
+
+改 `TenLeggedBugController.cs`（1 欄位 + 1 行 gate）＋ 2 新檔（`BossAnimationDebugMode.cs` / `BossAnimationDebugSetup.cs`）＋ `GreyboxTest.unity`（十足蟲 autoAggro、新 `BossAnimationDebugMode` 物件）。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：(1) 十足蟲不再追人；(2) F7 進除錯模式、Tab 切目標、數字播動作、守望者視角框住目標。
+
+### 追加94 續 57（2026-09-02）— 除錯模式：按數字有 log 但畫面沒動 → 守望者攝影機的 Camera 元件本身是關的
+
+使用者：Boss 動作除錯模式看得到選單、按數字沒反應。查 log 發現 `[BossAnimDebug] 武士 -> Wushi_XXX` 有印、`CrossFadeInFixedTime` 有呼叫、state 名都對——**輸入沒問題，是畫面沒 render**。
+
+根因：守望者的 `Viewpoint` 攝影機用的是「GameObject 一直 active、**`Camera` 元件 `.enabled=false`**」的模式（跟場景其他攝影機「GameObject toggle、元件常開」相反）。原本 `BossAnimationDebugMode` 只對 debugCamera 做 `SetActive`，沒碰 `Camera.enabled` → 進除錯模式時把其他攝影機全關、Viewpoint 又沒真的開 → 全黑（選單 OnGUI 疊在上面照樣看得到）。
+
+**修（`BossAnimationDebugMode.cs`）：**
+- 新 `EnableDebugCamera(bool)`：進入時快取 + 開 debugCamera 底下**每個 `Camera` 元件的 `.enabled`**（順便關它的 AudioListener），離開時完整還原。`KeepDebugCameraLive()` 每 LateUpdate 重新確保。
+- 進除錯模式時把 target 的 `Animator.cullingMode` 暫時設 `AlwaysAnimate`（框鏡頭途中角色短暫離畫面也不會停格），離開還原。
+- 相機掃描排除清單改用 `_debugCams`（不只 debugCamera 本身，含子 Camera）。
+- Edit-mode 驗證：Enter → Viewpoint.enabled True / FSM.enabled False / cull AlwaysAnimate；Exit → 全部還原。
+
+編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play 確認**：F7 → 看到守望者視角框住武士、按 1-0 武士做出對應動作、Tab 切屁孩王。
+
+### 追加94 續 58（2026-09-02）— 除錯模式：`-/=` 調的 speed 換動作就被重設回 1
+
+使用者：用 `-/=` 調慢後，按數字播下一個動作，speed 又回 1。
+
+`BossAnimationDebugMode.Play()` 之前每次都 `_animSpeed = 1f; animator.speed = 1f`。改成：
+- `_animSpeed`（使用者選的播放速率 0.05–2）**跨動作保留**，`Play()` 只 `ApplySpeed()` 套用現值、不重設。
+- 新 `_paused` bool 跟 speed 分開；`P` 切換 pause（暫停不再吃掉慢放設定），`-/=` 調 speed 時順帶解除 pause。
+- 有效 `animator.speed` = `_paused ? 0 : _animSpeed`，每 LateUpdate 重新 assert（防其他東西偷偷改回）。
+- 只有進除錯模式（F7）會把 speed 重設 1、pause 清除。OnGUI 顯示 `[PAUSED]`。
+
+編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：`-/=` 調慢後連續按數字播不同動作，速率維持；`P` 暫停/繼續不影響慢放值。
+
+### 追加94 續 59（2026-09-02）— 除錯模式：播動作時放開位移，動作結束才彈回原位
+
+使用者：站原地正確，但播動作時應該讓動作**照原本的位移跑**，整段結束後再彈回原位。之前 LateUpdate 每幀都把 transform 釘死 → 動作永遠原地播。
+
+`BossAnimationDebugMode`：
+- 新 `_clipRunning` / `_clipTarget` / `_clipState`。按數字播動作時記錄，並先把上一個還在跑的 target `SnapPlayingTargetBack()`（回原位）再開新的。
+- LateUpdate：正在播的 target **不釘**，改成每幀 `pinRoot.position += animator.deltaPosition` + `deltaRotation`（跟 FSM 讀 root motion 同手法，武士/屁孩王的 relay 保證 `deltaPosition` 有值）→ 動作的真實位移會跑出來。
+- 偵測結束：`GetCurrentAnimatorStateInfo(0)` 不在 transition、`IsName(_clipState)`、`normalizedTime >= 1` → `SnapPlayingTargetBack()` 把 pinRoot 設回進除錯模式當下記的原位/原朝向。
+- 其他沒在播的 target 照樣每幀釘死。
+- Tab 切目標 / F7 離開 也會先 `SnapPlayingTargetBack()`。
+- 暫停（P，speed 0）時動作不前進 → 不會判定結束、停在半途讓你檢視；解除後繼續跑完才彈回。
+
+編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：F7 → 按數字，角色照動作位移移動，整段播完彈回原位；連按不同數字每次從原位開始。
+
+### 追加94 續 60（2026-09-02）— 除錯模式：武士「空中飛劈」→ deltaPosition 的 Y 歸零，貼地
+
+使用者：除錯播放跟實戰效果不一樣，武士像在空中飛劈。
+
+續 59 每幀套 `pinRoot.position += animator.deltaPosition` 是**含 Y** 的。有些 clip 的根節點有垂直位移（`keepOriginalPositionY` 匯入），於是武士整段飄起來。實戰不會——`BossStateMachine.ApplyMotion` 是 `rootMotionDelta.y = 0f` + 重力把 boss 壓在地上。
+
+修（`BossAnimationDebugMode` LateUpdate）：只套水平位移（`d.y = 0`），每幀把 `pinRoot.position.y` 壓回進除錯模式當下記的地面 Y。跟實戰一致。
+
+**已知仍有差異**（動畫檢視夠用、非 bug）：(1) 無目標 → `faceTargetSnapOnStart` / yaw 偏移不生效，招式朝武士被釘的方向；(2) 水平位移是 clip 原生 RootT 全量，實戰的 `rootMotionScale` / `rootMotionAimAtTarget` 縮放不套用（所以 SlideRoll 在除錯裡衝比較遠）。要的話再讓除錯模式吃 attack asset 的縮放。
+
+編譯無錯，**EditMode 288/288 綠**。
+
+### 追加94 續 61（2026-09-02）— 除錯模式：LeapSlam{6} 在實戰飛高空、除錯裡只原地短飛 → 加「FSM 腳本高度弧線」還原
+
+使用者：武士第 6 個動作（`Wushi_LeapSlam`）實戰飛到高空，除錯模式下只原地短飛。
+
+根因：LeapSlam 的「off-screen 高度」在實戰是 `BossStateMachine` 的**腳本弧線**（`ComputeLeapSlamExtraHeight` — 三角形曲線，`tuning.LeapSlamExtraHeight` **30** 世界單位，rise 0.05 / peak 0.3 / fallEnd 0.53），clip 本身的骨骼上下移動很小。續 60 把 deltaPosition.y 歸零後，那個弧線完全沒了。
+
+修：
+- `BossAnimationDebugMode.Target` 新 `verticalArcs`（`{stateName, peakHeight, riseNt, peakNt, fallEndNt}`）。播到有登記的 state 時，LateUpdate 在地面 Y 之上疊一條同樣的三角形高度弧（`HeightAt(normalizedTime)`）。
+- 設定工具讀每隻 boss 的 `leapSlamAttack.clipName` → 對應 state 名，從其 `tuning` 抓 `leapSlamExtraHeight` / rise / peak / fallEnd 自動填。已跑：武士 `Wushi_LeapSlam` peak **30**、屁孩王 `PW2_LeapSmash` peak **2.5**。
+- 非弧線 state 照舊貼地；動作結束照舊彈回原位。
+
+（Ultimate / Vanish / DiveAttack 等其他 FSM 腳本位移招在除錯裡仍不完整——同理可加 arc，使用者沒提就先不做。）
+
+改 `BossAnimationDebugMode.cs` / `BossAnimationDebugSetup.cs` / `GreyboxTest.unity`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：F7 → 按 6，武士飛高空、落地劈砍、彈回原位。不夠高就調該 target 的 `verticalArcs[0].peakHeight`。
+
+### 追加94 續 62（2026-09-02）— 除錯模式 #8/#9 動作「套用回真實」：ChargeCut 取代 TwistCleave、ContinuousThrust 復活
+
+使用者：「我比較喜歡武士除錯模式下的 8/9 動作的展現，請套用回真實模式。」除錯清單 #8 = `Wushi_ChargeCut`、#9 = `Wushi_ContinuousThrust`，兩個都是孤兒 clip（沒在任何 pool）。
+
+實測（真 RootT）：`Wushi_ChargeCut` net 前進 **0.78m**（原地）、`ContinuousThrust` net **0m**（原地）。（舊 designNotes 的「起始在 root 後方」全是 AnimationMode 假象。）
+
+**#8 `Wushi_ChargeCut`** —— 跟 `Wushi_TwistCleave`（扭轉前劈）同 Meshy 來源家族、不同 export，但除錯 state 跑 **speed 1.15**（使用者偏好的就是這個）＋多一段「前伸刺」相位。
+- 新 `Wushi_Attack_ChargeCut.asset`（attackId **CleaveCharge**，ChargeCut 被 SwordJudgment 佔）：3 段命中窗 nt 0.13-0.21 / 0.40-0.50（×1.15）/ 0.80-0.92，傷害 30/poise 20、isMajor、原地、close pool。`Wushi_ChargeCut` state speed 維持 1.15。
+- **`Wushi_Attack_TwistCleave` 從 pool 移除**（同招、這是使用者指的版本）。asset/state 留磁碟。
+
+**#9 `Wushi_Attack_ContinuousThrust`** —— 復活（追加89 退役的旋身連刺）。既有 asset 修：5 段命中窗 `deflectReaction` 0→1（ContinueCombo）、`maxDistance` 2.4→3.5、`maxAngle` 30→45。`Wushi_ContinuousThrust` state speed 1.25。healthDamageIsPercentOfTargetMax（1%/刺、~5% 全套）不動。加入 close pool。
+
+`normalAttackPool` = [SwordJudgment, CrossSlash, ThrustStab, SlideRoll, TwinStrike, **ChargeCut, ContinuousThrust**]（近戰 5 + gap-closer 2）。timing report：ChargeCut real 1.77s（窗 141/177/212ms）、ContinuousThrust real 2.43s（5 窗 121-218ms）。
+
+2 新 asset（ChargeCut）+ 3 asset 修（ContinuousThrust windows/dist）+ `GreyboxTest.unity`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：(1) ChargeCut / ContinuousThrust 在實戰的手感跟除錯裡一致；(2) ChargeCut 前兩段窗偏短（speed 1.15），太難彈就降 state speed；(3) 移除 TwistCleave 對不對。
+
+### 追加94 續 63（2026-09-02）— ContinuousThrust 重做為「低頭連刺 + 前墊步 + 每下頂開」；ChargeCut 權重拉高
+
+使用者：#8 ChargeCut 很少出；#9 ContinuousThrust 向前連刺「鎖定玩家胸口（有高度差）+ 小段前墊步 + 每一下把玩家頂開」。
+
+**新 `BossAttackDefinition.attackPitchDegrees`（0-45）+ `BossStateMachine`：** 攻擊中把整個 visual **前傾/低頭** N 度（`UpdateAttack` 在 `FaceTarget`（純 yaw）之後套 local pitch，nt 0→0.15 ease in、0.78→1.0 ease out）。把高個子武士的刀身判定壓到站地玩家的胸口高度，直立的 CharacterController 不動。
+
+**`Wushi_Attack_ContinuousThrust`：**
+- `attackPitchDegrees` **20**（低頭刺玩家胸口）。
+- `attackMotion.forwardDistance` 0 → **3.5**（nt 0.05-0.68）＝前墊步，武士整段連刺往前推進 3.5m，追著被頂開的玩家。
+- `knockbackForce` 0 → **1.8**（每個命中窗都 `ApplyKnockback` 一次 → 5 刺各頂開玩家一次；本招是 session「只有踢擊擊退」規則的**刻意例外**）。
+- `lateTracking` 0.1→0.2、`trackingDropNormalizedTime` 0.15→0.6（連刺期間持續微調朝向追玩家）。
+- 權重 1/1 → **1.8/2**（更常出）。
+
+**`Wushi_Attack_ChargeCut`：** 權重 1.2/1.3 → **2/2.2**。
+
+改 `BossAttackDefinition.cs` / `BossStateMachine.cs`（pitch）/ 2 asset。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play**：(1) ContinuousThrust 低頭刺打得到站地玩家、每刺頂開、武士追著推進；(2) `attackPitchDegrees` 20 夠不夠低（打不到就加到 25-30）；(3) `forwardDistance` 3.5 / `knockbackForce` 1.8 的推進 vs 頂開平衡；(4) ChargeCut / ContinuousThrust 現在夠常見。
+
+### 追加94 續 64（2026-09-02）— 「正式模式看不到動作 9」→ 其實有選到、被踢擊打斷；武士重新拉開站位
+
+使用者：正式模式看不到武士動作 9（ContinuousThrust）。查 console `PickAttack: chose ContinuousThrust` **有出現**（dist=2.82 / **0.92**）——問題是武士一堆招都在 **dist≈0.92m** 出（點名一票 `dist=0.92/0.93`），那在踢擊圈 1.6m 內 → 每 2s 強制 SpartanKick 把正在連刺的動作切掉 → 玩家看到的是踢擊不是連刺。
+
+根因：前衝招（ContinuousThrust `forwardDistance` 續 63 設 3.5、TwinStrike root motion ×1.4）一路把武士推進點名，武士停在那不斷從貼身出招、從不重新拉開。
+
+**修：**
+1. `Wushi_Attack_ContinuousThrust.forwardDistance` **3.5 → 1.5**（前墊步是小步、不是衝鋒）；`maxAngle` 45→60、`maxDistance` 3.5→4、`cooldown` 4→3、權重 →2/2.2。
+2. **`BossStateMachine` 重新加回「太近就退位」**（續 39 加、續 52 移除的較溫和版）：`UpdateApproach` 新最高優先分支 `distance < AttackStandoffFloor`(~2.2m) → `MoveAwayFromTarget`（新加回的 helper）；`UpdateIdle` 同條件 → 轉 `Approach`。武士被前衝招推進點名後會退回 ~2.2m（仍在踢擊圈 1.6m 外、所有原地招刀夠得到）再出招 → 不再卡貼身、不再被踢擊洗掉連刺。
+   - 續 39 使用者當時反對「退開」是因為那時劍招搆不到遠距；現在劍招都能從 3.5m 打到，退到 2.2m 完全 OK。
+
+改 `BossStateMachine.cs`（MoveAwayFromTarget 回歸 + 2 分支）/ `Wushi_Attack_ContinuousThrust.asset`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者 Play**：(1) 現在看得到 ContinuousThrust 完整連刺（低頭 + 前墊步 + 每刺頂開）；(2) 武士不再卡在玩家臉上循環貼身招；(3) 退位動作會不會太頻繁/來回。
+
+### 追加94 續 65（2026-09-02）— 修：R 大招丟出武士刀後，回收把刀掛回 Player root（1/80 尺寸）而非手骨 → 刀「不見」
+
+使用者：玩家的武士刀不見了、沒握在手上。
+
+查場景：`WolfsGravestone`（血刀 wrapper）在 `Rhand_Weapon2` 手骨底下、active、mesh bounds 正常——**場景本身沒壞**。是 runtime bug：`UltimateAbility.ThrowSequence` 丟刀時 `weapon.SetParent(null)` 但**沒記原本的 parent**；回收（正常返回 + `OnDisable` 中斷）都 `weapon.SetParent(transform, true)`——`transform` 是 **Player root**，不是刀原本掛的 `Rhand_Weapon2` 手骨（帶 ~80x 骨骼縮放）。捕捉的 localPos/Rot 是「相對手骨」的值，套到 root 底下 → 刀掉到 Player 原點、縮成 **1/80 大小** → 看起來就是消失。
+
+**修（`UltimateAbility.cs`）：**
+- 丟刀前 `Transform homeParent = weapon.parent`，存進新欄位 `_weaponHomeParent`。
+- 返回動畫的 `homeWorldPos`/`homeWorldRot` 用 `homeParent` 算（不是 Player root），飛回正確的手部世界位置。
+- `SetParent` 回收（返回 + `OnDisable`）改成 `homeParent`（null 才 fallback `transform`）。
+
+R 大招丟出/收回不影響 EditMode。編譯無錯（Console 的 `CubismRenderController` IndexOutOfRange 是既有 Live2D SDK 問題、無關）。**EditMode 288/288 綠**。
+**待使用者 Play**：按 R 丟出武士刀 → 收回後刀正常握在右手（正確尺寸/位置）。（若刀在**還沒按 R 前**就不見，那是別的問題，回報 Play 重現步驟。）
+
+### 追加94 續 66（2026-09-02）— 屁孩王：除必殺技外所有攻擊都墊步/縮放位移到玩家面前
+
+使用者：屁孩王除必殺技（`PW2_Attack_LeapSmash`）外的攻擊都要盡可能外觀上接近玩家距離再打。
+
+現況問題：`AttackReadinessDistance` = 0.98m（PunchCombo maxD），但 ChargeSlam（maxD 3.5、實測 RootT 只 **0.84m**）/ ParkourVault（maxD 3.6、RootT 2.1m）從遠處出手時位移搆不到玩家 → 打空氣。
+
+**改（8 個 asset，不動 `PW2_Attack_LeapSmash`）：**
+- **PunchCombo1 / HighKick / GuardKick**：`maxDistance` ~1 → **2.5**、`faceTargetSnapOnStart` 開、`lungeDistanceFromTargetGap` 開（墊步到玩家前 0.7m、上限 2.5m、window nt 0.05-0.55）。
+- **ChargeSlam**：`rootMotionAimAtTarget` 開（clipForward 0.84、落點玩家前 1.0m、上限 5）、`maxDistance` 3.5 → 2.5（clip 位移小、拉太遠搆不到）。
+- **ParkourVault**：`rootMotionAimAtTarget` 開（clipForward 2.1、落點前 1.0m、上限 5）。
+- **BackflipCrouch / ScissorTakedown / SlideRoll**（本來就 aim）：落點 gap 1.2m。
+- **Breakdance**（`breakdanceAttack` flourish，非必殺技）：`maxDistance` 1.4 → 3、snap 開、`lungeDistanceFromTargetGap`（前 0.8m）。
+
+`AttackReadinessDistance` 0.98 → **2.5m**（屁孩王 approach 停 2.5m，近戰墊步到 ~0.7m、位移招縮放到玩家面前）。
+
+9 個 `PW2_Attack_*.asset`。無 code。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play**：(1) 屁孩王每一招（除 LeapSmash）都墊步/衝到玩家面前才打、不再打空氣；(2) 墊步/落點距離（`lungeTargetGapMeters` / `rootMotionAimGapMeters`）合不合適；(3) Breakdance / ChargeSlam 有沒有 clip 自帶位移 + 墊步疊加。
+
+### 追加94 續 67（2026-09-02）— 確認屁孩王有剪刀腳摔 ＋ F7 除錯模式加滑鼠滾輪縮放
+
+1. **屁孩王的「跳躍頭部剪刀腳摔」** —— 已在（續 54 加的）：`PW2_Attack_ScissorTakedown` 在 `屁孩王.normalAttackPool`、attackId ScissorTakedown、clip `PW2_ScissorTakedown`、state 存在、fbx 在、`useRootMotion` + `rootMotionAimAtTarget`、命中窗 part 3(RightFoot) nt 0.48-0.68、weight 0.5。無需再加。
+
+2. **F7 除錯模式滾輪縮放**（`BossAnimationDebugMode`）：`Mouse.current.scroll` → `_zoom`（相機距離倍率，clamp 0.3-3、每格 0.12），套在 `cameraOffset * _zoom`（縮放整個 offset 保持取景角度）。進除錯模式重設 1。OnGUI 顯示 `zoom X.XX` + 提示 `wheel zoom`。
+
+改 `BossAnimationDebugMode.cs`。編譯無錯，**EditMode 288/288 綠**。
+
+### 追加94 續 68（2026-09-02）— F7 除錯：第 11 項以後綁 Shift+數字（原本超過 10 項就沒鍵）
+
+`BossAnimationDebugMode` 原本只綁數字 1-0 → 前 10 個 state。屁孩王 13 個、武士 16 個，第 11 項以後點不到（`PW2_ScissorTakedown` 是屁孩王第 12 項）。
+
+- 加 **Shift + 數字 1-0 → state 11-20**。OnGUI 每項標 `[數字]` 或 `[Shift+N]`。
+- 目前對照：
+  - **屁孩王 跳躍頭部剪刀腳摔 = Shift+2**（PW2_ScissorTakedown，第 12 項）
+  - 屁孩王：Shift+1 BackflipCrouch、Shift+2 ScissorTakedown、Shift+3 SlideRoll
+  - 武士：Shift+1 PostureFall … Shift+2 ScissorTakedown … Shift+6 TwinStrike
+
+改 `BossAnimationDebugMode.cs`。編譯無錯，**EditMode 288/288 綠**。
+
+### 追加94 續 69（2026-09-02）— 屁孩王 剪刀腳摔（Shift+2）改為「頭部剪刀鎖 → 跩起甩飛」
+
+需求：這招的「倒立雙腳內扣」中段動作要朝玩家頭部鎖定，接觸到就把玩家跩起來再反向甩出擊飛。
+
+`PW2_Attack_ScissorTakedown.asset`：
+- **鎖頭**：`lateTracking` 0.05→0.25、`trackingDropNormalizedTime` 0.14→0.4 —— 起跳＋內扣期間持續朝玩家 yaw，讓內扣朝玩家頭部去。`attackPitchDegrees` 15 讓屁孩王朝倒地/站立玩家的頭部前傾。
+- **落點**：`rootMotionAimGapMeters` 1.2→0.6 —— gap-closer 縮放後直接落在玩家身上（原本落 1.2m 外會抓空）。
+- **命中窗**：單一窗 part 3(RightFoot) 從 nt 0.48-0.68 移到 **nt 0.40-0.55** —— 正好是雙腳內扣＋倒立（head-below-hips）那一刻，剪刀夾合＝鎖上玩家頭部。
+- **跩起來 / 反向甩飛**：`basePoiseDamage` →200（必定 stagger＝被抓住）、`knockbackForce` →11、`launchesTarget` 1（上拋＋沿屁孩王前進方向硬甩，hurricanrana 式）。`superArmorDuringActiveWindows` 1（對拋不破抓）。`baseHealthDamage` 38。
+- weight 0.5、`minDistance 4 maxDistance 11`、`cooldownSeconds 7`、`disallowImmediateRepeat` + `maxConsecutiveUses 1`。
+- **限屁孩王**（武士版本先前已從 pool 撤掉）。
+- **尚未做**真正的 socket 抓取鎖定（玩家目前是被擊飛，不是被 parent 到屁孩王身上跟著甩）—— 那是更大的後續工作。
+
+只改 1 個 `.asset`，無 code。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play**：(1) 內扣那刻 RightFoot hitbox 打不打得到站立玩家的頭/上半身（可能要調窗或 pitch）；(2) 甩飛方向感（目前沿屁孩王前進方向，非「往回」）；(3) poise 200 一定 stagger 會不會太硬。
+
+### 追加94 續 70（2026-09-02）— 剪刀腳摔改「腳本近身抓取」（續69 的 collider 命中打不到，實測沒被抓）
+
+續 69 給 ScissorTakedown 一個 RightFoot collider 命中窗（內扣那刻），**實戰完全打不到**：這招把屁孩王倒立過來，剪刀的雙腳落在 ~2m 高，站著的玩家 hurtbox 上緣比那低，加上落點只離玩家 0.6m，0.35m 的腳部球體永遠碰不到。
+
+- 新 `BossAttackDefinition` 欄位：`commandGrab` / `commandGrabNormalized`(0.45) / `commandGrabRadius`(2.2)。
+- `BossStateMachine.TryResolveCommandGrab()`：當 `commandGrab` 時，在 `commandGrabNormalized` 那一刻對玩家做**一次水平距離判定**，`commandGrabRadius` 內就直接套用這張 asset 的數值 —— `baseHealthDamage 38`、`basePoiseDamage 200`（必定 stagger＝跩起來）、`knockbackForce 11` + `launchesTarget 1`（上拋＋沿屁孩王前進方向硬甩＝反向甩出擊飛）。每次攻擊最多結算一次（`_commandGrabResolved`）。繞過 collider hit window。
+- `PW2_Attack_ScissorTakedown.asset`：`hitWindows` 清空、`commandGrab: 1`。仍是 gap-closer（`useRootMotion` + `rootMotionAimAtTarget`，落點 0.6m）。`lateTracking 0.25` + `trackingDropNormalizedTime 0.4` 讓內扣持續朝玩家、`attackPitchDegrees 15` 前傾。
+- **限屁孩王**。仍未做真正 socket 抓取鎖定（玩家是被擊飛，不是被 parent 跟著甩）—— 較大的後續工作。
+
+改 `BossAttackDefinition.cs` + `BossStateMachine.cs` + 1 個 `.asset`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play**：(1) `commandGrabRadius 2.2` / `commandGrabNormalized 0.45` 抓取時機與範圍合不合適（Console 有 `CommandGrab ScissorTakedown: caught/whiffed` log）；(2) 甩飛方向（目前沿屁孩王前進方向，非「往回」）；(3) poise 200 必定 stagger 硬不硬。
+
+### 追加94 續 71（2026-09-02）— 剪刀腳摔「在空中原地轉圈」修正：改用程式位移取代 root motion
+
+實測：屁孩王只放這招時，會在空中原地轉圈、衝不到玩家面前。原因：`PW2_ScissorTakedown` clip 把約 380° 的身體旋轉烤進 **root**（avgAngularSpeed 1.8），續 70 用 `useRootMotion` 只套 `deltaPosition`（位移不套旋轉），於是前進向量被自身旋轉帶著繞圈、互相抵銷 → 幾乎不位移。
+
+- `PW2_Attack_ScissorTakedown.asset`：`useRootMotion` 1→**0**、`rootMotionAimAtTarget` 1→0；改用程式驅動衝刺 —— `lungeDistanceFromTargetGap: 1`、`lungeTargetGapMeters 0.6`、`lungeMaxMeters 13`、`attackMotion` nt 0.12-0.45。`BeginAttack` 在出招當下鎖定與玩家的距離，沿鎖定方向直線推進，clip 的旋轉純粹變成視覺表演。`commandGrabRadius` 2.2→2.5。
+- `BossStateMachine`：approach 階段的 gap-closer 選擇 `PickAttackFiltered(a => a.UseRootMotion || a.LungeDistanceFromTargetGap)` —— 程式衝刺招也能在接近階段被選（之前只認 `UseRootMotion`），這樣剪刀腳摔回到完整 pool 後仍是遠距快速接近手段。
+
+改 `BossStateMachine.cs` + 1 個 `.asset`。編譯無錯，**EditMode 288/288 綠**。屁孩王 pool 仍暫時只有這招（測試用，還原清單在 scratchpad）。
+**待使用者對焦 Play**：衝刺速度／落點、`commandGrab` 半徑與時機、甩飛方向。
+
+### 追加94 續 72（2026-09-02）— 剪刀腳摔確認 OK，屁孩王 pool 還原
+
+使用者確認「沒問題了」。屁孩王 `normalAttackPool` 從測試用的單招 `[ScissorTakedown]` 還原為完整 8 招：PunchCombo1 / HighKick / GuardKick / ChargeSlam / ParkourVault / BackflipCrouch / ScissorTakedown / SlideRoll。場景已存檔。無 code 變更（續 71 的 `.cs` + `.asset` 修正保留）。
