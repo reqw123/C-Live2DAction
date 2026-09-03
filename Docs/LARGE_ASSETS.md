@@ -16,9 +16,10 @@ GitHub 對**單一檔案有 100 MB 硬上限**（超過直接拒絕 push），�
 | `Live2DAction/Assets/_Project/Environment/Meshy/PalmLinedLibrary/PalmLinedLibrary/Meshy_AI_Palm_Lined_Library_En_0830064603_texture_fbx/Meshy_AI_Palm_Lined_Library_En_0830064603_texture.fbx` | 130 MB | 337 萬頂點 / 304 萬三角面 | 白色建築＋大片草地與棕櫚行道樹，掃描邊緣有破洞 | `Meshy_AI_Palm_Lined_Library_En_0830064603_texture_fbx.zip` |
 | `Live2DAction/Assets/_Project/Environment/Meshy/QuietCampusPlaza/QuietCampusPlaza/Meshy_AI_Quiet_Campus_Plaza_0830071958_texture_fbx/Meshy_AI_Quiet_Campus_Plaza_0830071958_texture.fbx` | 106 MB | 159 萬頂點 / 287 萬三角面 | 幾乎整片棕灰色鋪面的校園廣場/中庭，建物很少 | `Meshy_AI_Quiet_Campus_Plaza_0830071958_texture_fbx (1).zip` |
 | `Live2DAction/Assets/_Project/Environment/Meshy/YuanpeiUniversityBuilding/YuanpeiUniversityBuilding/Meshy_AI_Yuanpei_University_Bu_0830053851_texture_fbx/Meshy_AI_Yuanpei_University_Bu_0830053851_texture.fbx` | 120 MB | 257 萬頂點 / 309 萬三角面 | 白/灰建築群＋藍綠玻璃帷幕＋棕櫚扇形樹，有「元培」類中文招牌 | `Meshy_AI_Yuanpei_University_Bu_0830053851_texture_fbx.zip` |
+| `Live2DAction/Assets/_Project/Environment/Meshy/YuanpeiLogo/Meshy_AI_Yuanpei_University_of_0902171624_texture.fbx` | **29 MB**（其實沒超過 100 MB，只是被 `Meshy_AI_*_texture.fbx` 這條通配規則一起擋掉）| ~29 萬頂點 / ~29 萬三角面 | 元培醫事科技大學圓形校徽 3D 立體版（藍底＋原子符號＋校名校訓） | `元培logo.zip`（2026-09-03，`Meshy_AI_Yuanpei_University_of_0902171624_texture_fbx/`）**⚠️ DoNotShip：真實大學商標** |
 
-- 來源：全部是使用者本人用 **Meshy AI 付費方案**生成（使用者持有商用權，可進正式 Build——見 `ASSET_LICENSES.md`）。
-- 原始 zip 由使用者提供，2026-08-30 匯入；本機留存於使用者的下載資料夾。
+- 來源：全部是使用者本人用 **Meshy AI 付費方案**生成。前 4 棟建築使用者持有商用權（見 `ASSET_LICENSES.md`）；**`YuanpeiLogo` 例外——校徽圖樣是元培的真實註冊商標，標 DoNotShip，發布前必須換原創**。
+- 原始 zip 由使用者提供（4 棟 2026-08-30、校徽 2026-09-03）；本機留存於使用者的下載資料夾。
 
 ## 這些資料夾裡「有進版控」的部分
 

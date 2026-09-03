@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6b578bd08c9a8694780d6ffbd837ea76, type: 3}
+  m_Name: YuanpeiAttack_ProjectileBurst
+  m_EditorClassIdentifier: 
+  attackId: 0
+  displayName: "\u5149\u7C92\u5B50\u4E09\u9023\u5C04"
+  requiredPhase: 1
+  energyCost: 15
+  cooldownSeconds: 2.5
+  minRange: 7
+  maxRange: 15
+  isMajorHazard: 1
+  telegraphSeconds: 0.5
+  windupSeconds: 0.1
+  activeSeconds: 0.9
+  recoverySeconds: 0.6
+  healthDamage: 16
+  playerPostureDamage: 0
+  maxHitsPerTarget: 1
+  baseWeight: 1.2
+  situationalWeightBonus: 2.5
+  number1: 16
+  number2: 0.35
+  number3: 3
+  count: 3

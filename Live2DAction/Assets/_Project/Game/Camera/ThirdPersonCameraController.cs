@@ -406,6 +406,14 @@ namespace Live2DAction.CameraSystem
 
         public float YawDegrees => _yaw;
 
+        // 2026-09-03 - a SceneGate transition teleports the player onto a freshly-loaded map;
+        // _yaw is free-look and would otherwise be left pointing back the way they came. Called
+        // by SceneGate after it repositions the player (while the load curtain still covers).
+        public void SnapYawToTarget()
+        {
+            if (target != null) _yaw = target.eulerAngles.y;
+        }
+
         // 2026-08-20, flight system design (Docs/FLIGHT_SYSTEM_DESIGN.md, 3.1/3.2) - lets
         // CharacterMovement read how far down the camera is currently looking (dive-speed-boost
         // condition needs both "holding descend" AND "looking down past a threshold").

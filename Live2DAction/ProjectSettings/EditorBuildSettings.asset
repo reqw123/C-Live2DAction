@@ -8,5 +8,11 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/_Project/Scenes/GreyboxTest.unity
     guid: 1e53acdace99f99478766507c7cc2a5f
+  - enabled: 1
+    path: Assets/_Project/Scenes/Map_School.unity
+    guid: f0df0d94728ef1642921b22f25c5e585
+  - enabled: 1
+    path: Assets/_Project/Scenes/Map_Nijigen.unity
+    guid: 1b926a7a5ff42d44c9cfbe9a5106b6c3
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0

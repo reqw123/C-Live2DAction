@@ -4060,3 +4060,231 @@ R 大招丟出/收回不影響 EditMode。編譯無錯（Console 的 `CubismRend
 ### 追加94 續 72（2026-09-02）— 剪刀腳摔確認 OK，屁孩王 pool 還原
 
 使用者確認「沒問題了」。屁孩王 `normalAttackPool` 從測試用的單招 `[ScissorTakedown]` 還原為完整 8 招：PunchCombo1 / HighKick / GuardKick / ChargeSlam / ParkourVault / BackflipCrouch / ScissorTakedown / SlideRoll。場景已存檔。無 code 變更（續 71 的 `.cs` + `.asset` 修正保留）。
+
+### 追加94 續 73（2026-09-02）— 地圖串流 Phase 1：學校抽成 additive 場景，靠近才載入
+
+使用者要做開放世界式的分區資源載入。方案：多場景 additive（不引入 Addressables）。詳見新文件 `Docs/MAP_STREAMING.md`。
+
+- **新場景** `Assets/_Project/Scenes/Map_School.unity`：把 `學校` ground、`SchoolWall_*` ×5、`yuanpei_*` ×4（約 **11.9M 面**）從 `GreyboxTest` 移出（世界座標保留）。學校為純景物，零腳本、零跨場景引用；無 lightmap，沿用常駐場景的燈。加入 Build Settings（enabled）。
+- **新腳本** `Assets/_Project/Game/World/MapStreamer.cs`：一區域一顆。距 `anchor`（學校中心 (0,0,-115)）`loadRadius` 90m 內 → `LoadSceneAsync(Additive)`；所有追蹤角色離開 `unloadRadius` 125m → `UnloadSceneAsync` + `Resources.UnloadUnusedAssets()`。`trackedCharacters` 留空自動抓 Player。進 Play 若場景已 additively 開著會直接接管。選取畫綠/橘雙環 gizmo。Console 印狀態轉換。
+- `GreyboxTest`：加 `MapStreamer_School` GameObject（掛 `MapStreamer`，預設值即設定好）。`VehicleRoad` 留在 `GreyboxTest` 當往南的常駐視覺連接。開場只載入 `GreyboxTest`（`sceneCount == 1`），學校完全不占資源。
+- 本地／空島／Player 全部仍在 `GreyboxTest`，尚未抽 `Core.unity`（Phase 4）。
+
+改 1 新場景 + 1 新腳本 + `GreyboxTest`（+MapStreamer GO、-10 個學校 root）+ Build Settings + 新 `Docs/MAP_STREAMING.md`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**（Editor 失焦時 Play 會凍結、MCP 測不了）：沿 VehicleRoad 往南 → 距學校 90m 時 Console `[MapStreamer] loading 'Map_School'` → `loaded`、建築出現；走回本地 → 超過 125m → `unloaded`、`sceneCount` 回 1。已知：3M 面 MeshCollider 在載入 activation 時主執行緒 cook 會頓一下（Phase 5 優化）。
+
+### 追加94 續 74（2026-09-02）— 地圖串流 Phase 2：載入過場黑幕遮住 pop-in
+
+- **新腳本** `Assets/_Project/Game/World/ScreenFader.cs`：單例，掛常駐場景的 `ScreenFader` GameObject。`Awake` 自建全螢幕黑 `Canvas`（`sortingOrder 32000`，蓋過所有 HUD）+ `CanvasGroup`。`SetCovered(bool, fadeSeconds)`，用 `unscaledDeltaTime`（不受 hit-stop / timeScale 影響）。無 prefab、無 setup 選單。
+- **`MapStreamer` 串接**：新欄位 `useLoadCurtain`(true) / `curtainRadius`(95，要 ≥ loadRadius) / `curtainFadeSeconds`(0.35) / `curtainSettleFrames`(2)。`BeginLoad` 時追蹤角色在 `curtainRadius` 內 → 遮黑；場景 `isDone` 後進新 `Settling` 狀態多壓 2 幀（等 MeshCollider cook + 首張畫面穩定）→ 淡回。遠距觸發載入不遮（靜默串流），載入中玩家衝進範圍會補遮。卸載不遮。`OnDisable` 保險清除。無 `ScreenFader` 時整套 no-op。
+- `GreyboxTest`：加 `ScreenFader` GameObject。
+
+改 1 新腳本 + `MapStreamer.cs` + `GreyboxTest` + `Docs/MAP_STREAMING.md` / KNOWN_ISSUES。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：往南走近學校，距 95m 內畫面應淡黑 → 學校載入 → 淡回（Console `loading 'Map_School' (curtain)...` → `loaded (curtain).`）。已知：黑幕只蓋住 pop-in、沒消除 MeshCollider cook 卡頓；黑幕期間玩家輸入沒鎖。
+
+### 追加94 續 75（2026-09-02）— 地圖串流 Phase 2b：載入卡頓根治 ＋ 遮罩鎖輸入
+
+續 74 的黑幕只蓋住 pop-in、沒消除 MeshCollider cook 卡頓，且黑幕期間玩家還能盲走。這次兩個都處理：
+
+- **yuanpei 四棟的 3M 面 `MeshCollider` 全部移除**（卡頓來源）。改成：
+  - `yuanpei_MainBuilding` / `ModernGlassLibrary` / `PalmLinedLibrary` 各加一顆 scene-root `<name>_Collision`（zero rotation、`BoxCollider` = 建築 renderer 世界 AABB、底部落 y≈0.5 地面）。
+  - `yuanpei_QuietCampusPlaza` 直接不放 collider —— `學校` 那顆 60×60 BoxCollider（頂面 y=0.5）就是地板。
+  - Box collider cook 幾乎零成本 → **載入卡頓消除**，不只是被黑幕蓋住。也順帶清掉 4 條 `Source mesh has over 2,097,152 triangles` console 警告。粗略 box 碰撞夠 greybox；要精細再手調。
+- **遮罩期間鎖玩家輸入**：`PlayerInputProvider.Update` 開頭若 `ScreenFader.Instance.IsCovered` → 整個 input command 歸零（走「沒鍵盤」同一路徑）。淡出+hold 全程鎖，reveal 一開始就解。AI 的 `IInputCommand` 不受影響。
+
+改 `PlayerInputProvider.cs` + `Map_School.unity`（-4 MeshCollider、+3 box proxy root）+ `Docs/MAP_STREAMING.md` / KNOWN_ISSUES。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：走近學校載入時應**不再頓**、黑幕期間 WASD 無反應；學校建築仍擋得住（box 碰撞）。
+
+### 追加94 續 76（2026-09-02）— 修：學校走到底也不載入（MapStreamer 追蹤到貓不是玩家）
+
+實測玩家沿通道走到底、學校沒出現。原因：`MapStreamer.ResolveAutoTrackedCharacter` 用 `FindFirstObjectByType<PlayerInputProvider>()` —— 本專案 **Player 和 Cat 都掛 `PlayerInputProvider`**（貓可被附身操作），而它抓到的是貓。貓一直待在出生點、從不靠近學校 → 永遠不觸發載入。
+
+- 改成 `FindObjectsByType<PlayerInputProvider>` 追蹤**全部**（Player + Cat 的 root）。這也才符合串流本意：不管玩家在操作誰、走向哪個區域都該把它拉進來。Play 驗證：`trackedCharacters` = [Cat, Player]。
+
+改 `MapStreamer.cs`。編譯無錯，**EditMode 288/288 綠**。**待使用者對焦 Play 重驗**：Player 沿 VehicleRoad 往南，距學校 90m（玩家 z≈−25，剛上車道沒多久）就該淡黑載入。
+
+### 追加94 續 77（2026-09-02）— MapStreamer 半徑收緊：走回本地才會真的卸載
+
+續 76 讓 `MapStreamer` 追蹤 Player + Cat。但本地出生區離學校錨點 (0,0,-115) 只有 ~115m，而貓一直待在出生點（~117m）—— 落在舊 `unloadRadius` 125m 內 → 學校載入後貓自己就一直撐開，走回本地也不卸載（等於「載入一次後常駐」）。
+
+- `MapStreamer_School`（+ code 預設）：`loadRadius` 90→**75**、`unloadRadius` 125→**100**、`curtainRadius` 95→**80**。
+- 現在：Player 沿車道往南到約 z −40 載入（黑幕）；走回本地（出生 ~115m > 100）→ `UnloadSceneAsync` + `Resources.UnloadUnusedAssets()` 真的卸載。中間 75→100 有 25m 遲滯緩衝，不抖動。
+
+改 `MapStreamer.cs` + `GreyboxTest`。編譯無錯，**EditMode 288/288 綠**。
+
+### 追加94 續 78（2026-09-03）— 學校改為大門互動式進入（取代靠近自動串流）
+
+使用者：「在學校面前設計大門，只有在跟大門互動後，進入加載畫面，跑完後會看到新地圖的場景，玩家直接在該地圖上」。
+
+- **新腳本 `Assets/_Project/Game/World/SceneGate.cs`**：一座門一顆（root collider = isTrigger 判定）。一元件雙向 —— `sceneToLoad` / `sceneToUnload`（都可空）+ `arrivalPosition` / `arrivalYaw`。走進 trigger → 頭上世界空間「按 E」提示（程式建的小 Canvas，billboard）→ 按 E → `RunTransition` coroutine：`ScreenFader` 淡黑 + 「載入中…」→ `LoadSceneAsync(Additive)` → 壓 settleFrames → 關 CC 傳送玩家 + `camera.SnapYawToTarget()` → 壓 2 幀讓相機貼上 → `UnloadSceneAsync` + `Resources.UnloadUnusedAssets()`（在傳送之後）→ 淡回。`s_transitionRunning` static 擋雙門/連按重入。黑幕期間 `PlayerInputProvider` 已歸零輸入。
+- **`ScreenFader`**：加 `SetLabel(string)` / `ClearLabel()`（置中白字，跟黑幕同 CanvasGroup 一起淡）。
+- **`ThirdPersonCameraController`**：加 `SnapYawToTarget()`（傳送後把自由視角 yaw 對到新朝向；相機位置本來就每幀硬算不 damp，會自己到位）。
+- **GreyboxTest**：移除 `MapStreamer_School`；新增 `SchoolGate_Enter`（z −82 車道南端，greybox 鳥居兩柱+楣+實心門板，`SchoolWall.mat`；`sceneToLoad=Map_School`、arrival (0,1.1,-92) yaw 180）。
+- **Map_School**：新增 `SchoolGate_Exit`（z −86 北牆缺口內；`sceneToUnload=Map_School`、arrival (0,1.1,-78) yaw 0）。
+- `MapStreamer.cs` 留在磁碟（未使用，之後空島之類要無縫串流可再用）。
+
+改 `SceneGate.cs`(新) + `ScreenFader.cs` + `ThirdPersonCameraController.cs` + `GreyboxTest` + `Map_School` + `Docs/MAP_STREAMING.md`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：走到門口 → 提示出現 → 按 E → 淡黑「載入中…」→ 站在校園裡；校園裡的門 → 按 E → 回車道、學校卸載。（Editor 失焦時 Play 凍結，coroutine 轉場 MCP 測不了。）
+
+### 追加94 續 79（2026-09-03）— 修：進學校後「按 E 進入元培大學」提示殘留在畫面上
+
+`SceneGate` 傳送玩家用「關 CharacterController → 移動 → 開回」，這樣 **不會觸發 `OnTriggerExit`** → `SchoolGate_Enter._playerInside` 一直是 true → 轉場結束 `s_transitionRunning` 一放，`Update` 又把世界空間提示牌打開，飄在新地圖裡。
+
+- `RunTransition` 結尾（淡回之後、`s_transitionRunning=false` 之前）清掉 `_playerInside=false` / `_occupant=null` + `SetPromptVisible(false)`。玩家之後真的走回門的 trigger 會由 `OnTriggerEnter` 重新 arm。
+
+改 `SceneGate.cs`。編譯無錯，**EditMode 288/288 綠**。
+
+### 追加94 續 80（2026-09-03）— 學校大門視覺換成紅色漩渦影片（取代 greybox 鳥居）
+
+使用者提供 `固定鏡頭…畫面中央是一個.mp4`（紅色火焰漩渦傳送門，黑底、1280×720、10s）當真正的門，一樣按 E 互動進場。
+
+- 影片轉檔進版控：`Assets/_Project/VFX/Gate/PortalVortexVideo.mp4`（ffmpeg → H.264 Constrained Baseline / yuv420p / bt709，清掉 VideoPlayer 的 "non-baseline timestamp" + "color primaries unknown" 警告）。3.3MB，正常進 git。
+- **新腳本 `PortalVideoSurface.cs`**（`Live2DAction.World`，`[RequireComponent(MeshRenderer)]`）：`Awake` 建 per-instance `RenderTexture`(640×360) + `VideoPlayer`（RenderTexture 模式、loop、playOnAwake、`audioOutputMode=None`）→ 塞進 per-instance 的材質（`Instantiate(materialTemplate)`）的 `_BaseMap`。`OnDestroy` 釋放 RT/材質。
+- **新材質 `Assets/_Project/VFX/Gate/GatePortalVideo.mat`**：既有 shader `Live2DAction/VFX/AdditiveUnlit`（`Blend One One`）→ 影片黑底自動變透明、只有火光/火花發亮。
+- **兩座門重建**（`SchoolGate_Enter` in GreyboxTest、`SchoolGate_Exit` in Map_School）：移除 greybox 兩柱+楣+門板 cube，改成 `PortalSurface`（Quad 5×3.4 + `PortalVideoSurface`）+ 隱形 `Blocker`（BoxCollider 5×3.4×0.3，實心擋路）。root 的 trigger + `SceneGate` 不變。
+- 每座門各自 RT + 材質 instance，不互搶。
+
+改 `PortalVideoSurface.cs`(新) + `GatePortalVideo.mat`(新) + `PortalVortexVideo.mp4`(新) + `GreyboxTest` + `Map_School` + `Docs/MAP_STREAMING.md`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：門口應看到紅色漩渦影片循環播放（發光）、按 E 一樣進場。（Editor 失焦時 Play 凍結、VideoPlayer 不會前進，MCP 測不了播放。）
+
+### 追加94 續 81（2026-09-03）— 大門三修：離開失效 ＋ 白光 ＋ 影片變 3D
+
+1. **只能進不能出** —— `SceneGate.RunTransition` coroutine 跑在門物件上，離開門在 `Map_School` 裡，`UnloadSceneAsync(Map_School)` 把門連 coroutine 一起銷毀 → 序列卡在中間、畫面回不來。
+   - 新腳本 **`SceneTransitionRunner.cs`**（`Live2DAction.World`，單例，掛 GreyboxTest 常駐物件 `SceneTransitionRunner`）：整個載入/傳送/卸載 coroutine 搬到這裡跑，不管卸哪個場景都跑得完。`SceneGate` 只剩 trigger + 「按 E」提示 + 按鍵，按下就呼叫 `SceneTransitionRunner.Instance.Begin(...)`。`s_transitionRunning` static → `SceneTransitionRunner.IsRunning`。
+
+2. **進入後畫面莫名白光** —— `PortalVideoSurface` 建的 `RenderTexture` 沒清，未初始化內容是亂碼（常偏亮）→ additive 混合 = 整片白，直到第一張影片幀進來才蓋掉。
+   - `Awake` 建完 RT 後 `GL.Clear(true,true,Color.black)`。實測 RT 亮度歸零。
+   - 另外把 additive 疊層調暗（見下）＋主體 `tint` 預設 0.8，避免多層疊加把漩渦亮部沖成白。
+
+3. **影片特效變 3D** —— 原本一片平面 quad，側看就穿幫。`PortalVideoSurface` 現在：
+   - **billboard**：每幀轉向攝影機（`LateUpdate` `LookRotation`）。
+   - **景深疊層**：Awake 在後方（local +Z）生 `depthLayers`(2) 片同影片的 quad、逐層縮小（0.82/0.64）＋逐層變暗（`_BaseColor × 0.6^n`），讀起來像往門內凹的漩渦隧道。
+   - **脈動**：`pulseAmount` 0.04 / `pulseSpeed` 0.5Hz 輕微縮放。
+   - 兩座門的 `PortalSurface` 重建套用新預設。每片自己的材質 instance，`OnDestroy` 全部釋放。
+
+改 `SceneTransitionRunner.cs`(新) + `SceneGate.cs` + `PortalVideoSurface.cs` + `GreyboxTest`（+`SceneTransitionRunner` GO、重建 gate surface）+ `Map_School`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：進校園沒白光、門是有景深的旋轉漩渦、校園裡的門按 E 能正常回車道＋卸載。
+
+### 追加94 續 82（2026-09-03）— 大門傳送門加大、加深，確認校內離開門同款
+
+- **加大**：portal Quad 5×3.4 → **9×5**（比 7.42 車道寬一點、上下拉長），中心 y1.9→2.7（底邊貼近地面）。`Blocker` 9×5×0.3、root trigger 11×6.5×5 跟著放大。
+- **加深**：`PortalVideoSurface` 景深疊層 `depthLayers` 2→**5**、`depthLayerSpacing` 0.55→**1.2**、`depthLayerShrink` 0.18→0.12、逐層變暗 `0.6^n`→`0.68^n`。疊層 z 1.2→6.0、scale 0.88→0.40 —— 往門內凹約 6 單位深的漩渦隧道。
+- **校內離開門**：`SchoolGate_Exit`（Map_School，z −86，`sceneToUnload=Map_School`、arrival 車道 (0,1.1,-78)、「按 E 離開元培大學」）用同一支 `rebuild` 重建，portal 尺寸/景深跟入口門完全一致。在北牆缺口內側、玩家轉身即見。
+
+改 `PortalVideoSurface.cs` + `GreyboxTest` + `Map_School`（兩座門 surface 重建）。編譯無錯，**EditMode 288/288 綠**。
+
+### 追加94 續 83（2026-09-03）— 大門修：灰框/白立體框移除、擴大、貼齊地板
+
+實測（使用者截圖）：門口前一個小灰色框、門口後一疊大白色立體框。根因 —— 限制範圍（limited-range）H.264 解碼後「黑底」其實是 ~0.06-0.10 灰，`AdditiveUnlit` 直接加上去 → 整片 quad 邊界（含 5 層景深疊層）變成看得見的灰/白矩形。
+
+- **新 shader `Assets/_Project/Rendering/Shaders/PortalVideoURP.shader`**：additive（`Blend One One`）＋ `_Cutoff`（0.14）—— `saturate((c - cutoff) / (1-cutoff))`，把黑底基座壓成全透明，矩形邊界消失。`GatePortalVideo.mat` 換用它。
+- **影片再轉檔**：`-color_range pc` + `curves` 把 0~0.10 壓到 0 + 微增飽和。雙保險。
+- **`PortalVideoSurface`**：改用 `PortalVideoURP`（設 `_Cutoff` = `blackCutoff` 0.14）；`depthLayers` 5→**3** 且大幅變暗（`0.45^n`）；billboard 改 **yaw-only**（保持直立，底邊不會歪）；prompt 拿掉半透明底板（那就是「小灰色框」），只剩粗體白字＋黑描邊。
+- **擴大＋貼齊**：portal quad 9×5 → **12×9**，中心算成 **底邊正好落在車道地面 y0.51**。`Blocker` 縮成 8×4（只擋走道，不用跟視覺一樣大）、trigger 12×4.5×5。
+- 兩座門（入口／校內離開）同款重建。
+
+改 `PortalVideoURP.shader`(新) + `PortalVideoSurface.cs` + `SceneGate.cs`（prompt）+ `GatePortalVideo.mat` + `PortalVortexVideo.mp4` + `GreyboxTest` + `Map_School`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：門是乾淨的旋轉漩渦（沒有灰/白矩形邊框）、比車道寬、底邊貼著路面、字沒有底框。若還看到疊層矩形就把 `depthLayers` 設 0。
+
+### 追加94 續 84（2026-09-03）— 回退續 83（`_Cutoff` 讓門整個消失）
+
+續 83 的 `PortalVideoURP` shader `_Cutoff` 0.14 太狠 —— 把整支影片壓沒了，門看不見。使用者要求回到續 82。
+
+- 刪 `PortalVideoURP.shader`；`GatePortalVideo.mat` 換回 `Live2DAction/VFX/AdditiveUnlit`。
+- `PortalVideoSurface.cs` 回到續 82 版（AdditiveUnlit、`depthLayers` 5、full billboard、無 `_Cutoff`）。
+- `PortalVortexVideo.mp4` 重轉檔回續 81 狀態（baseline + bt709，**不做壓黑 curves**）。
+- `SceneGate` 提示牌半透明底板還原。
+- 兩座門重建回 9×5 / 中心 y2.7。
+- **保留**續 81 的修正（`SceneTransitionRunner` 讓校內離開門能用、RT `GL.Clear` 黑防白閃、按 E 清 `_playerInside` 防提示殘留）—— 那些不是造成消失的原因。
+
+改 `PortalVideoSurface.cs` + `SceneGate.cs` + `GatePortalVideo.mat` + `PortalVortexVideo.mp4` + 刪 shader + `GreyboxTest` + `Map_School`。編譯無錯，**EditMode 288/288 綠**。
+
+**現況（＝續 82）**：門是可見的旋轉紅漩渦，9×5，5 層景深。已知：限制範圍解碼的灰黑底基座還在（矩形邊界會有點灰白）—— 之後用更保守的方法（例如 `smoothstep` 而非硬 cutoff，或只留主體不疊層）再處理。
+
+### 追加94 續 85（2026-09-03）— 大門：拿掉提示文字框、修地圖外的門不顯示
+
+1. **靠近時的矩形（提示文字 UI）移除**：`SceneGate` 整個拿掉 `GatePrompt`（世界空間 Canvas + 半透明底板 + 「按 E」文字）—— 使用者不要那個框。門的漩渦本身就是互動提示，按 E 邏輯不變。
+2. **地圖外（車道）的門不顯示**：`SchoolGate_Enter` 在 `GreyboxTest`、遊戲一開始就 `Awake`；runtime `AddComponent` 的 `VideoPlayer` 在 scene-0 載入時 `playOnAwake` 早於 clip/target 設定、之後的 `Play()` 又太早 → 影片沒真的開始播（additive 黑 RT = 看不見）。校內的 `SchoolGate_Exit` 在遊戲中途載入所以沒中。
+   - `PortalVideoSurface`：`Awake` 加 `Prepare()`；新 `Update` 自我修復 `if (isPrepared && !isPlaying) Play()`。
+3. `depthLayers` 預設 5 → **0**（疊層疊在限制範圍灰底上會變成矩形；先只留主體，把基礎弄穩，景深之後用別的方法）。
+4. 兩座門重建成一致（9×5、depthLayers 0、無 prompt）。
+
+改 `SceneGate.cs` + `PortalVideoSurface.cs` + `GreyboxTest` + `Map_School`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：車道盡頭跟校內都看得到旋轉紅漩渦、沒有文字框、走進去按 E 能進出。
+
+### 追加94 續 86（2026-09-03）— 元培校徽 3D 標誌放進學校上空
+
+使用者 `元培logo.zip`（Meshy AI，元培醫事科技大學圓形校徽 3D 立體版，~29 萬頂點扁平圓盤）。
+
+- 匯入 `Assets/_Project/Environment/Meshy/YuanpeiLogo/`（FBX 29 MB + 5 張 PNG，進版控）。手建 URP/Lit `YuanpeiLogo.mat`（base + normal + metallic_roughness，metallic 0.6 / smoothness 0.55）。normal map import type 已設。
+- 放進 **`Map_School.unity`**：`yuanpei_LogoSky` @ `(0, 42, -132)`（校園上空、綠玻璃圖書館正後上方）、`euler(255,180,0)`（面朝入口、略低頭）、scale **1700**（世界 ~32×32m 巨大空中地標）。無 collider、shadowCasting Off、static。非 Y-up 故 X=270 系。
+- 玩家從大門進校園（arrival `(0,1.1,-92)` 面朝校園）時，抬頭即見巨大校徽懸在建築群上方（見 scratchpad `logo_d.png`）。隨學校場景串流載入/卸載。
+
+⚠️ **`yuanpei_LogoSky` 標記 DoNotShip**：校徽是元培醫事科技大學的**真實註冊商標**，違反 CLAUDE.md 不可協商規則 1（不得複製商標）。已登記 `ASSET_LICENSES.md`。整個「元培」校園命名同屬此風險 —— 發布前必須換原創校徽／改名（見 KNOWN_ISSUES）。
+
+改 Map_School（+`yuanpei_LogoSky`）+ 新資產 + `ASSET_LICENSES.md` / KNOWN_ISSUES。編譯無錯，**EditMode 288/288 綠**。
+
+### 追加94 續 87（2026-09-03）— 路口傳送門又消失：改用 VideoPlayer MaterialOverride（拿掉 RenderTexture）
+
+`SchoolGate_Enter`（GreyboxTest，開場載入）的漩渦一直不顯示，`SchoolGate_Exit`（Map_School，中途載入）正常。強烈懷疑是 `PortalVideoSurface.Awake` 在 scene-0 載入時建 `RenderTexture` + `GL.Clear` —— render context 還沒好、`Awake` 中斷 / 影片沒真的起播 → additive 黑 quad = 隱形。
+
+- `PortalVideoSurface` 大改：**丟掉整條 RenderTexture 路線**，改 `VideoPlayer.renderMode = MaterialOverride`（`targetMaterialRenderer` + `targetMaterialProperty="_BaseMap"`）—— 每幀直接把影片寫進 per-instance 材質的 `_BaseMap`，不需要 RT、不需要 `GL.Clear`、不吃 render-context 時機。
+- `_BaseMap` 初始給 `Texture2D.blackTexture`（首幀進來前 additive 黑 = 隱形，不閃）。
+- `Update` 自我修復簡化成 `if (!_player.isPlaying) _player.Play()` 每幀 nudge；首次真的在播會印一行 `[PortalVideoSurface] '...' video playing`。
+- 移除 `depthLayers` / `renderSize` 等欄位（本來就設 0）。
+- 兩座門重建成一致（9×5、MaterialOverride、無提示）。
+
+改 `PortalVideoSurface.cs` + `GreyboxTest` + `Map_School`。編譯無錯，**EditMode 288/288 綠**。
+**待使用者對焦 Play 驗證**：車道盡頭的漩渦門要顯示（Console 應印兩行 `video playing` —— 入口 + 校內門）。Editor 失焦時 Play 凍結，我這邊看不到影片播放。
+
+### 追加94 續 88（2026-09-03）— 本地西側新增通道 → 二次元城市（60×60，串流場景）
+
+比照南邊往學校的做法，本地西牆開洞 + 往西車道 + 大門傳送門 → 新的串流城市「二次元」。
+
+**`GreyboxTest`**：
+- `BoundaryWall_West` 開洞（比照 `BoundaryWall_South`）：拆兩顆 collider、關 MeshRenderer + `BoundaryBlockEffect`、關 `RippleEmitter`、加兩段 `WallSegment_L/R`（collider + 可見 cube，`BoundaryWallDebugVisible` 材質，沿 Z、中央留口）。
+- `VehicleRoad_West`：cube 於 `(-50, 0.41, 0)`、`(70, 0.2, 7.42)` → x −15 ~ −85，`RoadSurface` 材質，Default layer。
+- `NijigenGate_Enter` @ `(-82, 0, 0)`：`SceneGate`（`sceneToLoad=Map_Nijigen`、arrival `(-92, 1.1, 0)` yaw 270 面朝城內）+ `PortalSurface`（漩渦影片 quad 9×5）+ `Blocker`。跟 `SchoolGate_Enter` 同構。
+
+**新場景 `Assets/_Project/Scenes/Map_Nijigen.unity`**（加入 Build Settings）：
+- `二次元` ground：cube `(-115, 0, 0)`、`(60, 1, 60)`、`Ground_StoneFloor`（頂面 y0.5）。
+- 5 道隱形周界牆（collider-only，比照 `SchoolWall_*`）：West/North/South 全牆 + `EastTop`/`EastBottom` 夾東側路口（gap z ±4.32，朝本地）。
+- `NijigenGate_Exit` @ `(-86, 0, 0)`：`SceneGate`（`sceneToUnload=Map_Nijigen`、arrival `(-78, 1.1, 0)` yaw 90 回車道）+ 同款漩渦門。
+
+流程：本地往西穿牆口 → `VehicleRoad_West` → `NijigenGate_Enter` 按 E → 載入畫面 → 站在二次元城內；城內 `NijigenGate_Exit` 按 E → 回車道、城市卸載。`SceneTransitionRunner` 共用。城市內容（建築/生成點）待填。
+
+改 `GreyboxTest` + 新 `Map_Nijigen.unity` + Build Settings。無 code 變更。編譯無錯，**EditMode 288/288 綠**。
+**已知**：西邊車道上空剛好有空島（`Torii_FloatingIsland`）飄著，走過去會在島下方——要的話之後挪空島或西通道。
+**待使用者對焦 Play 驗證**：本地往西 → 穿口上車道 → 漩渦門按 E → 進二次元；城內門按 E → 回本地。
+
+### 追加94 續 89（2026-09-03）— yuanpei_LogoSky 空中 Boss（工程文件 v1.0，Phase 1–4 完成）
+
+依使用者提供的 `yuanpei_LogoSky_Boss_工程說明文件.md` 實作空中遠距法術型 Boss。詳見新文件 `Docs/YUANPEI_LOGO_SKY_BOSS.md`。
+
+**12 支新腳本** `Assets/_Project/Game/AI/Boss/Yuanpei/`：`YuanpeiBossConfig`(SO) / `YuanpeiAttackDef`(SO) / `YuanpeiBossVitals`(HP委派Health＋Energy＋Posture權威，`YuanpeiPhaseLogic`純函式) / `YuanpeiScheduler`(純招式選擇) / `YuanpeiBoss`(15狀態FSM＋空中移動＋排程＋Intro降下) / `YuanpeiAttacks`(6招coroutine) / `YuanpeiProjectile` / `YuanpeiHazard` / `YuanpeiExecution`(架勢崩潰→墜落→5s F窗→處決) / `YuanpeiBossHitReceiver` / `YuanpeiPerfectDodge` / `YuanpeiBossHUD` / `YuanpeiEncounter`。
+
+**資料**：`Assets/_Project/Settings/Combat/Yuanpei/YuanpeiBossConfig.asset`（HP 1200、arena (0,0.5,-114) r11）＋ `YuanpeiAttack_*.asset` ×6（光粒子三連射／聚焦雷射／雷擊標記／多重延遲光爆／近身震退／肉身衝撞，能量/冷卻/射程/傷害/時間軸全在 SO）。
+
+**場景（`Map_School.unity`）**：`yuanpei_LogoSky` 重構為 boss —— root scale 1 + `VisualRoot` 子（校徽 mesh scale 1700，Intro 縮到 ×0.28）+ 5 anchor + `CollisionRoot`（BodyCollider / CoreWeakPoint trigger + HitReceiver）。root 掛全套 boss 元件 + `Health`(defer) + `LockOnTarget`(距離×2.4)。新 `YuanpeiEncounter` trigger 在 plaza (0,2,-105)。新 layer `ChargeCrashSurface`（slot 9），3 顆 `yuanpei_*_Collision` 已標記。
+
+**測試**：`YuanpeiBossLogicTests` 15 個（階段門檻 + 排程過濾 8 種 skip 條件）。**EditMode 303/303 綠**（原 288 + 15）。編譯無錯。
+
+**已完成 Phase 1–4**：三條數值 + 狀態優先 + 死亡鎖 + HUD；懸浮/面向/距離/視線/Phase/候選過濾/Attack Lock/冷卻/間隔；6 招原型（幾何+純色，各有 Telegraph/Active/Recovery/Cancel）；架勢滿→墜落→F 處決→重升空/死亡；能量耗盡≠可處決；HP 歸零優先。
+
+**未完成（後續）**：正式 VFX/音效/鏡頭（Phase 5）；模型減面+LOD（§3.1，需 Blender）；Object Pool；依玩家閃避資料的平衡校準（Phase 6）；Boss 戰強制停用玩家防禦的 Rule Set（§8.1）。
+
+**待使用者對焦 Play 驗證**：學校 plaza 中央觸發開戰 → 打到架勢滿 → 按 F 處決 → 重複到 HP 歸零勝利。
+
+### 追加94 續 90（2026-09-03）— 傳送門改程序化 shader（放棄影片）＋ 空中 Boss 兩個修正
+
+**1. 入口傳送門又消失** —— 影片方案（VideoPlayer→RT / MaterialOverride）試了 ~9 次，入口門（scene-0 載入）就是不 render。**整個放棄影片**：`PortalVideoSurface` 改成套用既有的程序化漩渦 shader `Live2DAction/PortalVortexURP`（空島傳送門用的那支，fragment 自己動、無 VideoPlayer / 無 RenderTexture / 無時機問題），紅橘火焰配色。新 `GatePortalVortex.mat`，4 座門（Schoolx2 + Nijigenx2）全部重指向。**截圖驗證會 render 了**。mp4 檔留在 `VFX/Gate/` 給之後正式 VFX。
+
+**2. 進場後 Boss 升起但沒動靜** —— `YuanpeiBoss.BeginEncounter` 用 `FindFirstObjectByType<PlayerInputProvider>()` 抓「玩家」→ 抓到**貓**（Player 和 Cat 都有 PIP）→ 距離判定永遠不符 → 不出招。修正：
+- `YuanpeiEncounter.OnTriggerEnter` 只認 root 名為 `Player` 的角色，把它傳給 `BeginEncounter`。
+- `ResolvePlayer()` 備援：優先名為 "Player"、否則有 `PlayerCombat` 且非貓、否則第一個。
+- 螢幕外判定放寬（viewport -0.4~1.4，抓不到相機時當「可見」不卡戰鬥）。
+- LOS 改 `RaycastAll` 忽略玩家自己＋Boss 自己（原本單 Raycast 容易被地面/自身擋掉）。
+- Stuck watchdog：Hover/Reposition 超過 4s 沒出招 → 忽略軟性 gate，硬選一個範圍內負擔得起的招。
+
+改 `PortalVideoSurface.cs` + `YuanpeiBoss.cs` + `YuanpeiEncounter.cs` + 新 `GatePortalVortex.mat` + 4 場景重指向。編譯無錯，**EditMode 303/303 綠**。
+**待使用者對焦 Play 驗證**：車道盡頭看得到紅漩渦門；進學校 plaza 開戰後 Boss 會開始丟招。

@@ -52,7 +52,14 @@ namespace Live2DAction.Input
         private void Update()
         {
             Keyboard keyboard = Keyboard.current;
-            if (keyboard == null)
+
+            // 2026-09-02 - a map-streaming load curtain (ScreenFader) is up: the screen is black
+            // while a region scene activates, so swallow all input rather than let the player walk
+            // blindly into geometry that's still cooking its colliders. Neutral for the whole
+            // fade-out + hold; input returns the instant the reveal starts (IsCovered flips as soon
+            // as ScreenFader.SetCovered(false) is called). No-op when there's no ScreenFader.
+            if (keyboard == null
+                || (World.ScreenFader.Instance != null && World.ScreenFader.Instance.IsCovered))
             {
                 MoveInput = Vector2.zero;
                 AttackPressed = false;

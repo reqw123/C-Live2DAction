@@ -1,0 +1,63 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 35c332dbb6677324e87bf1a7ceb0c779, type: 3}
+  m_Name: YuanpeiBossConfig
+  m_EditorClassIdentifier: 
+  maxHealth: 1200
+  maxEnergy: 100
+  maxPosture: 100
+  energyRegenPerSecond: 5
+  energyRegenPhase3Bonus: 0.2
+  energyRechargeExitThreshold: 50
+  energyRechargeMaxSeconds: 3
+  lowEnergyThreshold: 15
+  postureGainPerDamage: 0.55
+  perfectDodgeCounterPostureMultiplier: 1.5
+  backCorePostureMultiplier: 1.6
+  lowEnergyPostureMultiplier: 1.4
+  chargeCrashPostureFraction: 0.3
+  backCoreHealthMultiplier: 1.5
+  lowEnergyHealthMultiplier: 1.25
+  downedHealthMultiplier: 1.5
+  executionHealthFraction: 0.22
+  idealCombatDistanceMin: 8
+  idealCombatDistanceMax: 14
+  maxAttackDistance: 18
+  meleeRange: 4.5
+  hoverHeight: 3
+  rechargeHeight: 1.7
+  hoverBobAmplitudeSpeed: {x: 0.35, y: 0.8}
+  repositionSpeed: 6
+  faceTurnSpeedDegPerSec: 220
+  minPitchToPlayerDeg: 15
+  maxPitchToPlayerDeg: 32
+  globalAttackIntervalMin: 0.7
+  globalAttackIntervalMax: 1
+  phase3IntervalScale: 0.8
+  rotationRecoverySeconds: 6
+  rotationRecentWeightFactor: 0.35
+  onScreenGraceBeforeAttack: 0.5
+  phase2HealthFraction: 0.7
+  phase3HealthFraction: 0.35
+  fallSeconds: 1.1
+  fallSpinSpeedDeg: 540
+  executionWindowSeconds: 5
+  executionInteractDistance: 2.4
+  executionAnimationSeconds: 1.6
+  reAscendSeconds: 1.4
+  postExecutionInvulnSeconds: 1
+  energyAfterExecution: 50
+  energyAfterMissedExecution: 40
+  perfectDodgeWindowSeconds: 0.18
+  perfectDodgeCounterWindowSeconds: 0.5
+  arenaCenter: {x: 0, y: 0.5, z: -114}
+  arenaRadius: 11

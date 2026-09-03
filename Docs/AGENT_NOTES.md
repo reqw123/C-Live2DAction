@@ -284,6 +284,15 @@ System.Type.GetType("MCPForUnity.Editor.Services.EditorStateCache, MCPForUnity.E
   絕不要為了改個材質就呼叫 `Build()`。真要整場重建，先問使用者，並照 `CHANGELOG.md` 記錄的完整
   工具執行順序重跑所有後續視覺/立牌腳本。
 - **場景是二進位 YAML，不友善版控**。改場景前先 `git status` — 有未 commit 內容代表工作目錄是唯一副本。
+- **地圖串流（追加94 續 73–78）**：`學校` + `SchoolWall_*` + `yuanpei_*` 已從 `GreyboxTest` 移到
+  **`Assets/_Project/Scenes/Map_School.unity`**（兩場景都在 Build Settings）。**進出用大門互動**
+  （`SceneGate.cs` + `SceneTransitionRunner.cs`）：`SchoolGate_Enter`（GreyboxTest 車道南端）按 E
+  → `SceneTransitionRunner`（常駐 GO，**不是門上** —— 卸 Map_School 會連門帶 coroutine 一起銷毀）跑
+  `ScreenFader` 載入畫面 → `LoadSceneAsync(Additive)` → 傳送玩家進校園；`SchoolGate_Exit`（Map_School 內）
+  按 E → 傳回車道 + 卸載。門的可見面是紅漩渦影片（`PortalVideoSurface`，VideoPlayer→RT→`AdditiveUnlit`；
+  RT 建時要 `GL.Clear` 黑否則 additive 白閃）。`MapStreamer.cs` 留磁碟未使用。
+  **要改學校物件先在 Editor 把 `Map_School.unity` additively 開起來**。詳見 `MAP_STREAMING.md`。
+  Editor 失焦時 Play 會凍結 → 轉場 coroutine MCP 測不了，要對焦 Play。
 - **判斷「X 是否在 Y 上/內」時，不要用斜角透視截圖** — 前縮法會讓不同距離的物件在畫面上疊在一起。
   用正交（orthographic）俯視 RenderTexture，或直接拿世界座標比對區域邊界 /
   `Camera.WorldToScreenPoint` 對照實際位置。
