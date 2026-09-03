@@ -28,11 +28,63 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         private Transform _fill;   // scaling disc visual
         private Renderer _fillR;
+        private Transform _ring;   // bright outline (spec §22.2 - unmistakable telegraph)
+        private Renderer _ringR;
         private MaterialPropertyBlock _mpb;
+        private MaterialPropertyBlock _ringMpb;
         private static readonly int ColorId = Shader.PropertyToID("_BaseColor");
         private static readonly int EmiId = Shader.PropertyToID("_EmissionColor");
 
         public bool IsMajorActive => !_burstDone;
+
+        // --- optional flipbook visual (紅圈攻擊特效.mp4 baked to a 6x6 atlas) as an RPG-style
+        //     ground telegraph. Runtime VideoPlayers render black on this box, so it's a static
+        //     atlas + a script-driven _Frame instead. ---
+        private Material _flipMat;
+        private Renderer _flipR;
+        private int _flipFrames = 36;
+        private float _flipImpactFrac = 0.55f;   // fraction of `frames` reached when the pillar lands
+        private static readonly int FadeId = Shader.PropertyToID("_Fade");
+        private static readonly int FrameId = Shader.PropertyToID("_Frame");
+        private static readonly int ColsId = Shader.PropertyToID("_Cols");
+        private static readonly int RowsId = Shader.PropertyToID("_Rows");
+
+        // Call AFTER Configure. Replaces the solid disc with a flat ground quad showing the baked
+        // flipbook (Live2DAction/GroundStrikeURP). `frameScale` = quad width / (radius*2) - the
+        // atlas circle only fills part of each tile, so the quad is drawn bigger. The bright rim
+        // ring from Configure stays on as a guaranteed-visible RPG telegraph.
+        public void SetFlipbook(Material matTemplate, int cols, int rows, int frames, float impactFraction, float frameScale = 1.6f)
+        {
+            if (matTemplate == null) return;
+            _flipFrames = Mathf.Max(1, frames);
+            _flipImpactFrac = Mathf.Clamp01(impactFraction);
+
+            // the atlas has its own rune ring + fill - the primitive disc/ring underneath just
+            // pollutes it (a lit orange blob in the centre), so hide both.
+            if (_fillR != null) _fillR.enabled = false;
+            if (_ringR != null) _ringR.enabled = false;
+
+            var quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            quad.name = "StrikeFlipbook";
+            Object.DestroyImmediate(quad.GetComponent<Collider>());
+            quad.transform.SetParent(transform, false);
+            // sit clearly above the floor - the shader uses ZTest LEqual + polygon offset so the
+            // player occludes the decal, but the physical lift also keeps it off the plaza mesh.
+            quad.transform.localPosition = new Vector3(0f, 0.12f, 0f);
+            quad.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);   // lie flat, face up
+            // frameScale ~1.6: with the shader's circular crop the whole quad reads as the circle,
+            // so keep it close to the hit radius (radius*2 = hit diameter) plus a small fairness margin.
+            quad.transform.localScale = new Vector3(_radius * 2f * frameScale, _radius * 2f * frameScale, 1f);
+            _flipR = quad.GetComponent<Renderer>();
+            _flipR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            _flipMat = new Material(matTemplate);
+            _flipMat.SetFloat(ColsId, cols);
+            _flipMat.SetFloat(RowsId, rows);
+            _flipMat.SetFloat(FrameId, 0f);
+            _flipMat.SetFloat(FadeId, 1f);
+            _flipR.sharedMaterial = _flipMat;
+        }
 
         public void Configure(Kind kind, Vector3 pos, float radius, float warnSeconds, float activeSeconds,
             float damage, Transform player, GameObject source, Color warnColor, Color burstColor,
@@ -47,22 +99,48 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _fill = GameObject.CreatePrimitive(PrimitiveType.Cylinder).transform;
             _fill.SetParent(transform, false);
             Object.DestroyImmediate(_fill.GetComponent<Collider>());
-            _fill.localScale = new Vector3(radius * 2f, 0.03f, radius * 2f);
+            _fill.localScale = new Vector3(radius * 2f, 0.02f, radius * 2f);
             _fillR = _fill.GetComponent<Renderer>();
             _fillR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             _mpb = new MaterialPropertyBlock();
             Paint(_warnColor, 0.15f);
+
+            // bright rim so the warning is unmistakable even on a busy floor (spec §22.2). A thin
+            // ring of the disc sitting slightly proud of the fill - not a separate hit volume.
+            _ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder).transform;
+            _ring.SetParent(transform, false);
+            Object.DestroyImmediate(_ring.GetComponent<Collider>());
+            _ring.localPosition = new Vector3(0f, 0.03f, 0f);
+            _ring.localScale = new Vector3(radius * 2f + 0.35f, 0.015f, radius * 2f + 0.35f);
+            _ringR = _ring.GetComponent<Renderer>();
+            _ringR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _ringMpb = new MaterialPropertyBlock();
+            _ringR.GetPropertyBlock(_ringMpb);
+            _ringMpb.SetColor(ColorId, _warnColor);
+            _ringMpb.SetColor(EmiId, _warnColor * 2f);
+            _ringR.SetPropertyBlock(_ringMpb);
         }
 
         private Color _warnColor, _burstColor;
 
         private void Paint(Color c, float emi)
         {
-            if (_fillR == null) return;
-            _fillR.GetPropertyBlock(_mpb);
-            _mpb.SetColor(ColorId, c);
-            _mpb.SetColor(EmiId, c * emi);
-            _fillR.SetPropertyBlock(_mpb);
+            if (_fillR != null)
+            {
+                _fillR.GetPropertyBlock(_mpb);
+                _mpb.SetColor(ColorId, new Color(c.r, c.g, c.b, 0.5f));
+                _mpb.SetColor(EmiId, c * emi);
+                _fillR.SetPropertyBlock(_mpb);
+            }
+            if (_ringR != null)
+            {
+                // ring pulses brighter as the timer runs down (warn phase) and blazes on burst
+                float pulse = 1.6f + 1.4f * Mathf.Abs(Mathf.Sin(_t * 6f));
+                _ringR.GetPropertyBlock(_ringMpb);
+                _ringMpb.SetColor(ColorId, c);
+                _ringMpb.SetColor(EmiId, c * (emi > 2f ? emi : pulse));
+                _ringR.SetPropertyBlock(_ringMpb);
+            }
         }
 
         private void Update()
@@ -73,6 +151,24 @@ namespace Live2DAction.AI.Boss.Yuanpei
             {
                 TickRing();
                 return;
+            }
+
+            // flipbook: play the warn-up frames over _warnSeconds so the pillar frame lands exactly
+            // when the burst fires, then the remaining frames over a short tail, then fade + die.
+            const float flipTail = 1.3f;
+            if (_flipMat != null)
+            {
+                float impactFrame = _flipImpactFrac * (_flipFrames - 1);
+                float frame;
+                if (_t < _warnSeconds)
+                    frame = Mathf.Lerp(0f, impactFrame, _t / Mathf.Max(0.01f, _warnSeconds));
+                else
+                {
+                    float tk = (_t - _warnSeconds) / flipTail;
+                    frame = Mathf.Lerp(impactFrame, _flipFrames - 1, Mathf.Clamp01(tk));
+                    _flipMat.SetFloat(FadeId, Mathf.Clamp01((1f - tk) / 0.3f));
+                }
+                _flipMat.SetFloat(FrameId, frame);
             }
 
             if (_t < _warnSeconds)
@@ -89,8 +185,19 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 TryHitPlayerInCircle(_radius);
             }
 
+            if (_flipMat != null)
+            {
+                if (_t > _warnSeconds + flipTail) Destroy(gameObject);
+                return;
+            }
+
             if (_t > _warnSeconds + _activeSeconds)
                 Destroy(gameObject);
+        }
+
+        private void OnDestroy()
+        {
+            if (_flipMat != null) Destroy(_flipMat);
         }
 
         private void TickRing()

@@ -13,14 +13,14 @@ MonoBehaviour:
   m_Name: YuanpeiBossConfig
   m_EditorClassIdentifier: 
   maxHealth: 1200
-  maxEnergy: 100
+  maxEnergy: 600
   maxPosture: 100
-  energyRegenPerSecond: 5
+  energyRegenPerSecond: 12
   energyRegenPhase3Bonus: 0.2
-  energyRechargeExitThreshold: 50
+  energyRechargeExitThreshold: 300
   energyRechargeMaxSeconds: 3
-  lowEnergyThreshold: 15
-  postureGainPerDamage: 0.55
+  lowEnergyThreshold: 72
+  postureGainPerDamage: 0.15
   perfectDodgeCounterPostureMultiplier: 1.5
   backCorePostureMultiplier: 1.6
   lowEnergyPostureMultiplier: 1.4
@@ -33,21 +33,22 @@ MonoBehaviour:
   idealCombatDistanceMax: 14
   maxAttackDistance: 18
   meleeRange: 4.5
-  hoverHeight: 3
+  hoverHeight: 2.6
   rechargeHeight: 1.7
+  maxWorldY: 8
   hoverBobAmplitudeSpeed: {x: 0.35, y: 0.8}
   repositionSpeed: 6
   faceTurnSpeedDegPerSec: 220
   minPitchToPlayerDeg: 15
   maxPitchToPlayerDeg: 32
-  globalAttackIntervalMin: 0.7
-  globalAttackIntervalMax: 1
+  globalAttackIntervalMin: 0.1
+  globalAttackIntervalMax: 0.25
   phase3IntervalScale: 0.8
   rotationRecoverySeconds: 6
   rotationRecentWeightFactor: 0.35
-  onScreenGraceBeforeAttack: 0.5
-  phase2HealthFraction: 0.7
-  phase3HealthFraction: 0.35
+  onScreenGraceBeforeAttack: 0.15
+  phase2HealthFraction: 0.65
+  phase3HealthFraction: 0.3
   fallSeconds: 1.1
   fallSpinSpeedDeg: 540
   executionWindowSeconds: 5
@@ -55,9 +56,9 @@ MonoBehaviour:
   executionAnimationSeconds: 1.6
   reAscendSeconds: 1.4
   postExecutionInvulnSeconds: 1
-  energyAfterExecution: 50
-  energyAfterMissedExecution: 40
+  energyAfterExecution: 300
+  energyAfterMissedExecution: 240
   perfectDodgeWindowSeconds: 0.18
   perfectDodgeCounterWindowSeconds: 0.5
-  arenaCenter: {x: 0, y: 0.5, z: -114}
+  arenaCenter: {x: -2, y: 0.5, z: -105}
   arenaRadius: 11

@@ -26,6 +26,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [SerializeField] private List<YuanpeiAttackDef> attackPool = new List<YuanpeiAttackDef>();
         [SerializeField] private LayerMask losBlockers = ~0;
         [SerializeField] private LayerMask groundMask = ~0;
+        [Tooltip("Log FSM state / player / distance / LOS / on-screen / attack pick once per second.")]
+        [SerializeField] private bool verboseLog = true;
 
         public YuanpeiState State { get; private set; } = YuanpeiState.Inactive;
         public YuanpeiBossVitals Vitals => vitals;
@@ -66,6 +68,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _rng = new System.Random();
             _arenaCenter = config != null ? config.arenaCenter : transform.position;
             _cam = Camera.main;
+            _skyStartPos = transform.position;
+            _skyVisualScale = visualRoot != null ? visualRoot.localScale : Vector3.one;
         }
 
         private void OnEnable()
@@ -96,6 +100,38 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (player == null) player = ResolvePlayer();
             StartCoroutine(IntroRoutine());
         }
+
+        // The player died in this fight and gets kicked out - put the boss fully back to its
+        // pre-fight state so walking back in restarts a clean encounter.
+        public void ResetForRematch()
+        {
+            StopAllCoroutines();
+            _attackRoutine = null;
+            if (attacks != null) attacks.CancelAll();
+            State = YuanpeiState.Inactive;
+            _postExecInvuln = false;
+            _perfectCounterUntil = 0f;
+            _globalRestUntil = 0f;
+            _yClampSuspendUntil = 0f;
+            _cooldownUntil.Clear();
+            _lastUsedTime.Clear();
+            _hasLastAttack = false;
+
+            if (vitals != null)
+            {
+                vitals.ResetPosture();
+                if (vitals.Health != null) vitals.Health.ResetHealth();
+                if (config != null) vitals.SetEnergy(config.maxEnergy);
+                vitals.EvaluatePhase();
+            }
+            if (visualRoot != null) visualRoot.localScale = _skyVisualScale;
+            transform.position = _skyStartPos;
+            transform.rotation = Quaternion.identity;
+
+            foreach (var lt in GetComponentsInChildren<Live2DAction.Targeting.LockOnTarget>(true)) lt.enabled = true;
+            foreach (var col in GetComponentsInChildren<Collider>(true)) col.enabled = true;
+        }
+        private Vector3 _skyStartPos;
 
         // Player + Cat both carry PlayerInputProvider - prefer the one named "Player", else the
         // one WITHOUT a cat-only component, else the first.
@@ -140,11 +176,41 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         // ---------------------------------------------------------------- FSM tick
 
+        private float _nextDiagLog;
+
         private void Update()
         {
             if (config == null || vitals == null) return;
 
             TrackOnScreen();
+            ClampWorldY();
+
+            if (verboseLog && Time.time >= _nextDiagLog && State != YuanpeiState.Inactive)
+            {
+                _nextDiagLog = Time.time + 1f;
+                float d = player != null
+                    ? Vector3.Distance(new Vector3(transform.position.x, 0, transform.position.z),
+                                       new Vector3(player.position.x, 0, player.position.z))
+                    : -1f;
+                Debug.Log($"[YuanpeiBoss] state={State} player={(player != null ? player.name : "NULL")} dist={d:F1} " +
+                          $"LOS={HasLineOfSight()} onScreen={_wasOnScreen}({(Time.time - _onScreenSince):F1}s) " +
+                          $"hp={vitals.HealthNormalized:P0} energy={vitals.Energy:F0} posture={vitals.Posture:F0}/{ (config != null ? config.maxPosture : 100f):F0} phase={vitals.Phase} " +
+                          $"rest={(Mathf.Max(0, _globalRestUntil - Time.time)):F1}s stuck={(Time.time - _stuckSince):F1}s y={transform.position.y:F1}", this);
+            }
+
+            // player died (RespawnController deactivates its GameObject) - stop attacking, just hover
+            // until YuanpeiEncounter.Defeat() resets us. Don't chase / cast at an inactive target.
+            if (player != null && !player.gameObject.activeInHierarchy)
+            {
+                if (_attackRoutine != null || (attacks != null && attacks.MajorHazardActive))
+                {
+                    CancelAttack();
+                    if (attacks != null) attacks.CancelAll();
+                    State = YuanpeiState.Hover;
+                }
+                HoldHover();
+                return;
+            }
 
             switch (State)
             {
@@ -185,6 +251,10 @@ namespace Live2DAction.AI.Boss.Yuanpei
         {
             if (player == null) return;
 
+            // passive energy regen while hovering / repositioning (spec §5.2 "一般 Hover／Reposition
+            // 狀態可緩慢恢復"). NOT during an attack's Active phase - those states don't run this tick.
+            vitals.RegenEnergy(Time.deltaTime, vitals.Phase >= 3);
+
             // forced recharge (spec §5.2 / §10.2)
             if (vitals.Energy < config.lowEnergyThreshold && !HasAnyAffordableInRange())
             {
@@ -199,26 +269,39 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // schedule
             if (Time.time < _globalRestUntil) { _stuckSince = Time.time; return; }
             var chosen = PickAttack();
-            if (chosen == null && Time.time - _stuckSince > 4f)
-                chosen = ForceAnyInRangeAttack();   // watchdog - never freeze the fight (spec §10.3 "不得忽略條件" but a soft-gate stall is worse)
+            if (chosen == null && Time.time - _stuckSince > 0.3f)
+                chosen = ForceAnyInRangeAttack();   // watchdog - the scheduler's soft gates (on-screen / LOS / no-repeat) stall a ranged boss into passivity; keep it pressuring the player (user: "攻擊慾望太低")
             if (chosen != null) { BeginAttack(chosen); _stuckSince = Time.time; }
         }
         private float _stuckSince;
 
+        // Watchdog fallback. Unlike PickAttack it ignores on-screen / LOS (those made the boss
+        // passive), but it still respects phase / energy / cooldown / no-repeat and picks RANDOMLY
+        // among what's valid so the boss doesn't just spam pool[0] (user: "手段太少").
+        private readonly List<YuanpeiAttackDef> _wdCandidates = new List<YuanpeiAttackDef>();
         private YuanpeiAttackDef ForceAnyInRangeAttack()
         {
             if (player == null) return null;
             float dist = Vector3.Distance(new Vector3(transform.position.x, 0, transform.position.z),
                                           new Vector3(player.position.x, 0, player.position.z));
+
+            _wdCandidates.Clear();
+            YuanpeiAttackDef ignoreRangeFallback = null;
             foreach (var d in attackPool)
             {
                 if (d == null || d.requiredPhase > vitals.Phase || !vitals.CanAfford(d.energyCost)) continue;
                 if (_cooldownUntil.TryGetValue(d.attackId, out float cd) && Time.time < cd) continue;
-                if (dist < d.minRange || dist > d.maxRange) continue;
                 if (d.isMajorHazard && attacks != null && attacks.MajorHazardActive) continue;
-                return d;
+                if (_hasLastAttack && d.attackId == _lastAttackId && attackPool.Count > 1) continue; // no repeat
+                if (dist >= d.minRange && dist <= d.maxRange) _wdCandidates.Add(d);
+                else if (ignoreRangeFallback == null) ignoreRangeFallback = d;
             }
-            return null;
+            if (_wdCandidates.Count > 0)
+                return _wdCandidates[_rng.Next(_wdCandidates.Count)];
+
+            // nothing in range - fire an off-cd affordable attack anyway rather than hover forever;
+            // the attack coroutines re-aim at the player's live position.
+            return ignoreRangeFallback;
         }
 
         private void HoldHover()
@@ -274,8 +357,33 @@ namespace Live2DAction.AI.Boss.Yuanpei
         {
             Vector3 o = new Vector3(at.x, at.y + 20f, at.z);
             if (Physics.Raycast(o, Vector3.down, out var hit, 200f, groundMask, QueryTriggerInteraction.Ignore))
-                return hit.point.y;
+                // never let a raycast that clipped a building roof / prop count as "the floor"
+                return Mathf.Min(hit.point.y, _arenaCenter.y + 2f);
             return _arenaCenter.y + 0.5f;
+        }
+
+        // Absolute Y ceiling (spec §7.2 "Boss 不飛到玩家正上方" + user: "太高了"). Runs every frame
+        // after the state tick so nothing - hover, recharge, a bad floor sample - can fling the
+        // boss above config.maxWorldY. Falling / execution states are driven by YuanpeiExecution
+        // and are left alone (the boss is meant to be on the ground then).
+        // An attack that legitimately goes high (ChargeCrush lining up over the player's head)
+        // suspends the Y ceiling for a moment so ClampWorldY doesn't fight it.
+        private float _yClampSuspendUntil;
+        public void SuspendYClamp(float seconds) => _yClampSuspendUntil = Time.time + Mathf.Max(0f, seconds);
+
+        private void ClampWorldY()
+        {
+            if (config == null) return;
+            if (Time.time < _yClampSuspendUntil) return;
+            if (State == YuanpeiState.Falling || State == YuanpeiState.ExecutionWindow
+                || State == YuanpeiState.Executing || State == YuanpeiState.Intro) return;
+            float ceiling = config.maxWorldY;
+            if (transform.position.y > ceiling)
+            {
+                Vector3 p = transform.position;
+                p.y = ceiling;
+                transform.position = p;
+            }
         }
 
         // ---------------------------------------------------------------- scheduler
@@ -365,6 +473,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         private void BeginAttack(YuanpeiAttackDef def)
         {
+            if (verboseLog) Debug.Log($"[YuanpeiBoss] ATTACK -> {def.attackId} (energy {vitals.Energy:F0}, phase {vitals.Phase})", this);
             _lastAttackId = def.attackId;
             _hasLastAttack = true;
             _lastUsedTime[def.attackId] = Time.time;
@@ -510,8 +619,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
             bool on = true; // no camera -> assume visible (don't stall the fight)
             if (_cam != null)
             {
+                // generous bounds - a big aerial boss reads as "present" well past the frame edge,
+                // and the player almost always has it roughly in view during a fight. Too tight a
+                // box made the boss go passive whenever the player turned (user: "攻擊慾望極低").
                 Vector3 vp = _cam.WorldToViewportPoint(transform.position);
-                on = vp.z > 0f && vp.x > -0.4f && vp.x < 1.4f && vp.y > -0.5f && vp.y < 1.5f;
+                on = vp.z > 0f && vp.x > -0.9f && vp.x < 1.9f && vp.y > -0.9f && vp.y < 1.9f;
             }
             if (on && !_wasOnScreen) _onScreenSince = Time.time;
             _wasOnScreen = on;
@@ -527,7 +639,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
             Vector3 startVScale = visualRoot != null ? visualRoot.localScale : Vector3.one;
             _skyVisualScale = startVScale;
             float floor = SampleFloorY(_arenaCenter);
-            Vector3 endPos = new Vector3(_arenaCenter.x, floor + config.hoverHeight + 1.5f, _arenaCenter.z);
+            float endY = Mathf.Min(floor + config.hoverHeight + 1.5f, config.maxWorldY);
+            Vector3 endPos = new Vector3(_arenaCenter.x, endY, _arenaCenter.z);
             Vector3 endVScale = startVScale * combatVisualScaleFraction;
             float t = 0f, dur = 2.6f;
             while (t < dur)

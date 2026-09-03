@@ -27,10 +27,14 @@ namespace Live2DAction.Combat.Boss
         // than an actual "flew out" moment even though nothing was literally delayed.
         [SerializeField] private float launchUpwardSpeed = 7f;
 
-        // Mirrors CheckpointGate's own DashInstantDisplacement idiom - a guaranteed immediate
-        // Move() snap on top of the decaying velocity, so the hit reads as "instantly displaced"
-        // the same frame it lands rather than only gradually accelerating into motion.
-        [SerializeField] private float instantDisplacementFraction = 0.15f;
+        // A small guaranteed Move() snap on top of the decaying velocity so the hit still reads as
+        // "shoved right now" rather than gradually accelerating into motion.
+        // 2026-09-03, user feedback ("非常近距離接觸時 boss 擊退玩家的動畫不自然, 感覺有點掉帧, 順移的
+        // 感覺") - at 0.15 the snap was force*0.15 = ~1.5-1.8m of position teleport in a single frame,
+        // with nothing animating across it - that's the "順移/掉帧" look. Dropped to a token nudge;
+        // the decaying _dashVelocity (force*0.25 over DashDecaySeconds) carries the actual distance
+        // smoothly frame-by-frame. Boss knockback forces were bumped to keep the total push.
+        [SerializeField] private float instantDisplacementFraction = 0.04f;
 
         private CharacterMovement _movement;
 

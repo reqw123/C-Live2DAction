@@ -984,8 +984,10 @@ speed，印出 hit window 真實 contact 秒數 + 有效 ms + 對 0.20s 彈反�
 3. **規格項目 2 Part C**：上半身 AvatarMask layer + 專屬 `GuardImpact`/`ParryImpact` clip（需動畫製作）。
 4. **規格項目 5C**：精確刀身 Guard collider——使用者決定跳過，等未來完整武士副本做「做法 B」（縮小可見武士）。
 5. **武士連續刺擊（ContinuousThrust）重新加入**：`ContinuousThrust.fbx` + `Wushi_Attack_ContinuousThrust.asset` 都還在磁碟（時序報表仍會列出）。使用者要「參照動作本身的短位移和攻擊姿勢」= 開 `useRootMotion`、FBX 不要 in-place bake，重量 hit window。追加89 退役原因見下方「連續刺刀」段。
-6. **地圖串流（續 73-81）**：學校在獨立 `Map_School.unity`，**大門互動式**進出（`SceneGate` + `SceneTransitionRunner` 常駐 GO 跑 coroutine，續 78/81）+ `ScreenFader` 載入畫面「載入中…」+ 黑幕鎖輸入。門的可見面是紅色漩渦影片（`PortalVideoSurface` 續 87：VideoPlayer **MaterialOverride** 直寫 `_BaseMap`、無 RenderTexture/GL.Clear、`AdditiveUnlit`、billboard + 脈動、9×5、無疊層、無提示）。`Update` 每幀 nudge `Play()`（scene-0 載入的入口門原本沒播 = 隱形，續 85-87 多次嘗試）。yuanpei MeshCollider 換成 box proxy。詳見 `Docs/MAP_STREAMING.md`。待辦：
-   - **限制範圍解碼的灰底還在** —— 影片「黑底」實際 ~0.06-0.10 灰，additive 疊上去讓 9×5 quad 矩形邊界有點灰白。需要 smoothstep 去背（續 83 硬 `_Cutoff` 太狠讓門整個消失、已回退）。
+6. **地圖串流（續 73-91）**：學校在獨立 `Map_School.unity`、二次元在 `Map_Nijigen.unity`，**大門互動式**進出（`SceneGate` + `SceneTransitionRunner` 常駐 GO 跑 coroutine，續 78/81）+ `ScreenFader` 載入畫面「載入中…」+ 黑幕鎖輸入。門的可見面是紅色漩渦影片：**續 91 改成場景序列化的 VideoPlayer**（編輯期 `AddComponent` + `clip`/RT/`playOnAwake` 寫進場景 YAML，**不再 runtime `AddComponent`** —— 那是入口門播不出來的根因）→ 每座門一張 `RT_<gate>` + `Mat_<gate>`（shader `Live2DAction/PortalVideoURP`：`smoothstep` key 掉近黑、`Blend One One`、無矩形基座）。`PortalVideoSurface.cs` 只做 billboard(關)＋pulse＋`Update()` 的 `Play()` nudge 保險。13×9 quad、無提示。yuanpei MeshCollider 換成 box proxy。詳見 `Docs/MAP_STREAMING.md`。待辦：
+   - **入口門 Play 消失（續 91-93，已解）** —— scene-0 的 VideoPlayer 不會自己開始播。解法：`OnEnable` coroutine `Prepare()`→等`isPrepared`→`Play()`。**不要用 APIOnly**（續 92 試 → D3D11 掉紅色通道 → 青色矩形）。續 93 = RenderTexture mode + coroutine，使用者 Play 確認 4 座門正常。
+   - **傳送門 proximity（續 94，未驗證）** —— 改成玩家靠近 `activateRange` 32m 才淡入現身、走遠/穿門消失（`PortalVideoSurface.proximityActivated`）。待對焦 Play 確認淡入距離與手感。
+   - 殘留 warning `Color primaries 0 … WindowsMediaFoundation`（ffmpeg 沒寫 colr atom；紅色調極微偏移，無感）。
    - 景深（`depthLayers`）暫設 0（疊層在灰底上會變矩形）；灰底解掉後再加回。
    - yuanpei box collision 是粗略 AABB（無中庭/門口凹陷），要精細再手調。
    - 傳送門影片右下角有 AI 生成工具浮水印小星星（greybox 暫留）。
@@ -999,7 +1001,7 @@ speed，印出 hit window 真實 contact 秒數 + 有效 ms + 對 0.20s 彈反�
 7. **⚠️「元培」校園是真實大學商標，整套目前 DoNotShip**：`yuanpei_MainBuilding` / `ModernGlassLibrary` / `PalmLinedLibrary` / `QuietCampusPlaza` / **`yuanpei_LogoSky`（追加94 續 86，校園上空的 3D 立體校徽，最明確的商標物件；續 89 起也是空中 Boss）** 都是照著「元培醫事科技大學」真實校園做的，校名／校徽／校訓／建築外觀屬第三方商標與著作，違反 CLAUDE.md 不可協商規則 1。目前僅作內部原型佔位。**發布前（Alpha 之後任何外部版本）必須：改成原創校名＋原創校徽＋去識別化建築**，或整個換掉。`yuanpei_LogoSky` 已在 `ASSET_LICENSES.md` 標 DoNotShip。
 
 8. **yuanpei_LogoSky 空中 Boss（追加94 續 89，Phase 1–4）**：可從開戰打到 HP 歸零勝利的 greybox Boss。詳見 `Docs/YUANPEI_LOGO_SKY_BOSS.md`。**未完成**：
-   - **正式 VFX / 音效 / 鏡頭**（目前全是 primitive + emission 色塊，無音效）。
+   - **正式 VFX / 音效 / 鏡頭**（多數招式仍是 primitive + emission 色塊，無音效）。續 114：雷擊標記改用 `紅圈攻擊特效.mp4` 烘成的 6×6 flipbook 圖集（`GroundStrikeURP` shader）＋連續 6 發鎖定範圍攻擊，Edit-Mode 截圖驗證過（runtime VideoPlayer 在這台 D3D11 算全黑，故走 flipbook）。限制：貼地平面 quad 畫不出原影片的垂直火柱，burst 讀作放射狀地面亮閃。其餘招式 VFX 未做。
    - **模型減面 + LOD**：29 萬面整顆 mesh，spec §3.1 要求 15k~30k + LOD0/1/2（需 Blender）。
    - **Object Pool**：投射物 / hazard 目前 Instantiate/Destroy。
    - **平衡校準**：所有時間 / 傷害 / HP / 處決次數需依玩家實測閃避資料調（spec §8.3、§21 Phase 6）。

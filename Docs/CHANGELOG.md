@@ -4288,3 +4288,377 @@ R 大招丟出/收回不影響 EditMode。編譯無錯（Console 的 `CubismRend
 
 改 `PortalVideoSurface.cs` + `YuanpeiBoss.cs` + `YuanpeiEncounter.cs` + 新 `GatePortalVortex.mat` + 4 場景重指向。編譯無錯，**EditMode 303/303 綠**。
 **待使用者對焦 Play 驗證**：車道盡頭看得到紅漩渦門；進學校 plaza 開戰後 Boss 會開始丟招。
+
+### 追加94 續 91（2026-09-03）— 傳送門改回 mp4：場景序列化 VideoPlayer（不再 runtime AddComponent）
+
+使用者要求用 `固定鏡頭，純特效展示…mp4`（紅色漩渦傳送門）重做**入口＋出口**傳送門，取代續 90 的程序化 shader。
+
+**根因（為什麼之前入口門播不出來）**：`PortalVideoSurface.Awake()` 在執行階段 `gameObject.AddComponent<VideoPlayer>()` —— `playOnAwake` 在 `AddComponent` 呼叫當下就 latch，那時 `clip` / `targetTexture` 都還沒指定；入口門在 scene-0 載入時建立，沒有第二次機會。出口門（遊戲中 additive 載入）剛好能用，入口門永遠不行。
+
+**修正**：VideoPlayer 改成**場景序列化元件** —— 編輯期就 `AddComponent` 並把 `clip` + `RenderTexture` + `playOnAwake=1` + `loop=1` + `audioOutputMode=None` 寫進場景 YAML。Unity 正常反序列化路徑會正確 honor `playOnAwake`。`PortalVideoSurface.cs` 不再建立 VideoPlayer / material，只做 billboard(關)＋脈動＋`Update()` 裡 `Play()` nudge 保險。
+
+**新資產**（`Assets/_Project/VFX/Gate/`）：
+- `PortalVideoURP.shader`（`Live2DAction/PortalVideoURP`）—— 取樣影片 RT，`smoothstep(_KeyLow,_KeyHigh,luma)` 把近黑背景 key 掉，`Blend One One` 疊加發光。近黑底貢獻 0 → **沒有灰白矩形基座**（續 82 的老問題靠新的全範圍轉檔 + 這支 shader 一起解掉：轉檔後角落 avgLuma 實測 0.002）。`_EdgeFade` 柔化 quad 邊。
+- 每座門一張 `RT_<gate>.renderTexture`（640×360）+ `Mat_<gate>.mat`（`_Intensity` 2.0、`_KeyLow` 0.02、`_KeyHigh` 0.12、`_EdgeFade` 0.05）。
+- `PortalVortexVideo.mp4` 重轉檔：640×360、H.264 baseline、bt709、**全範圍（無壓黑）**、1.3 MB。
+
+4 座門（`SchoolGate_Enter`/`NijigenGate_Enter` 在 GreyboxTest；`SchoolGate_Exit` 在 Map_School；`NijigenGate_Exit` 在 Map_Nijigen）的 `PortalSurface` quad 加大到 13×9 @ local y4.1（比車道 ~7.4 寬、底邊約貼車道地面），`Blocker` 對應加大到 12×8。
+
+編譯無錯，**EditMode 303/303 綠**。編輯期截圖確認：影片 → RT → keyed 疊加 shader，車道盡頭是發光漩渦傳送門、背景全透明無矩形框。殘留 warning：`Color primaries 0 … WindowsMediaFoundation`（ffmpeg 沒寫 colr atom，紅色調可能極微偏移，對這個造型無感）。
+**待使用者對焦 Play 驗證**：入口門在 Play（scene-0）確實會自動播放（場景序列化 + `Update()` nudge 雙保險）；出口門一樣。
+
+### 追加94 續 92（2026-09-03）— 學校入口門 Play 還是消失：VideoPlayer 改 APIOnly + coroutine prepare/play
+
+使用者 Play 測試：**出口門正常、入口門消失**（＝ scene-0 的 VideoPlayer 還是沒開始播 → `RT_SchoolGate_Enter` 空白 → keyed shader 全透明）。續 91 的場景序列化 VideoPlayer + `playOnAwake` + `Update()` nudge 仍不夠。
+
+`PortalVideoSurface.cs` 重寫：
+- `VideoRenderMode.APIOnly` —— VideoPlayer 自己持有解碼貼圖（`vp.texture`），**完全不用 RenderTexture asset**（沒有配置/清空的時序 race）。每幀把 `vp.texture` 塞進 per-instance 材質的 `_BaseMap`。
+- `playOnAwake` 強制關；`OnEnable` 起一個 coroutine 做 `Prepare()` → 等 `isPrepared`（最多 8s，>2s 每秒補一次 Prepare）→ `Play()`，之後每 0.4s realtime 檢查掉出 `isPlaying` 就補。**只在「未 prepared」時才重發 Prepare**（不再每幀 spam）。
+- `Debug.Log` 麵包屑（前綴 `[PortalVideoSurface]`）：prepared 花幾秒、`Play()` 後 isPlaying、首幀貼圖尺寸 —— Play 測試可對 Console 確認入口門走到哪一步。
+- 初始 `_BaseMap = Texture2D.blackTexture`（keyed shader → 透明），影片首幀到位前不閃。
+
+`RT_<gate>.renderTexture` 4 張現在沒用到（腳本 runtime 蓋成 APIOnly）；場景裡 VideoPlayer 的 `targetTexture`/`renderMode` 序列化值無害（Awake 覆蓋）。之後清。
+
+編譯無錯，**EditMode 303/303 綠**。
+**待使用者對焦 Play 驗證**：走到學校入口門看漩渦有沒有出現；沒有的話把 Console 的 `[PortalVideoSurface] SchoolGate_Enter …` 幾行貼回來。
+
+### 追加94 續 93（2026-09-03）— APIOnly 掉紅色通道變青色框 → 回 RenderTexture + 保留 coroutine
+
+使用者 Play 測試續 92：入口門 VideoPlayer **有播了**（Console：`prepared=True`、`Play() -> isPlaying=True`、`first frame texture 640x360`）—— coroutine 修法成功。但 **APIOnly 的 `vp.texture` 在這台 D3D11 讀回來掉了紅色通道** → 紅色漩渦 −紅 = **整片青色矩形疊在畫面上**（出口門也一起壞，因為腳本 runtime 強制 APIOnly）。
+
+`PortalVideoSurface.cs` 續 93：
+- **renderMode 回 `RenderTexture`**（Unity 自己做 YUV→RGB blit 進 per-gate RT，出口門在續 91 已證實正常）。
+- **保留續 92 的 coroutine**：`OnEnable` → 等 2 幀 → `Prepare()` → 等 `isPrepared`（≤8s）→ `Play()` → 每 0.5s realtime 補。這是讓 scene-0 入口門真的開始播的關鍵（續 92 log 已證實）。
+- 不再 runtime 建 material / 每幀塞 texture（那是 APIOnly 才需要）。material 直接用 per-gate `Mat_<gate>`（`_BaseMap` = per-gate RT，續 91 就接好）。
+- log 前綴帶父物件門名（`SchoolGate_Enter` / `NijigenGate_Enter` …）方便分辨。
+
+場景 YAML 未動（續 91 的 VideoPlayer 序列化值 `renderMode: 2` + `targetTexture` 都還在，4 座門都確認過）。編譯無錯，**EditMode 303/303 綠**。**使用者 Play 確認 4 座門都正常**（紅漩渦、無青色框）。
+
+### 追加94 續 94（2026-09-03）— 傳送門改成「玩家靠近才現身」
+
+使用者：傳送門是「憑空出現」的動畫，希望玩家靠近入口時才播放。
+
+`PortalVideoSurface.cs` 加 proximity gating（`proximityActivated` 預設 on，4 座門共用）：
+- 載入時 `Prepare()` 好但**不播**，`MeshRenderer` 關（漩渦不在）。
+- 每幀量最近玩家（`FindObjectsByType<PlayerInputProvider>` 的 root，每 1s 重掃一次 —— Player 和 Cat 都有 PIP，取最近的；水平距離）：
+  - 進 `activateRange`(32m) → 開 renderer + `vp.frame = 0` + `Play()` + `_Intensity` 用 MaterialPropertyBlock 在 `appearFadeSeconds`(0.45s) 內 smoothstep 淡入 → 「現身」。
+  - 出 `deactivateRange`(40m，含 hysteresis) → `Pause()` + `GL.Clear` RT 黑 + renderer 關。傳送穿門瞬間拉遠也會觸發。
+- 續 93 的 coroutine（`Prepare→isPrepared→Play` + 掉出 `isPlaying` 補）保留，只在 `_active` 時補。
+- pulse 只在 renderer 開時跑。
+- `proximityActivated` 可 per-gate 關掉 → 回續 93 的常駐播放。
+
+編譯無錯，EditMode 303/303。
+**待使用者對焦 Play 驗證**：走學校南入口路，漩渦門在 ~32m 處淡入現身；走遠/穿門後消失。
+
+### 追加94 續 95（2026-09-03）— 第三座城市「現世」：本地東側橋接 + 幽冥星環傳送門模型
+
+使用者：以 `幽冥星環傳送門.zip`（Meshy AI「Voidmoon Gate」）當第三座城市「現世」的橋接傳送門，方位東邊。
+
+**模型匯入** `Assets/_Project/Environment/Meshy/VoidmoonGate/`：
+- FBX 改名 `VoidmoonGate.fbx`（28 MB，避開 `.gitignore` 的 `Meshy_AI_*_texture.fbx` → **進版控**）。`useFileScale=false`（原 `fileScale 0.01`）→ ~1.92m 寬、Y=0.25 薄；擺放時繞 X −90° 立起。305,771 tris。
+- 手建 URP/Lit `VoidmoonGate.mat`（albedo/normal/metallicRoughness ＋ 微弱藍 emission 0.18）。normal→NormalMap、MR/metallic/roughness→linear。addCollider off、isReadable off、材質 import None。
+- 授權：Meshy 付費方案，使用者持商用權，可進 Build（見 ASSET_LICENSES）。**非 DoNotShip**。
+
+**GreyboxTest 東側**（鏡射西側二次元）：
+- `BoundaryWall_East` 重建自 `BoundaryWall_West`（開口版：BoundaryBlockEffect/MeshRenderer 關、兩段 WallSegment），移到 x=+15.5。
+- `VehicleRoad_East` @ (50, 0.41, 0) scale (70, 0.2, 7.42)。
+- `XianshiGate_Enter` @ (82, 0, 0) rot **Y=90**（讓門面朝東路 —— 順手也把 `NijigenGate_Enter` 轉 Y=90，它原本面朝 +Z ＝ 對西路是側面看不見的 bug）。`SceneGate` sceneToLoad=`Map_Xianshi`、arrival (92, 1.1, 0) yaw 90。自己的 `RT_XianshiGate_Enter` + `Mat_XianshiGate_Enter`。`PortalSurface` 縮到 7.5×8.5 @ y3.9 塞進門框中央、`Blocker` 7×8。
+- `VoidmoonGateFrame` 子物件：`VoidmoonGate.fbx` prefab、localScale 6.8、繞 X −90°、localPos y3.7 → 世界 ~13m 寬 × 10m 高 立在路口框住漩渦。
+
+**新場景 `Map_Xianshi.unity`**（`AssetDatabase.CopyAsset` 自 `Map_Nijigen` → 全 root 鏡射 X、改名 Nijigen→Xianshi / 二次元→現世 / East↔West token 對調）：
+- `現世` 地板 cube @ (115, 0, 0) scale (60,1,60)、5 面隱形牆 `XianshiWall_*`。
+- `XianshiGate_Exit` @ (86, 0, 0) rot Y=90、`sceneToUnload=Map_Xianshi`、arrival (78, 1.1, 0) yaw 270。自己的 `RT_XianshiGate_Exit` + `Mat_XianshiGate_Exit` + `VoidmoonGateFrame`。
+- 加入 Build Settings（現在 4 個場景）。城市內容（建築/生成點）待填 —— 目前為空地。
+
+編譯無錯，**EditMode 303/303 綠**。編輯期截圖確認模型立在東路盡頭、朝向正確、貼地。
+**待使用者對焦 Play 驗證**：本地往東穿牆口 → `VehicleRoad_East` → 幽冥星環門在 ~32m 淡入 → 按 E → 載入「現世」空地；門框中間漩渦影片的大小/位置可能要再調（`XianshiGate_Enter/PortalSurface` 的 scale/localPos）。二次元門轉向後要一起確認。
+
+### 追加94 續 96（2026-09-03）— 現世門改用「幽冥星環傳送門.mp4」整支影片（仿 3D）
+
+使用者：移除現世門原本的特效（紅漩渦 + FBX 模型），改用 `幽冥星環傳送門.mp4`（整支就是幽冥星環門本身的渲染動畫：靜態門框 + 紫色漩渦，純黑底，1672×940/24fps/5s），附在門上、仿 3D。
+
+- `VoidmoonGateVideo.mp4`：ffmpeg `crop=1220:940:226:0`（去左右黑邊）→ `scale=912` → H.264 baseline / 912×702 / 5s / ~1 MB。放 `Assets/_Project/VFX/Gate/`。
+- 新 shader `Live2DAction/PortalVideoAlphaURP`：**alpha blend**（不是 `PortalVideoURP` 的 additive）—— `smoothstep(_KeyLow 0.015, _KeyHigh 0.06, luma)` 只 key 掉純黑外框，深紫門框與漩渦全不透明顯示（additive 會把暗門框洗掉）。
+- 兩支 portal shader 都加 `_PortalFade`（0..1）；`PortalVideoSurface` 的靠近淡入改驅動 `_PortalFade`（原本驅動 `_Intensity`，對 alpha shader 無效），兩支通用。
+- `PortalVideoSurface` 加回 `billboard`（yaw-only，保持直立、Slerp 平滑轉向面對相機）—— 仿 3D。
+- `XianshiGate_Enter`（GreyboxTest）+ `XianshiGate_Exit`（Map_Xianshi）：刪掉 `VoidmoonGateFrame`（FBX 模型，asset 留磁碟）；`PortalSurface` → clip `VoidmoonGateVideo`、材質改 `PortalVideoAlphaURP`、quad 13×10（1.30 aspect）@ y5、`billboard=on`。學校/二次元門不動（照舊紅漩渦 additive）。
+
+兩支 shader 編譯 supported、`VoidmoonGateVideo` 匯入（912×702、120 幀）、`PortalVideoSurface` 有 `billboard`。**EditMode 303/303 綠**。用擷取的單幀 PNG 在編輯期預覽確認：整座門的影片黑底 key 乾淨、貼路面、面對相機。
+
+### 追加94 續 97（2026-09-03）— 現世門：關 billboard（固定朝向）＋ FBX 模型 ＋ 影片兩者重疊
+
+使用者：門要固定不要跟玩家轉；把 FBX 模型加回來，模型跟影片**兩者重疊**。
+
+- `PortalVideoSurface.billboard` = **false**（兩座現世門）—— quad 回 local identity，跟著門根的 Y=90 面朝東路，不再轉向玩家。
+- `VoidmoonGateFrame`（FBX，`VoidmoonGate.mat`）加回兩座現世門，localScale **7.1**（~13.6w × 10.5h，對齊 quad）、繞 X −90°、localPos y4.6。
+- 影片 quad（`PortalSurface`）推到 local **z −1.15**（模型 ~1.8 深、貼在模型正面前）→ alpha keyed，純黑處露出後面的 3D 模型、影片的門框＋漩渦疊在模型正面。fixed 朝向。
+- Blocker localPos y4。學校/二次元門不動。
+
+編輯期單幀預覽確認：3D 模型 ＋ 影片漩渦兩層都看得到、對齊、貼地、朝向固定。**EditMode 303/303 綠**。
+
+### 追加94 續 98（2026-09-03）— 影片完全貼合模型：量測模型 bounds 對尺寸、貼正面、關脈動
+
+使用者：影片不夠近、要完全附著在模型上、完全貼合模型大小、不要忽大忽小。
+
+- 程式量 `VoidmoonGateFrame` 的世界 bounds（13.60 W × 10.47 H × 1.80 D）→ `PortalSurface` quad scale 設成 **1.02× 模型尺寸**（13.87 × 10.68，微 overscan 讓影片裡的門和 3D 門對齊）。
+- quad localPos 對到模型中心（y4.56），z 推到 **模型正面前 0.03m**（−0.93，模型半深 0.90 + epsilon）→ 完全貼在模型正面。
+- `PortalVideoSurface.pulseAmount = 0`（兩座現世門）→ 不再忽大忽小。billboard 維持 off。
+
+編輯期預覽：影片的門框/漩渦與 3D 模型的框、頂環、月牙翼精準疊合。
+**待使用者對焦 Play 驗證**。
+
+### 追加94 續 99（2026-09-03）— 處決一律「扣當前生命 50%」：拿掉武士的生命節點系統
+
+使用者回報：處決應該固定扣對手當前生命的 50%，但對武士處決完之後他會**直接滿血**。
+
+原因：武士掛了 `BossLifeNodeController`（`IExecutable`，工程規格 §8 項目 7 的兩節點 Deathblow 系統）。`ExecutionAbility` 偵測到 `IExecutable` 就走節點路線 → 第一次處決 `DeathblowPhaseTransition(restoreHealth=true)` → `health.ResetHealth()` **回滿血** + 進 Phase 2；第二次才永久死。完全不走「扣 50% 當前血量」。
+
+修法：**從武士身上移除 `BossLifeNodeController` 元件**（0 個外部參照，乾淨移除；`BossLifeNodeController.cs` 留著、`ExecutionNodeLogic`/測試不動）。現在 `ExecutionAbility.BeginExecution` 找不到 `IExecutable` → `_pendingExecutable` = null → `ResolveExecution` 走一般路線：`health.CurrentHealth × 0.5` 傷害 + `EndStagger()`。武士、屁孩王、Enemy 全部一致。
+
+- `武士` `Wushi_Tuning.permanentDeath=False` / `reviveDelaySeconds=5` **未動** —— 武士血歸零仍會 5 秒後復活（本來非處決致死就是這行為；只有 deathblow 的 final-kill 路線會讓它永久死，那條路線現在沒了）。要永久死再說。
+- `ExecutionAbility.instantKillNonExecutableTargets` 維持 False（＝一律 50%，不是秒殺）。
+- `SamuraiBossArena.unity`（demo 場景）本來就沒有 `BossLifeNodeController`，不受影響。
+- 工程規格 §8 項目 7「處決 + 生命節點」＝ **使用者決定不採用**，回歸統一的 50% 當前血量處決。
+
+編譯無錯，**EditMode 303/303 綠**（`ExecutionNodeLogicTests` / `ExecutionAbilityRoutingTests` 測邏輯類、不受場景移除影響）。
+
+### 追加94 續 100（2026-09-03）— yuanpei_LogoSky boss：進場後不出招（arena 卡在圖書館 collision 裡）
+
+使用者：進學校 → 看到 boss 升天（intro）→ 之後就沒動靜。續 90 的修正不夠。
+
+**根因**：`yuanpei_ModernGlassLibrary_Collision` 是整個 Meshy mesh 的 AABB（50 寬 × 28 深，mesh 含掃描進去的地形/樹），範圍 z[-139.6,-111.3] x[-30,20]。boss arena（0,0.5,-114 半徑 11）**幾乎整個泡在這個看不見的 box 裡**。`YuanpeiBoss.HasLineOfSight`（`losBlockers` = Everything）的射線穿過這個 box + MainBuilding box 時斷斷續續 fail，而 `YuanpeiScheduler.Select` 一遇到 `!hasLineOfSight` 就 `return null` → 出不了招。4s watchdog 也被 range 擋掉時就永遠 hover。
+
+修正：
+- `YuanpeiBoss.losBlockers` → **只留 layer 0**（真正的 `SchoolWall_*` 邊界牆；無視 layer 9 那三個粗略過大的建築 AABB）。
+- stuck watchdog 4s → **2s**；`ForceAnyInRangeAttack` 加**無視距離的最終保底**（射程外也硬選第一個負擔得起、沒 cooldown 的招）→ boss 絕不會永遠 hover。
+- arena 放大：`YuanpeiBossConfig.arenaCenter` + `YuanpeiEncounter.combatCenter` → (0, 0.5, -110)，`arenaRadius` 11 → 14（boss 能追玩家往入口方向）。
+- `YuanpeiBoss.verboseLog`（預設 on）：每秒印 `[YuanpeiBoss] state= player= dist= LOS= onScreen= energy= phase= anyInRange=` 供 Play 診斷。
+- **未修**：三個 `yuanpei_*_Collision` 是整 mesh AABB，玩家在廣場也會撞到看不見的牆——之後要按各建築實際 footprint 重畫。
+
+改 `YuanpeiBoss.cs` + `YuanpeiBossConfig.asset` + `Map_School.unity`（`YuanpeiEncounter`）。編譯無錯，**EditMode 303/303 綠**。
+**待使用者對焦 Play 驗證**：進場 → boss intro → **開始丟招**；還是不動就把 Console 的 `[YuanpeiBoss] …` 幾行貼回來。
+
+### 追加94 續 101（2026-09-03）— yuanpei boss：持續攻擊、Boss HUD 比照玩家 UI、§8.1 禁防禦規則
+
+使用者三項要求：1. boss 持續鎖定＋攻擊 2. 能量/血量/架勢條比照玩家 UI 3. 依工程文件完善機制。
+
+**1. 持續攻擊**：續 100 已處理（`losBlockers` 只留 layer 0、watchdog 2s + 無視距離保底）。boss 在 Hover/Reposition/攻擊各狀態每幀 `FaceTarget` 對準玩家——本來就會持續轉向。
+
+**2. Boss HUD（`YuanpeiBossHUD` 重寫）**：改成跟玩家角落 HUD 同一套視覺語言——
+- 每條血條後面加「延遲 ghost 條」（用玩家血條同一支 `HealthBarTweenUtility.ComputeDelayedFill`）
+- 主填充改 frame-rate-independent tween（`SmoothApproach`，玩家血條同款）
+- HP 填充邊緣有 edge-glow 節點（`ComputeEdgeGlowLocalX`）
+- 受擊時整條 panel 抖動（訂閱 `vitals.Health.Damaged`、`ComputeShakeOffset`）
+- 配色比照玩家紅/紫/金家族：HP 深紅（最醒目）、能量青（滿→降）、架勢金（0→滿）
+- 架勢接近滿格閃爍＋標籤變白（spec §16.5）
+- 「能量」「架勢」文字標籤（spec §16「顏色不能是唯一辨識方式」）
+- `[ F ] 處決` + 倒數秒數；`PromptVisible` 已 gate 在 ExecutionWindow + HP>0 + 距離內，**能量歸零不會顯示**（spec §16.7）
+- 位置維持螢幕上方置中（boss 血條慣例）
+
+**3. §8.1 禁防禦規則集**：`YuanpeiEncounter.StartEncounter` 進戰鬥時 `PlayerGuard.enabled = false`（`OnDisable` 會自己釋放 speed knob），勝利 / encounter 物件銷毀時還原。避免「防禦輸入看似成功卻仍受不明傷害」。
+
+改 `YuanpeiBossHUD.cs` + `YuanpeiEncounter.cs`。編譯無錯，**EditMode 303/303 綠**。
+**待使用者對焦 Play 驗證**：進場 boss 持續丟招；Boss HUD 三條的 tween/ghost/抖動/閃爍；防禦鍵在此戰無效。
+
+### 追加94 續 102（2026-09-03）— yuanpei boss：§9.4 安全路線、預警可讀性、完美閃避白光
+
+繼續依工程文件補機制：
+
+- **§9.4 MultiAoE 安全路線保證**：新 `YuanpeiAoePlacement.EnsureSafeRoute`（純函式，EditMode 3 測）—— 在玩家周圍以「一次閃避」半徑取樣一圈逃脫點，若全被警示圈覆蓋，就從「覆蓋最多逃脫點的圈」開始逐一移除，直到有一個可達的安全點（保底 2 圈，不會整個取消攻擊）。`YuanpeiAttacks.MultiAoE` 生成前先過這關。
+- **預警可讀性（§22.2「清楚且互不混淆」）**：`YuanpeiHazard` 加**亮色外圈**（比填充盤大 0.35m、emission ×2、隨計時脈動）；填充盤半透明。
+- **蓄力視覺（§3.2「縮放脈衝、Emission」）**：`YuanpeiAttacks.Run` 在 Telegraph/Windup 階段對 `VisualRoot` 做縮放脈衝（telegraph ±4%、windup ±9%）。
+- **光彈**：加 `TrailRenderer` 拖尾 + emission ×3.5。
+- **聚焦雷射**：加原點蓄力光球（隨鎖定進度長大、變色）+ 線加粗加 cap。
+- **完美閃避白光（§8.2）**：新 `YuanpeiScreenFlash`（自建螢幕白幕、unscaled 淡出，處決/HUD 之上）；`YuanpeiPerfectDodge` 命中完美閃避時 `Flash(0.5, 0.13)` + 既有 hit-stop。
+- **架勢崩潰墜地回饋（§11.3）**：`YuanpeiExecution` 落地時 `LandingImpactFx`（擴張灰塵環 + 8 顆彈跳塵粒，0.55s 自清）+ hit-stop 加強到 0.06/0.18。鏡頭震動待 Cinemachine impulse 設定。
+- **BodyCharge 撞牆暈眩（§9.6）已確認接線**：`YuanpeiAttacks.chargeCrashMask` = layer 9（ChargeCrashSurface），3 個 `yuanpei_*_Collision` box 都在該 layer；`losBlockers` 續 100 只留 layer 0 是分開的，撞牆判定不受影響。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiHazard.cs` + `YuanpeiExecution.cs` + `YuanpeiPerfectDodge.cs` + 新 `YuanpeiAoePlacement.cs` / `YuanpeiScreenFlash.cs` + `YuanpeiBossLogicTests.cs`(+3)。編譯無錯，**EditMode 306/306 綠**。
+
+**仍未做**（spec 第五~六階段，需美術/Blender/Play 迭代）：真正的 shader/particle VFX 美術、完整招式音效、完美閃避/處決 Cinemachine 專用鏡頭、模型減面 + LOD、投射物/VFX object pool、依真實閃避資料逐招校時。
+
+### 追加94 續 103（2026-09-03）— yuanpei boss：Play 回報三修（攻擊慾望、HUD 電流層、廣場被牆擋）
+
+**1. 玩家被擋在廣場中心**：`yuanpei_ModernGlassLibrary_Collision` 是整 mesh AABB（x[-30,20] z[-140,-111]），把廣場南半整片橫向擋死。三個 `yuanpei_*_Collision` box 全部縮到各自建築 footprint（ModernGlass → x[-20,2] z[-138,-122]、PalmLined → x[15,29] z[-126,-110]、Main → x[10,28] z[-107,-87]）。grid 掃描確認 arena 內 0 個阻擋格。arena 移到 **(-2, 0.5, -105) r11**（驗證過的可走區）。
+
+**2. 攻擊慾望極低**：
+- stuck watchdog 2s → **1s**（scheduler 的軟性 gate 讓遠距 boss 太被動）
+- `ForceAnyInRangeAttack` 已有「無視距離保底」（續 100）
+- `TrackOnScreen` viewport 判定放寬到 -0.9~1.9（大型空中 boss 出框外仍算「在場」）
+- config：`globalAttackInterval` 0.7-1.0 → **0.35-0.6**、`onScreenGraceBeforeAttack` 0.5 → **0.25**、`energyRegenPerSecond` 5 → **7**（撐得住連續施法）
+- 招式 recovery 縮短：FocusLaser 1.5→1.0、MultiAoE 1.0→0.7、BodyCharge 1.0→0.7；LightningMark active 2.2→1.8
+
+**3. Boss HUD 沒有玩家的電流/閃電效果**：`YuanpeiBossHUD` 每條加**流動能量層**，用玩家血條同一支材質 `HealthEnergyFlowUI.mat`（shader `Live2DAction/UI/HealthEnergyFlow`）—— per-bar instance、驅動 `_HpRatio`/`_GlowIntensity`/`_FlashIntensity`/`_SpeedBoost`/`_GlowColor`（HP 紅、能量青、架勢金）。HP/能量「低→躁動」、架勢「高→躁動」（餵 1-ratio，同 `StancePoiseBarFx` 手法）。受擊 flash + speed boost。`flowMaterial` 欄位已在 `Map_School` 接上。
+
+改 `YuanpeiBoss.cs` + `YuanpeiBossHUD.cs` + `YuanpeiBossConfig.asset` + 4 個 `YuanpeiAttack_*.asset` + `Map_School.unity`。編譯無錯，**EditMode 306/306 綠**。
+**待使用者對焦 Play 驗證**：廣場整片可走、boss 頻繁丟招、Boss HUD 三條有電流流動。
+
+### 追加94 續 104（2026-09-03）— yuanpei boss：Y 軸天花板（飛太高）
+
+使用者：設一條 Y 軸線，boss 不要飛超過，太高了。
+
+**根因**：`SampleFloorY` 用 `groundMask = ~0` 往下打，boss 飛到建築碰撞箱（layer 9、續 103 縮小後仍 y[1,23]）上空時，射線打到箱頂 y≈23 → 誤判「地板」在 23 → hover 目標 = 23 + 3 = **26m**。
+
+修正：
+- **`YuanpeiBossConfig.maxWorldY = 8`**（世界 Y 硬上限）。`YuanpeiBoss.ClampWorldY()` 每幀在 state tick 後把 root Y 夾到 ≤ 8（Falling/ExecutionWindow/Executing/Intro 由 `YuanpeiExecution` 驅動、不夾）。
+- `SampleFloorY` 回傳值 `Mathf.Min(hit.y, arenaCenter.y + 2)` = 上限 2.5 —— 打到屋頂也不會當地板。
+- `groundMask` 在 `YuanpeiBoss` / `YuanpeiAttacks` / `YuanpeiExecution` 改成 `~(1<<9)`（排除建築碰撞層）。
+- Intro 落點 `endPos.y` 也夾 `maxWorldY`。
+
+**數值**：廣場地板 ≈ y0.5、`hoverHeight` 3、bob ±0.35 → **正常懸浮高度 ≈ y3.85**；MultiAoE「升高一點」有餘裕；**硬天花板 y8**（可在 `YuanpeiBossConfig.maxWorldY` 調）。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 105（2026-09-03）— yuanpei boss：地板攻擊提示浮空
+
+使用者：地板攻擊（雷擊標記 / 多重光爆）的提示圈沒貼地，浮在半空離地不遠。
+
+**根因**：`ProjectToGround(player.position)` 從玩家頭上 30m 往下打單一 Raycast，射線先打到**玩家自己的 CharacterController**（layer 0，跟地板同層、非 trigger）≈ y1.5 → 提示圈放在 y1.5 而非地板 y0.52。
+
+修正：
+- `YuanpeiAttacks.ProjectToGround` 改 `RaycastAll` + 依距離排序 + 跳過玩家（`PlayerInputProvider`/`CharacterController`）、boss 自己、其他 runtime hazard/projectile，取第一個真正的地面。fallback y = `arenaCenter.y + 0.02`（原本 +0.52 也浮空）。
+- `Shockwave`：環形波原點從 `transform.position`（懸浮高度 y3.85）改成 `ProjectToGround(transform.position)`（boss 腳下的地面）。
+- `YuanpeiExecution.SampleGround` 同樣改 `RaycastAll` + 跳過玩家/自己 —— 架勢崩潰墜落點不會誤落在玩家頭上。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiExecution.cs`。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 106（2026-09-03）— yuanpei boss：完整死亡/勝利演出 + 自動退場
+
+使用者：boss 血量 0 → 掉落到地上 → 慢慢化成碎片後消失 → 畫面中心「戰鬥勝利」→ 5 秒後自動退場、玩家返回路口前。
+
+`YuanpeiEncounter.Victory()` 重寫：
+1. **墜地 dissolve**（`DeathDissolve` coroutine，跑在 encounter 上 —— `YuanpeiBoss.EnterDeath` 已停掉 boss 自己的 coroutine + 關 collider/lock-on）：
+   - boss root 0.7s ease 落到地面（`SampleGroundY` = RaycastAll 跳過玩家/自己/建築層）+ hit-stop
+   - 生成 22 塊發光碎片 cube（向外爆散 + 重力 + 隨機自轉，隨 k 縮小）
+   - `VisualRoot` 在 `dissolveSeconds`(1.6s) 內 scale→0 + emission 衰減 + 加速自轉 → 消失 → `SetActive(false)`
+2. **`YuanpeiVictoryBanner.Show("戰鬥勝利")`**（新，自建螢幕置中大字 + 半透明橫幅、`DontDestroyOnLoad`、unscaled 0.5s 淡入）；Boss HUD 隱藏；送 `OnYuanpeiEncounterWon`
+3. `WaitForSecondsRealtime(victoryHoldSeconds 5)`
+4. `YuanpeiVictoryBanner.Hide()` + **`SceneTransitionRunner.Instance.Begin("", "Map_School", player, (0,1.1,-78), yaw 0, "", 0.4, 3)`** —— 卸載 Map_School、玩家傳回 GreyboxTest 路口前（跟 `SchoolGate_Exit` 同落點）。Runner 是常駐的，encounter 隨 Map_School 卸掉也不影響。
+
+新 serialized 欄位：`victoryMessage`（戰鬥勝利）、`dissolveSeconds`(1.6)、`victoryHoldSeconds`(5)、`returnUnloadScene`(Map_School)、`returnArrivalPosition`((0,1.1,-78))、`returnArrivalYaw`(0)。
+
+改 `YuanpeiEncounter.cs` + 新 `YuanpeiVictoryBanner.cs`。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 107（2026-09-03）— yuanpei boss：死亡攝影機演出、架勢調整、攻擊慾望/多樣性
+
+**1. 死亡演出加攝影機動畫 + 回廣場空中震動再碎裂**（`YuanpeiEncounter.DeathDissolve` 重寫）：
+- 接管相機：關 `ThirdPersonCameraController`，`DriveDeathCam` 依階段（升空/震動/碎裂）繞行、推近、拉遠 + 碎裂瞬間小震
+- boss root 1.2s 升回**廣場中心上空（地面 +13m）**、慢轉
+- **震動 1.5s**：Perlin 位置抖動（幅度隨時間加大）+ 加速自轉 + 縮放脈衝 + emission 越來越亮
+- **碎裂**：26 塊發光碎片爆散 + `VisualRoot` scale→0 + emission 爆閃再衰減（`dissolveSeconds` 1.6s）
+- 演出結束把相機還給 `ThirdPersonCameraController`（勝利橫幅期間是正常跟隨鏡頭），再走續 106 的橫幅→5s→`SceneTransitionRunner` 退場
+
+**2. 架勢**：`postureGainPerDamage` 0.55→**0.9**（玩家可靠地累到滿 → PostureBreak）；`hoverHeight` 3→**2.6**（boss 更好打，BodyCollider r3.6 從 y2.6 底部到 y-1 一定搆得到地面玩家）。架勢本來就從 0 起算、滿了觸發 `OnPostureFull → execution.BeginPostureBreak`（墜落 + F 窗口）—— 之前不明顯是因為打不到 boss、架勢沒累積。
+
+**3. 攻擊慾望太低 + 手段太少**：
+- **6 招全部 `requiredPhase = 1`**（工程文件的階段解鎖是為了漸進教學，使用者明確要更多變化）+ 冷卻全部 ×0.7
+- `ForceAnyInRangeAttack` watchdog 改成：**隨機挑**候選（不再固定 pool[0] 猛丟）+ 不重複上一招；觸發門檻 1s→**0.6s**
+- config：`globalAttackInterval` 0.35-0.6 → **0.2-0.45**、`onScreenGrace` 0.25 → **0.15**、`maxEnergy` 100→**120**、`energyRegen` 7→**9**（撐得住連丟）
+- phase 門檻 0.70/0.35 → **0.65/0.30**
+- `[YuanpeiBoss]` 診斷 log 加 hp / posture / y
+
+改 `YuanpeiBoss.cs` + `YuanpeiEncounter.cs` + `YuanpeiBossConfig.asset` + 6 個 `YuanpeiAttack_*.asset`。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 108（2026-09-03）— Boss HUD 三條完全採用玩家血條的分層美術
+
+使用者：boss 三條狀態條要用**跟玩家完全相同**的 UI 設計。
+
+先前（續 101/103/107）只加了 flow shader 材質，用純色 Image。這次照玩家血條（`StancePoiseBarFx` 等）的實際場景結構重建：`YuanpeiBossHUD` 每條改成 `HudRoundedRect`(Sliced) 容器 + **`00_Frame` / `01_Background` / `02_DelayedFill`(ghost) / `03_Fill`(HP)｜`03_Fill_Energy`｜`03_Fill_Stance` / `05_EnergyFlow*`(材質 `HealthEnergyFlowUI`) / `EdgeGlow`(Spark) / 6× `Spark0-5` / `Value` 數字**，跟玩家逐層對應（`Assets/_Project/UI/Textures/HealthBarArt/`）。
+
+- 行為比照三個 `*BarFx`：`HealthBarTweenUtility` 的 tween/delayed-fill/edge-glow/spark-burst/shake，flow 材質驅動 `_HpRatio`/`_GlowIntensity`/`_FlashIntensity`/`_SpeedBoost`/`_GlowColor`
+- HP/能量「低→躁動」、架勢「高→躁動」（餵 1-ratio）；受擊 flash + HP 條噴 spark
+- 12 個 sprite + `flowMaterial` 已在 `Map_School` 場景接上（HUD 上新增序列化欄位）
+- 位置維持螢幕上方置中（boss 血條慣例）、加 boss 名稱 + `[F] 處決`
+
+編輯期驗證 hierarchy 逐層對上玩家血條。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 109（2026-09-03）— yuanpei boss：白框、架勢太快、攻擊間隔
+
+Play 回報三修：
+1. **白色背景框** —— `YuanpeiBossHUD` 每條的 `HudRoundedRect` 容器 Image 之前設白色 0.9。玩家血條其實是把這個容器 Image **停用**（`enabled=false`、留 color 白 0.14），只靠 `01_Background` sprite 當底。跟進：容器 Image `enabled=false`。
+2. **架勢太容易滿** —— `postureGainPerDamage` 續 107 從 0.55 拉到 0.9 太多，回 **0.3**。
+3. **攻擊間隔太長** —— `globalAttackInterval` 0.2-0.45 → **0.1-0.25**；stuck watchdog 0.6s → **0.3s**；6 招 telegraph + recovery 全部再砍（ProjectileBurst tele/reco 0.35/0.35、LightningMark 0.25/0.3、Shockwave 0.45/0.6、BodyCharge 0.55/0.5、FocusLaser 0.8/0.8、MultiAoE 0.35/0.6）。
+
+改 `YuanpeiBossHUD.cs` + `YuanpeiBoss.cs` + `YuanpeiBossConfig.asset` + 6 個 `YuanpeiAttack_*.asset`。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 110（2026-09-03）— yuanpei boss：架勢再慢一半、能量池 ×5 + 被動回能
+
+1. **架勢成長慢一倍**：`postureGainPerDamage` 0.3 → **0.15**。
+2. **能量條 ×5**：`maxEnergy` 120 → **600**；相關門檻按比例放大（`lowEnergyThreshold` 72、`energyRechargeExitThreshold` 300、`energyAfterExecution` 300、`energyAfterMissedExecution` 240）。
+3. **每 5 秒回 10%**：`energyRegenPerSecond` → **12**（= 600 × 10% ÷ 5s）。**並修一個 bug**：`RegenEnergy` 原本只在 `EnergyRecharge` 狀態呼叫，一般 Hover/Reposition 完全不回能（違反 spec §5.2）—— 現在 `TickAirCombat` 每幀 `vitals.RegenEnergy`（攻擊 Active 階段不跑此 tick，符合「Active 不恢復」）。→ 能量現在幾乎不會見底，被迫充能狀態基本不再觸發，boss 持續施壓。
+
+改 `YuanpeiBoss.cs` + `YuanpeiBossConfig.asset`。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 111（2026-09-03）— yuanpei boss：新增 3 種肉身衝撞
+
+使用者要 3 種新的肉身衝撞手段。`YuanpeiAttackId` 加 `ChargeLine` / `ChargeCrush` / `OrbitDash`，各建 SO + 加進 `attackPool`（現 9 招）。
+
+1. **`ChargeLine`（長距離直線衝）** —— 走既有 `BodyCharge` 邏輯，SO 給更長更快的數字（速度 46、距離 24m、傷害 45）。撞 `ChargeCrashSurface` 一樣暈眩 + 自架勢。
+2. **`ChargeCrush`（頭頂垂直下壓，命中＝秒殺）** —— 新 coroutine：地面追蹤陰影標記 → boss 滑到玩家頭頂正上方（`boss.SuspendYClamp` 暫時解除 Y 天花板）→ 鎖定當下 XZ、標記變紅、0.25s dodge window → 垂直高速下砸；命中判定 `DamagePlayer(999999)` 走正常傷害管線＝秒殺；落地小震波 + hit-stop + 0.5s 落地空檔給玩家反擊。
+3. **`OrbitDash`（繞圈後突然直衝）** —— 新 coroutine：以 8m 半徑繞玩家轉（方向、轉速、繞多久都隨機）→ 隨機時間點（`dashAt`）鎖定方向、hit-stop 0.03s 當「！」提示 → 直線衝過去、鎖定後不轉向（spec §9.6）；撞牆暈眩、命中傷害 + 擊退。
+
+`YuanpeiScheduler.Matches` 加三者的情境權重（ChargeLine 遠距、ChargeCrush 玩家原地不動、OrbitDash 中距）。`YuanpeiBoss.SuspendYClamp(float)` 新增（讓 ChargeCrush 合法飛高）。
+
+改 `YuanpeiAttackDef.cs` + `YuanpeiAttacks.cs` + `YuanpeiScheduler.cs` + `YuanpeiBoss.cs` + 3 新 `YuanpeiAttack_*.asset` + `Map_School.unity`（attackPool）。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 112（2026-09-03）— 衝撞前搖/預警、OrbitDash 反應時間、玩家死亡「你菜完了」
+
+1. **所有衝撞攻擊加前搖 + 地面預警範圍**：新 `YuanpeiAttacks.ChargePathTelegraph(origin, dir, length, halfWidth, seconds)` —— 沿衝撞方向在地面畫一條**紅色危險車道**（warn→danger 漸變 + 寬度脈動），前搖期間顯示。
+   - `BodyCharge` / `ChargeLine`：先小幅後退 → 顯示車道預警 `max(0.45, windupSeconds)` → 再對玩家最後位置鎖定方向 → 衝。SO windup/telegraph 拉到 0.5-0.6。
+   - `OrbitDash`：鎖定方向後**不再立刻衝**，停在繞圈環上顯示車道預警 0.5s → 才衝（使用者：「衝撞前要給玩家反應時間」）。
+   - `ChargeCrush` 已有地面追蹤陰影標記（續 111）。
+2. **玩家血量 0 → 死亡動畫 → 畫面中心「你菜完了」**：新 `PlayerDeathScreen`（自建螢幕置中大字 + 暗紅 vignette、`DontDestroyOnLoad`、unscaled 0.6s 淡入）。`RespawnController` 加 `showGameOverScreen` / `gameOverMessage`（預設關，只在 Player 的 instance 開）—— 死後 `gameOverScreenDelaySeconds`(0.9s，讓死亡動畫先跑) → `PlayerDeathScreen.Show("你菜完了")` → 到 `respawnDelaySeconds`(5s) 復活時 `Hide()`。`DeathAnimationLink` 的死亡動畫不變。
+
+改 `YuanpeiAttacks.cs` + `RespawnController.cs` + 新 `PlayerDeathScreen.cs` + 2 個 `YuanpeiAttack_*.asset` + `GreyboxTest.unity`（Player RespawnController）。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 113（2026-09-03）— 玩家死於 boss 戰後退場、衝撞時圓盤立直加大命中面
+
+1. **玩家死在 boss 戰 → 「你菜完了」→ 退出 boss 地圖**：`YuanpeiEncounter.Update` 監看玩家 `Health.IsDead`（`boss.Player` 上）。玩家死 → `Defeat()` coroutine：等 5.6s realtime（讓 `RespawnController` 跑完死亡動畫 + 「你菜完了」 + 復活）→ `PlayerDeathScreen.Hide` → `boss.ResetForRematch()`（新 —— StopAllCoroutines、State→Inactive、vitals 全滿重置、回天空起點、collider/lock-on 重開）→ `Started=false` → `SceneTransitionRunner.Begin("", "Map_School", player, (0,1.1,-78), 0…)` 卸載 Map_School、玩家回路口前。再走進去＝全新開打。
+   - `YuanpeiBoss.Update`：玩家 GameObject 變 inactive（`RespawnController` SetActive(false)）時，boss 不再追打，只 `HoldHover`、取消進行中的招式/hazard。
+2. **衝撞時把圓盤立直**（使用者：「一定要先把表面立直 這樣才有更多面積打中玩家」）：
+   - 新 `FaceDiscAlong(dir)` —— logo 圓盤的 face normal = VisualRoot local Y（mesh 薄軸），`LookRotation(_, dir)` 讓圓盤正面朝衝撞方向。
+   - `BodyCharge`/`ChargeLine`：鎖定後 + 衝刺每幀 `FaceDiscAlong`；`ChargeCrush`：下砸時 `FaceDiscAlong(down)`（臉朝下壓）；`OrbitDash`：衝前 + 衝刺 `FaceDiscAlong`。
+   - 命中判定改 `DiscFaceHitsPlayer`：玩家在衝撞軸前方 + **垂直軸距離 < hitR × 2.8**（寬扁的圓盤正面，不是細管）。
+   - `Run` 的 Recovery 階段把 VisualRoot rotation slerp 回戰鬥朝向（不加時間）。
+
+改 `YuanpeiEncounter.cs` + `YuanpeiBoss.cs` + `YuanpeiAttacks.cs`。編譯無錯，**EditMode 306/306 綠**。
+
+### 追加94 續 114（2026-09-03）— 雷擊標記：紅圈影片預警 + 連續 6 發鎖定範圍攻擊
+
+使用者：「雷擊標記的紅圈特效改成 `紅圈攻擊特效.mp4`，並且設計成連續 6 個雷擊標記，每個標記攻擊前都鎖定玩家位置，做成像 RPG 遊戲那樣帶有預警提示的範圍攻擊」。
+
+**先做了 VideoPlayer 版 → 使用者兩次回報「沒看到這招」**。MCP 焦點 Play 診斷：boss 排程 log 顯示 `ATTACK -> LightningMark` 確實有觸發、也有扣血/累架勢，但地面完全沒特效——runtime spawn 的 `VideoPlayer`（RenderTexture 模式）在這台 D3D11 一樣算成全黑（跟 APIOnly 掉紅通道同一類毛病）。**改用烘好的 flipbook 圖集**，可在 Edit Mode 截圖驗證。
+
+1. **素材**：`紅圈攻擊特效.mp4`（1920×1080、92 frames、3.07s）→ ffmpeg `crop=1080:1080:420:0, fps=35/3, scale=256, tile=6x6` → `Assets/_Project/VFX/Boss/RedCircleStrike_Flip.png`（1536²、36 frame、6×6、**mipmap off / Clamp / Uncompressed**——mipmap 開著會把每格平均成一坨橘色）。內容：石地板上的紅色符文魔法陣（warn）→ 能量匯聚 → 紅色火柱（strike）。
+2. **shader**：`Assets/_Project/VFX/Boss/GroundStrikeURP.shader`（`Live2DAction/GroundStrikeURP`）改成 **flipbook 版**——`_Cols`/`_Rows`/`_Frame` 算 tile UV（frame 0 = 圖集左上，翻 row），影片背景是烘進去的深灰石地板非乾淨黑底所以 key 在「亮 OR 飽和紅」上去背，`Blend One One` 貼地發光。材質 `RedCircleStrike.mat`：`_Intensity 1.1`、`_Tint (1,0.62,0.5)`、`_FloorCut 0.34`、`_KeyWidth 0.26`、`_RedBoost 1.4`。
+3. **`YuanpeiHazard.SetFlipbook(mat, cols, rows, frames, impactFrac, frameScale=3)`**（Configure 之後）：關掉 primitive disc **和** ring（圖集自帶符文環，primitive 在底下只會變成中間一坨橘光），建一片貼地 quad（localRot X90、scale = radius×2×frameScale），instanced 材質。`Update` 把 warn 期間播 frame 0→impactFrame（impactFrac×(frames-1)，預設 0.62），burst 後 1.3s tail 播完剩下的 frame + `_Fade` 淡出再 Destroy。移除所有 VideoPlayer/RenderTexture 程式碼、`using UnityEngine.Video`。
+4. **`YuanpeiAttacks.LightningMark` 改寫**：`count` 3→**6**，每發 spawn 時**重新** `ProjectToGround(player.position)` 鎖定玩家當下位置，錯開發射（每 `number3`=0.55s 一發，非嚴格序列）形成「持續走位」壓力；每發 `number2`=1.4s warn 窗後爆，`number1`=2.0m 半徑。新 `[SerializeField] Material strikeFlipbookMaterial` + cols/rows/frames/impactFraction，已在 `Map_School` 的 `yuanpei_LogoSky` YuanpeiAttacks 上接好。
+5. SO `YuanpeiAttack_LightningMark.asset`：count 3→6、number1 1.4→2.0、number2 0.95→1.4、number3 0.5→0.55、baseWeight 1→2、situationalWeightBonus 2.5→3.5、cooldownSeconds 4.2→3.5（提高出現率）。
+6. `YuanpeiBoss.BeginAttack` 加 `verboseLog` 一行 `[YuanpeiBoss] ATTACK -> <id>` 診斷 log。
+
+7. **真正看不到的原因**（flipbook 版仍看不到 → Edit-Mode 逐格截圖 debug）：貼地 quad 的 Y 只比廣場地板網格高 0.06，**沉進地板被 opaque floor 的 depth 擋掉**（ZTest LEqual）。加 **`ZTest Always`**（ground decal 本來就該永遠蓋在地板上）+ quad 墊到 localY 0.06 → 修好，魔法陣正常顯示。
+8. **shader blend 改 alpha-blend**：純 `Blend One One` 加法在大白天的廣場被曬到看不見（加一點暗紅≈沒差）。改 `Blend One OneMinusSrcAlpha` premult——底層符文圈用 alpha 實際「畫」在地上（可讀的危險區），亮部（火柱/火花，luma > `_AddBright`）再 additive 疊上去。材質 `_Tint (1,.28,.14) / _Opacity 1.8 / _AddBright .78`。
+
+改 `YuanpeiHazard.cs` + `YuanpeiAttacks.cs` + `YuanpeiBoss.cs` + flipbook shader（alpha-blend + ZTest Always）/材質/圖集 PNG + `YuanpeiAttack_LightningMark.asset` + `Map_School.unity`。舊 `RedCircleStrike.mp4` 已刪。編譯無錯，**EditMode 306/306 綠**。Edit-Mode 截圖驗證通過：貼地符文魔法陣 warn 圈清楚可讀，burst 是地面亮閃（平面 quad 畫不出垂直火柱，故火柱那段讀作放射狀亮閃）。
+
+### 追加94 續 115（2026-09-03）— 雷擊標記特效收尾 + OrbitDash 側身衝刺
+
+使用者回報（特效終於看得到後）：1. 特效是長方形，圓形以外要裁掉；2. 特效會遮住玩家建模；3. 繞圈衝刺那招衝刺時改用 boss 側身而非正面。
+
+1. **圓形裁切**：`GroundStrikeURP` frag 加圓形 mask（`_MaskRadius 0.5` / `_MaskSoft 0.09` / `_MaskCenterY` / `_MaskAspectY` 給橢圓藝術用），`smoothstep` 出一個內切圓把長方形四角（烘進去的石地板）裁掉。
+2. **不再遮玩家**：shader `ZTest Always` → **`ZTest LEqual` + `Offset -1, -1`**。玩家是 opaque、先畫、寫 depth；decal 在 Transparent queue 用 LEqual → 玩家站在圈上時玩家像素較近、decal 片段被 discard → 玩家蓋在特效上。polygon offset 把 decal 往鏡頭拉一點點壓過地板 z-fighting，不必再靠 ZTest Always。quad localY 0.06→**0.12** 再墊高一點保險。
+3. **尺寸修正**：`SetFlipbook` frameScale 預設 3.0→**1.6**（配合圓形 mask，整片 quad ≈ 圓，貼近命中半徑 `number1`=2.0m，只留一點點公平餘裕），之前 11m 視覺 vs 4m 命中差太多。
+4. **OrbitDash 側身衝刺**：新 `FaceDiscSideAlong(dir)` —— `LookRotation(dir, cross(dir,up))` 讓圓盤像滾動的硬幣立起來、**邊緣朝前**、正反面朝左右。OrbitDash 衝刺前 + 衝刺中的 `FaceDiscAlong` 都換成這支（其餘 BodyCharge/ChargeLine/ChargeCrush 仍維持正面立直）。
+
+改 `GroundStrikeURP.shader` + `YuanpeiHazard.cs` + `YuanpeiAttacks.cs` + `RedCircleStrike.mat`。編譯無錯，**EditMode 306/306 綠**。Edit-Mode 截圖驗證：圓形裁切乾淨、玩家膠囊站圈上不被遮。OrbitDash 側身待焦點 Play 確認視覺。
+
+### 追加94 續 116（2026-09-04）— 近距離擊退「順移/掉帧」修正
+
+使用者：「非常近距離接觸時 boss 擊退玩家的動畫不自然, 感覺有點掉帧, 順移的感覺」。
+
+1. **玩家擊退的瞬移 pop**：`KnockbackReceiver.instantDisplacementFraction` 0.15→**0.04**（程式預設 + GreyboxTest 的 Player instance）。0.15 時擊退瞬間會 `CharacterController.Move(dir × force×0.15)` ＝ 單幀直接位移 ~1.5-1.8m、中間沒有任何動畫過渡，就是那個「順移」。改成只留一個很小的即時 nudge，實際推移距離交給會線性衰減的 `_dashVelocity`（force×0.25 / 0.5s）逐幀平滑帶過。
+2. **補推力**：因為砍了即時 pop，把 yuanpei 的擊退力道補上——BodyCharge/ChargeLine 10→**13**、OrbitDash 12→**15**，總推移距離維持。
+3. **Boss 前搖的瞬移**：`BodyCharge` 前搖的 `transform.position -= dir * 1.5f`（單幀瞬間後退，貼身時看起來像 boss 瞬移）改成新 `EaseMove(to, 0.16s)` smoothstep 過去。
+4. **防掉帧瞬移**：`BodyCharge` / `OrbitDash` 衝刺每幀位移 `speed * Time.deltaTime` → `speed * Mathf.Min(Time.deltaTime, 0.04f)`，一次幀卡頓不會讓 boss 直接穿場。
+
+改 `KnockbackReceiver.cs` + `YuanpeiAttacks.cs` + `GreyboxTest.unity`（Player KnockbackReceiver）。編譯無錯，**EditMode 306/306 綠**。手感待焦點 Play 確認。
+
+> ⚠️ 踩坑：用 Edit 工具直接改 `GreyboxTest.unity` 會把整份 CRLF→LF 重寫、還可能吃掉內嵌 Mesh 區塊——已 `git checkout` 還原，改走 Unity SerializedObject 存檔。Unity 場景/asset 一律不要用純文字 Edit。（另註：GreyboxTest.unity 每次存檔本來就會因為內嵌 Cubism ArtMesh 重新烘出巨大 diff，非本次造成。）

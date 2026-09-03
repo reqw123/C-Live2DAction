@@ -42,6 +42,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
         public float meleeRange = 4.5f;
         public float hoverHeight = 3.0f;                 // combat height above the arena floor
         public float rechargeHeight = 1.7f;             // descends to a hittable height
+        [Tooltip("Absolute world Y ceiling - the boss's root is clamped to this every frame it " +
+                 "sets its own height, so a bad floor sample (e.g. a raycast hitting a building " +
+                 "roof) can't fling it into the sky. Plaza floor ≈ 0.5, hoverHeight 3 → normal " +
+                 "hover ≈ 3.5; 8 leaves headroom for the MultiAoE 'rise a little' beat.")]
+        public float maxWorldY = 8f;
         public Vector2 hoverBobAmplitudeSpeed = new Vector2(0.35f, 0.8f); // (metres, Hz)
         public float repositionSpeed = 6f;
         public float faceTurnSpeedDegPerSec = 220f;

@@ -140,4 +140,45 @@ public class YuanpeiBossLogicTests
         var s = BaseSituation(); s.onScreenSeconds = 0.2f; s.onScreenGrace = 0.5f;
         Assert.IsNull(YuanpeiScheduler.Select(pool, in s, Empty, Empty, 0f, 1f, new System.Random(1)));
     }
+
+    // ---------------- MultiAoE safe route (spec §9.4) ----------------
+
+    static YuanpeiAoePlacement.Circle C(float x, float z, float r)
+        => new YuanpeiAoePlacement.Circle { center = new Vector2(x, z), radius = r };
+
+    [Test]
+    public void AoE_LeavesTheCandidatesAloneWhenARouteAlreadyExists()
+    {
+        // two small circles far from the player - a dodge in almost any direction is clear
+        var cand = new List<YuanpeiAoePlacement.Circle> { C(20f, 0f, 1.5f), C(-20f, 0f, 1.5f) };
+        var kept = YuanpeiAoePlacement.EnsureSafeRoute(cand, Vector2.zero, Vector2.zero, 12f);
+        Assert.AreEqual(2, kept.Count);
+    }
+
+    [Test]
+    public void AoE_DropsCirclesUntilAnEscapePointIsClear()
+    {
+        // a dense 5x5 grid of overlapping circles blanketing everything within one dodge of the
+        // player (their current spot AND every escape point) - a genuine trap
+        var cand = new List<YuanpeiAoePlacement.Circle>();
+        for (int gx = -2; gx <= 2; gx++)
+        for (int gz = -2; gz <= 2; gz++)
+            cand.Add(C(gx * 2f, gz * 2f, 2.0f));
+
+        int trappedBefore = YuanpeiAoePlacement.FirstSafeSampleIndex(cand, Vector2.zero, Vector2.zero, 14f, 3.5f, 0.4f, 24);
+        Assert.Less(trappedBefore, 0, "the raw candidates must actually trap the player (test precondition)");
+
+        var kept = YuanpeiAoePlacement.EnsureSafeRoute(cand, Vector2.zero, Vector2.zero, 14f);
+        Assert.Less(kept.Count, cand.Count, "at least one circle must be dropped to open a route");
+        int safe = YuanpeiAoePlacement.FirstSafeSampleIndex(kept, Vector2.zero, Vector2.zero, 14f, 3.5f, 0.4f, 24);
+        Assert.GreaterOrEqual(safe, 0, "a reachable safe point must exist after the fix");
+    }
+
+    [Test]
+    public void AoE_NeverDropsBelowTheHardFloor()
+    {
+        var cand = new List<YuanpeiAoePlacement.Circle> { C(0f, 0f, 20f), C(0.1f, 0.1f, 20f) }; // absurdly covering
+        var kept = YuanpeiAoePlacement.EnsureSafeRoute(cand, Vector2.zero, Vector2.zero, 12f, 3.5f, 0.4f, minCircles: 2);
+        Assert.AreEqual(2, kept.Count, "a 2-circle MultiAoE is never a full trap - keep both rather than cancel the attack");
+    }
 }

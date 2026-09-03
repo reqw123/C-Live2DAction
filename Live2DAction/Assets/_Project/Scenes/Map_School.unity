@@ -155,8 +155,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 50, y: 21.45221, z: 28.27466}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Size: {x: 22, y: 22, z: 16}
+  m_Center: {x: -3.9855423, y: 0.27389526, z: -4.517334}
 --- !u!4 &67287165
 Transform:
   m_ObjectHideFlags: 0
@@ -344,8 +344,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   boss: {fileID: 607562221226281425}
   hud: {fileID: 607562221226281421}
-  combatCenter: {x: 0, y: 0.5, z: -114}
+  combatCenter: {x: -2, y: 0.5, z: -105}
   startOnTrigger: 1
+  victoryMessage: "\u6230\u9B25\u52DD\u5229"
+  dissolveSeconds: 1.6
+  victoryHoldSeconds: 5
+  returnUnloadScene: Map_School
+  returnArrivalPosition: {x: 0, y: 1.1, z: -78}
+  returnArrivalYaw: 0
 --- !u!65 &230221644
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -926,6 +932,7 @@ GameObject:
   - component: {fileID: 658114901}
   - component: {fileID: 658114900}
   - component: {fileID: 658114899}
+  - component: {fileID: 658114902}
   m_Layer: 0
   m_Name: PortalSurface
   m_TagString: Untagged
@@ -942,8 +949,8 @@ Transform:
   m_GameObject: {fileID: 658114897}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 2.7, z: 0}
-  m_LocalScale: {x: 9, y: 5, z: 1}
+  m_LocalPosition: {x: 0, y: 4.1, z: 0}
+  m_LocalScale: {x: 13, y: 9, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 671840271}
@@ -960,12 +967,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 636ba0b94fed0304c84b50832ac695f2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  materialTemplate: {fileID: 2100000, guid: 2a2288da5d855fa41b1daa53636f2fb3, type: 2}
-  clip: {fileID: 32900000, guid: 9ad29c39dcecbbf43a8c8858049a33d2, type: 3}
-  tint: {r: 0.85, g: 0.85, b: 0.85, a: 1}
-  billboard: 1
-  pulseAmount: 0.035
-  pulseSpeed: 0.45
+  proximityActivated: 1
+  activateRange: 32
+  deactivateRange: 40
+  appearFadeSeconds: 0.45
+  billboard: 0
+  pulseAmount: 0.03
+  pulseSpeed: 0.4
+  verbose: 1
 --- !u!23 &658114900
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -974,8 +983,8 @@ MeshRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 658114897}
   m_Enabled: 1
-  m_CastShadows: 1
-  m_ReceiveShadows: 1
+  m_CastShadows: 0
+  m_ReceiveShadows: 0
   m_DynamicOccludee: 1
   m_StaticShadowCaster: 0
   m_MotionVectors: 1
@@ -989,7 +998,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
+  - {fileID: 2100000, guid: e0de86c4fb17404408fb04f2e8533b68, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -1019,6 +1028,40 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 658114897}
   m_Mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!328 &658114902
+VideoPlayer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 658114897}
+  m_Enabled: 1
+  m_VideoClip: {fileID: 32900000, guid: 9ad29c39dcecbbf43a8c8858049a33d2, type: 3}
+  m_TargetCameraAlpha: 1
+  m_TargetCamera3DLayout: 0
+  m_TargetCamera: {fileID: 0}
+  m_TargetTexture: {fileID: 8400000, guid: 2d277c5ed90b62c46bfcd2a28a917ed4, type: 2}
+  m_TimeReference: 0
+  m_TargetMaterialRenderer: {fileID: 0}
+  m_TargetMaterialProperty: <noninit>
+  m_RenderMode: 2
+  m_AspectRatio: 2
+  m_DataSource: 0
+  m_TimeUpdateMode: 2
+  m_PlaybackSpeed: 1
+  m_AudioOutputMode: 0
+  m_TargetAudioSources: []
+  m_DirectAudioVolumes: []
+  m_Url: 
+  m_EnabledAudioTracks: 
+  m_DirectAudioMutes: 
+  m_ControlledAudioTrackCount: 0
+  m_PlayOnAwake: 1
+  m_SkipOnDrop: 1
+  m_Looping: 1
+  m_WaitForFirstFrame: 0
+  m_FrameReadyEventEnabled: 0
+  m_VideoShaders: []
 --- !u!1 &659186034
 GameObject:
   m_ObjectHideFlags: 0
@@ -1302,8 +1345,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 16.098501, y: 13.470492, z: 20}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Size: {x: 14, y: 14, z: 16}
+  m_Center: {x: 0.8076687, y: 0.26475382, z: -1.3356094}
 --- !u!4 &756361027
 Transform:
   m_ObjectHideFlags: 0
@@ -1355,8 +1398,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 25.116606, y: 18.150423, z: 25.445854}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Size: {x: 18, y: 19, z: 20}
+  m_Center: {x: 0.9982357, y: 0.42478848, z: 0.5116043}
 --- !u!4 &805751430
 Transform:
   m_ObjectHideFlags: 0
@@ -1807,7 +1850,7 @@ Transform:
   m_GameObject: {fileID: 1496319355}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 2.7, z: 0}
+  m_LocalPosition: {x: 0, y: 4, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1832,7 +1875,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 9, y: 5, z: 0.3}
+  m_Size: {x: 12, y: 8, z: 0.4}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1540038993
 GameObject:
@@ -2192,6 +2235,18 @@ MonoBehaviour:
   vitals: {fileID: 607562221226281423}
   execution: {fileID: 607562221226281422}
   bossName: yuanpei_LogoSky
+  flowMaterial: {fileID: 2100000, guid: 1bca3dfb0c2553349b7391ce966e4ba9, type: 2}
+  roundedRectSprite: {fileID: 21300000, guid: 41443c69b7048764c8e1f57e34ffbbd0, type: 3}
+  frameSprite: {fileID: 21300000, guid: 8b22c48187067fb41a0f143ea26fe238, type: 3}
+  backgroundSprite: {fileID: 21300000, guid: 7e082c62cf7c1bb48851e825ef59b6f6, type: 3}
+  delayedFillSprite: {fileID: 21300000, guid: dc9a288b240829f43b8289f412664124, type: 3}
+  fillHpSprite: {fileID: 21300000, guid: eea6738ee6a30db41b0b5fa29bcb3d05, type: 3}
+  fillEnergySprite: {fileID: 21300000, guid: bd36b86238302d14b8ba77e8ee3d0a23, type: 3}
+  fillStanceSprite: {fileID: 21300000, guid: 8453e308d4ef3aa47855db65128cd7cb, type: 3}
+  flowHpSprite: {fileID: 21300000, guid: 720695846649f7d4a8e54c508eeee735, type: 3}
+  flowEnergySprite: {fileID: 21300000, guid: a6851238b7d23a343b6d8605cb8bd12f, type: 3}
+  flowStanceSprite: {fileID: 21300000, guid: d22088ef997fe95448b4314b8de3125e, type: 3}
+  sparkSprite: {fileID: 21300000, guid: 8ad842f1fe7913f4396f6c9c1a4be6f5, type: 3}
 --- !u!114 &607562221226281422
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2210,7 +2265,7 @@ MonoBehaviour:
   visualRoot: {fileID: 355638625}
   groundMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 4294966783
 --- !u!114 &607562221226281423
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2265,12 +2320,16 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1f05af0dc3966114ab3ad95aaa024aea, type: 2}
   - {fileID: 11400000, guid: f26d181231366104188fbb7306801bb9, type: 2}
   - {fileID: 11400000, guid: d1723fcffddf37e4ebd1ee21e57aafeb, type: 2}
+  - {fileID: 11400000, guid: 3ad6f8e337791b646b955e79d3de757e, type: 2}
+  - {fileID: 11400000, guid: 1e6b5168139b7a34f83230eaefc490df, type: 2}
+  - {fileID: 11400000, guid: dabbb6da1df202f4d921d101183465b4, type: 2}
   losBlockers:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 1
   groundMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 4294966783
+  verboseLog: 1
   combatVisualScaleFraction: 0.28
 --- !u!114 &607562221226281426
 MonoBehaviour:
@@ -2288,10 +2347,15 @@ MonoBehaviour:
   laserOrigin: {fileID: 503660451}
   groundMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 4294966783
   chargeCrashMask:
     serializedVersion: 2
     m_Bits: 512
+  strikeFlipbookMaterial: {fileID: 2100000, guid: ab13d3761f6712e4d8a62bb8a2b378b5, type: 2}
+  strikeFlipbookCols: 6
+  strikeFlipbookRows: 6
+  strikeFlipbookFrames: 36
+  strikeFlipbookImpactFraction: 0.62
   castColor: {r: 1, g: 0.9, b: 0.4, a: 1}
   warnColor: {r: 1, g: 0.55, b: 0.15, a: 0.5}
   burstColor: {r: 1, g: 0.35, b: 0.15, a: 1}

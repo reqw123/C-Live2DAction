@@ -32,15 +32,15 @@
 | `promptText` | 「按 E 進入元培大學」 | 「按 E 離開元培大學」 |
 | 位置 | `(0,0,-82)` 車道南端 | `(0,0,-86)` 北牆缺口內側 |
 
-**視覺（續 80-82，續 83 加大嘗試已於續 84 回退）**：一片播放紅色漩渦影片的 Quad（`PortalSurface`，**9×5**、中心 local y2.7）+ 一片隱形實心 `Blocker`（BoxCollider 9×5×0.3）。root 上 11×6.5×5 trigger。入口 / 校內離開兩座門完全一致。
-**影片視覺 `PortalVideoSurface.cs`**（掛在門的 `PortalSurface` Quad）：
-- 影片 `Assets/_Project/VFX/Gate/PortalVortexVideo.mp4`（1280×720 / 10s / H.264 baseline / bt709）。
-- `Awake` 建 per-instance `RenderTexture`(640×360，建完 `GL.Clear` 黑) + `VideoPlayer`（RenderTexture 模式、loop、playOnAwake、無音訊）→ per-instance 的 `GatePortalVideo.mat`（shader `Live2DAction/VFX/AdditiveUnlit`，`Blend One One`）。
-- full `billboard` 每幀轉向攝影機；`pulse` 輕微縮放；`tint` 0.8。`depthLayers` **0**（續 85 —— 疊層疊在灰底上變矩形；先只留主體）。
-- **自我修復**（續 85）：`Update` `if (isPrepared && !isPlaying) Play()` + `Awake` 加 `Prepare()` —— scene-0 載入時 AddComponent 的 VideoPlayer 有時 prepare 了卻沒開始播（`playOnAwake` 早於設 clip），入口門（開場載入）因此變隱形黑 quad、校內門（中途載入）沒中 → 「地圖外沒有門」。
+**視覺（續 91 重做，取代續 90 的程序化 shader）**：一片播放紅色漩渦影片的 Quad（`PortalSurface`，**13×9**、中心 local y4.1，比車道 ~7.4 寬、底邊約貼地面）+ 一片隱形實心 `Blocker`（BoxCollider 12×8×0.4）。root 上 11×6.5×5 trigger。4 座門（入口×2 + 校內/校外離開×2）完全一致。
+**影片視覺（續 91）**：
+- **VideoPlayer 是場景序列化元件**（編輯期就 `AddComponent` 並把 `clip`/`targetTexture`/`playOnAwake=1`/`loop`/`audioOutputMode=None` 寫進場景 YAML）。**不再在 runtime `AddComponent`** —— 那正是入口門一直播不出來的原因：`playOnAwake` 在 `AddComponent` 當下 latch，早於設 `clip`，scene-0 載入的入口門沒有第二次機會。
+- 每座門一張 `Assets/_Project/VFX/Gate/RT_<gate>.renderTexture`（640×360）+ `Mat_<gate>.mat`（shader `Live2DAction/PortalVideoURP`）。
+- `PortalVideoURP.shader`：取樣影片 RT，`a = smoothstep(_KeyLow 0.02, _KeyHigh 0.12, luma)` key 掉近黑背景，`Blend One One` 疊加發光（近黑貢獻 0 → **無灰白矩形基座**），`_EdgeFade` 0.05 柔化 quad 邊，`_Intensity` 2.0。
+- `PortalVortexVideo.mp4`：640×360 / 10s / H.264 baseline / bt709 / **全範圍（無壓黑，角落 avgLuma 實測 0.002）** / 1.3 MB。
+- `PortalVideoSurface.cs` 只做：billboard（**關**，門是固定平面）＋輕微 pulse ＋ `Update()` 裡 `if (!vp.isPlaying) vp.Play()` nudge 當保險。不建立 VideoPlayer / material。
 - **沒有畫面提示**（續 85 —— 使用者不要那個文字框；漩渦本身就是提示）。`SceneGate` 只剩 trigger + 按 E。
-- **未解**：限制範圍解碼的「黑底」實際 ~0.06-0.10 灰 → quad 矩形邊界有點灰白（續 83 想用硬 `_Cutoff` 解、太狠讓門消失、續 84 回退）。之後用 smoothstep。
-- 兩座門各自 RT + 材質 instance，`OnDestroy` 釋放。
+- 殘留 warning：`Color primaries 0 … WindowsMediaFoundation`（ffmpeg 沒寫 colr atom，紅色調可能極微偏移，對這個造型無感）。
 
 **轉場流程** —— 跑在 **`SceneTransitionRunner`**（`Assets/_Project/Game/World/SceneTransitionRunner.cs`，單例，掛 GreyboxTest 常駐 `SceneTransitionRunner` GO），**不是門物件上**（續 81：離開門在 `Map_School` 裡，`UnloadSceneAsync` 會把門連 coroutine 一起銷毀 → 卡在中間、「只能進不能出」）。`SceneGate` 按 E → `SceneTransitionRunner.Instance.Begin(...)`：
 1. `ScreenFader.SetLabel("載入中…")` + `SetCovered(true)`，等 `IsFullyCovered`

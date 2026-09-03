@@ -72,8 +72,9 @@ namespace Live2DAction.AI.Boss.Yuanpei
             }
             transform.position = land;
 
-            // landing shake (visual only - spec §11.3)
-            Live2DAction.Combat.HitStopController.Request(0.04f, 0.2f);
+            // landing feedback (spec §11.3 - 灰塵、小型震波、鏡頭震動; visual only, no player damage)
+            Live2DAction.Combat.HitStopController.Request(0.06f, 0.18f);
+            SpawnLandingImpact(new Vector3(land.x, groundPoint.y + 0.05f, land.z));
 
             // --- F window (spec §11.4) ---
             WindowOpen = true;
@@ -184,9 +185,94 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private Vector3 SampleGround(Vector3 from)
         {
             Vector3 o = new Vector3(from.x, from.y + 40f, from.z);
-            if (Physics.Raycast(o, Vector3.down, out var hit, 300f, groundMask, QueryTriggerInteraction.Ignore))
-                return hit.point;
+            var hits = Physics.RaycastAll(o, Vector3.down, 320f, groundMask, QueryTriggerInteraction.Ignore);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+            for (int i = 0; i < hits.Length; i++)
+            {
+                var col = hits[i].collider;
+                if (col == null) continue;
+                if (col.GetComponentInParent<Live2DAction.Input.PlayerInputProvider>() != null) continue; // not the player
+                if (col.GetComponentInParent<CharacterController>() != null) continue;
+                if (boss != null && col.transform.root == boss.transform.root) continue;                  // not our own body
+                return hits[i].point;
+            }
             return new Vector3(from.x, (_cfg != null ? _cfg.arenaCenter.y : 0f) + 0.5f, from.z);
+        }
+
+        // spec §11.3 landing 灰塵 + 小型震波 - all cosmetic, no hit volume. Self-cleaning.
+        private void SpawnLandingImpact(Vector3 ground)
+        {
+            var root = new GameObject("YuanpeiLandingImpact");
+            root.transform.position = ground;
+            root.AddComponent<LandingImpactFx>();
+        }
+
+        private sealed class LandingImpactFx : MonoBehaviour
+        {
+            private Transform _ring;
+            private Renderer _ringR;
+            private readonly System.Collections.Generic.List<Transform> _dust = new System.Collections.Generic.List<Transform>();
+            private readonly System.Collections.Generic.List<Vector3> _dustVel = new System.Collections.Generic.List<Vector3>();
+            private MaterialPropertyBlock _mpb;
+            private float _t;
+
+            private void Start()
+            {
+                _mpb = new MaterialPropertyBlock();
+
+                _ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder).transform;
+                _ring.SetParent(transform, false);
+                Destroy(_ring.GetComponent<Collider>());
+                _ring.localScale = new Vector3(0.4f, 0.02f, 0.4f);
+                _ringR = _ring.GetComponent<Renderer>();
+                _ringR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+                var rng = new System.Random();
+                for (int i = 0; i < 8; i++)
+                {
+                    var d = GameObject.CreatePrimitive(PrimitiveType.Sphere).transform;
+                    d.SetParent(transform, false);
+                    Destroy(d.GetComponent<Collider>());
+                    d.localScale = Vector3.one * (0.25f + (float)rng.NextDouble() * 0.35f);
+                    float a = (float)(rng.NextDouble() * System.Math.PI * 2.0);
+                    var v = new Vector3(Mathf.Cos(a), 0.7f + (float)rng.NextDouble() * 0.6f, Mathf.Sin(a));
+                    _dust.Add(d);
+                    _dustVel.Add(v * (2.5f + (float)rng.NextDouble() * 2f));
+                    var dr = d.GetComponent<Renderer>();
+                    dr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                }
+            }
+
+            private void Update()
+            {
+                _t += Time.deltaTime;
+                float life = 0.55f;
+                float k = Mathf.Clamp01(_t / life);
+
+                if (_ring != null)
+                {
+                    float r = Mathf.Lerp(0.4f, 5.5f, k);
+                    _ring.localScale = new Vector3(r, 0.02f, r);
+                    var c = new Color(0.75f, 0.68f, 0.55f, 1f - k);
+                    _ringR.GetPropertyBlock(_mpb);
+                    _mpb.SetColor("_BaseColor", c);
+                    _mpb.SetColor("_EmissionColor", c * 0.6f);
+                    _ringR.SetPropertyBlock(_mpb);
+                }
+
+                for (int i = 0; i < _dust.Count; i++)
+                {
+                    if (_dust[i] == null) continue;
+                    var v = _dustVel[i];
+                    v.y -= 9f * Time.deltaTime;
+                    _dustVel[i] = v;
+                    _dust[i].position += v * Time.deltaTime;
+                    float s = Mathf.Max(0f, (0.35f) * (1f - k));
+                    _dust[i].localScale = Vector3.one * s;
+                }
+
+                if (_t >= life) Destroy(gameObject);
+            }
         }
     }
 }

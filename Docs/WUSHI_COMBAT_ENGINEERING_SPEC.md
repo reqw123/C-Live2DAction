@@ -14,7 +14,7 @@
 | **5B** | 比例／骨架正規化 | M3 | ✅ **「做法 A」完成**：武士 gameplay root `localScale` 4→1，可見模型／骨架／刀／所有骨綁 hitbox 世界幾何逐項驗證完全保留（`WushiRootScaleSetup.cs`）。**做法 B**（縮小可見武士 + 依玩家高度重做每招 clip + 拆共用 `NewAnimator`）留給未來一份完整武士副本 | 續 33 |
 | **5C** | 精確 Guard Collider | M3 | ⏸ **使用者決定跳過**（2026-09-02），等做法 B。目前仍是玩家錨定的守備範圍膠囊（proxy） | — |
 | **6** | 格擋架勢計算 | M1 | ✅ 程式完成（一般格擋架勢 = 每招 `PoiseDamage`，非固定 6） | 續 11 |
-| **7** | 處決 + 生命節點 | M4 | ✅ 程式完成 + 已接線（武士 2 個 Deathblow 節點 → 第一次處決進 Phase 2、第二次永久死亡；`BossLifeNodeController`） | 續 19 |
+| **7** | 處決 + 生命節點 | M4 | ❌ **使用者決定不採用**（2026-09-03 續 99）—— 處決要「一律扣當前生命 50%」，但節點路線第一次處決會 `ResetHealth()` 回滿血。已從武士移除 `BossLifeNodeController` 元件（`.cs` + `ExecutionNodeLogic` + 測試留著）。現在武士/屁孩王/Enemy 處決一致：`health.CurrentHealth × 0.5` + `EndStagger`。武士血歸零仍 5s 復活（`permanentDeath` 未動）。 | 續 19、~~99~~ |
 | **8** | 特殊招式排程 + 架勢權威 | M4 | ✅ 程式完成（§9.2 共享特殊冷卻武士 7s；§9.3 `StancePoise` 已是單一架勢權威；「重複 UltimateEnergy」為規格對本專案的誤判——ult 表與飛行耐力是兩個不同用途） | 續 20 |
 | **9** | 最終數值調校 | M5 | 🔧 groundwork 完成：§10.2 戰鬥數據儀表（`SekiroDeflectDebug` F9 session tally）+ §10.4 出招真實時序報表（`BossAttackTimingReport` 選單 + `BossAttackTimingUtility`）。§10.3 pass #1–2 進行中（步驟 16 減速 OverheadSlam 1.05 / SpartanKick 1.0 / SwordJudgment 0.9；步驟 19 起手 重擊 SwordJudgment 42 / OverheadSlam 40，輕擊維持 25）。ParryRate 38%→67%。續 38–45：pool = [SwordJudgment, CrossSlash]；BladeHitbox 加大；武士固定 ~3.5m 圈外原地出招；CrossSlash（yaw -15、命中窗提前、speed 1.15）；只有 SpartanKick 擊退；全命中窗 ContinueCombo（彈反不打斷，武士無 flinch clip）；`attackRecoveryTailCutNormalized` 回 2（招式完整播完再接）；硬直倒地改 `Wushi_PostureFall`；新 `cancelClipBodyDrift` 治 Meshy clip 烤入位移通病；pool = [SwordJudgment, CrossSlash, ThrustStab, TwistCleave]（ScissorTakedown/SlideRoll 匯入未上場）。**待使用者 Play 驗收 → 步驟 20** | 續 32、34–47 |
 

@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6b578bd08c9a8694780d6ffbd837ea76, type: 3}
+  m_Name: YuanpeiAttack_ChargeCrush
+  m_EditorClassIdentifier: 
+  attackId: 7
+  displayName: "\u8089\u8EAB\u885D\u649E\uFF1A\u982D\u9802\u5782\u76F4\u4E0B\u58D3\uFF08\u547D\u4E2D\uFF1D\u79D2\u6BBA\uFF09"
+  requiredPhase: 1
+  energyCost: 25
+  cooldownSeconds: 12
+  minRange: 0
+  maxRange: 16
+  isMajorHazard: 0
+  telegraphSeconds: 0.5
+  windupSeconds: 0.2
+  activeSeconds: 1.6
+  recoverySeconds: 0.7
+  healthDamage: 999999
+  playerPostureDamage: 0
+  maxHitsPerTarget: 1
+  baseWeight: 0.9
+  situationalWeightBonus: 3.5
+  number1: 12
+  number2: 44
+  number3: 2.6
+  count: 1

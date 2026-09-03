@@ -117,6 +117,17 @@ System.Type.GetType("MCPForUnity.Editor.Services.EditorStateCache, MCPForUnity.E
 **結論**：MCP 驅動下，PlayMode 驗證不可靠。EditMode 現在可以硬清後跑；PlayMode 一律把修改做完、
 請使用者本人從 Test Runner 視窗跑。
 
+### 不要用純文字工具改 Unity YAML（`.unity` / `.asset` / `.prefab` / `.meta`）
+
+2026-09-04：用 Edit 工具改 `GreyboxTest.unity` 一個序列化欄位 → 整份 6 萬行檔案 CRLF→LF 重寫，
+`git diff` 顯示內嵌 `Mesh:` / Cubism `ArtMesh` 區塊被刪，只能 `git checkout` 還原。
+改序列化值一律走 `execute_code` 的 `new SerializedObject(comp)` → `FindProperty` → 設值 →
+`ApplyModifiedPropertiesWithoutUndo` → `SetDirty` → `SaveScene`/`SaveAssets`；SO 也可用
+`manage_scriptable_object`。`.cs` shader 檔可以正常 Edit。
+
+另註：`GreyboxTest.unity` 每次存檔本來就會有巨大 diff（場景內 Live2D 立牌 `ToModel()` 每次重烘
+~205 個 Cubism `ArtMesh` 子網格、fileID 全換），是正常 churn 不是壞檔，看你改的欄位有進去就好。
+
 ---
 
 ## 4. 手動調校值是權威，不是 bug
@@ -289,9 +300,23 @@ System.Type.GetType("MCPForUnity.Editor.Services.EditorStateCache, MCPForUnity.E
   （`SceneGate.cs` + `SceneTransitionRunner.cs`）：`SchoolGate_Enter`（GreyboxTest 車道南端）按 E
   → `SceneTransitionRunner`（常駐 GO，**不是門上** —— 卸 Map_School 會連門帶 coroutine 一起銷毀）跑
   `ScreenFader` 載入畫面 → `LoadSceneAsync(Additive)` → 傳送玩家進校園；`SchoolGate_Exit`（Map_School 內）
-  按 E → 傳回車道 + 卸載。門的可見面是紅漩渦影片（`PortalVideoSurface`，VideoPlayer→RT→`AdditiveUnlit`；
-  RT 建時要 `GL.Clear` 黑否則 additive 白閃）。`MapStreamer.cs` 留磁碟未使用。
-  **要改學校物件先在 Editor 把 `Map_School.unity` additively 開起來**。詳見 `MAP_STREAMING.md`。
+  按 E → 傳回車道 + 卸載。二次元（`Map_Nijigen.unity`，本地西側）同款。
+  門的可見面是紅漩渦影片（`PortalVortexVideo.mp4`）。**續 91：VideoPlayer 一定要是場景序列化元件**
+  （編輯期 `AddComponent` + 設 `clip`/`targetTexture`/`playOnAwake` 後存場景），**絕不要在 runtime
+  `Awake()` 裡 `AddComponent<VideoPlayer>()`** —— `playOnAwake` 在 `AddComponent` 當下就 latch，早於設
+  `clip`，scene-0 載入的入口門會永遠不播（試錯 ~9 次的根因）。每座門一張 `RT_<gate>` +
+  `Mat_<gate>`（shader `Live2DAction/PortalVideoURP`：`smoothstep` key 掉近黑 + `Blend One One`）。
+  影片要**全範圍轉檔**（無壓黑）才不會有灰白矩形基座。
+  **續 91-93：scene-0 的入口門 VideoPlayer 連序列化 + playOnAwake 都不會自己播** —— 解法是 `OnEnable`
+  coroutine：等 2 幀 → `Prepare()` → 等 `isPrepared` → `Play()` → 每 0.5s 補。**不要用 `APIOnly`**
+  （續 92 試過 → D3D11 掉紅色通道 → 整片青色矩形）。續 93 = `RenderTexture` mode + coroutine。
+  有 `[PortalVideoSurface] <門名>` Console log。
+  **續 94：proximity-gated** —— 傳送門載入時 `Prepare()` 好但不播、renderer 關；玩家進 32m 才淡入現身、
+  出 40m（或穿門）消失。`proximityActivated` 可 per-gate 關掉回常駐。`MapStreamer.cs` 留磁碟未使用。
+  **要改學校/二次元/現世物件先在 Editor 把對應 `Map_*.unity` 開起來**。詳見 `MAP_STREAMING.md`。
+  續 95：第三座城市「現世」在本地**東側**（`Map_Xianshi.unity`，空地），橋接門用 Meshy FBX `VoidmoonGate`
+  （`幽冥星環傳送門`，改名避開 gitignore、`useFileScale=false`、擺放繞 X −90° 立起）框住漩渦影片。
+  二次元的門這次一起轉了 Y=90（原本 portal 面朝 +Z ＝ 對西路側面看不見）。
   Editor 失焦時 Play 會凍結 → 轉場 coroutine MCP 測不了，要對焦 Play。
 - **判斷「X 是否在 Y 上/內」時，不要用斜角透視截圖** — 前縮法會讓不同距離的物件在畫面上疊在一起。
   用正交（orthographic）俯視 RenderTexture，或直接拿世界座標比對區域邊界 /

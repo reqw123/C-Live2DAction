@@ -8,8 +8,11 @@
 > 做了大量改造，本文多處已過時。**已知過時的關鍵點**：
 > - 武士 gameplay root `localScale` 已 4→1（續 33，做法 A）——可見比例不變、但 `transform.position` / CC /
 >   hurtbox 世界尺寸現在是可讀公尺數；文中提到「4× 縮放」的座標推導要重算。
-> - `DeflectReaction` 每 hit-window（續 12）、一般格擋架勢改每招 `PoiseDamage`（續 11）、武士 2 個
->   Deathblow 生命節點 + 永久死亡（續 19）、共享特殊冷卻 7s（續 20）、彈反窗 0.20s + 反連按（續 5）。
+> - `DeflectReaction` 每 hit-window（續 12）、一般格擋架勢改每招 `PoiseDamage`（續 11）、共享特殊冷卻 7s
+>   （續 20）、彈反窗 0.20s + 反連按（續 5）。
+> - **武士的 Deathblow 生命節點（續 19）續 99 已移除**（`BossLifeNodeController` 從場景拿掉）——使用者要
+>   處決一律「扣當前生命 50%」，節點路線第一次處決會回滿血。現在武士/屁孩王/Enemy 處決一致：
+>   `health.CurrentHealth × 0.5` + `EndStagger`；武士血歸零仍 5s 復活（`permanentDeath` 未動）。
 > - 每招 hit window nt 值續 8 之後又動過數次（續 22/25/26/27），以 `Wushi_Attack_*.asset` 現值為準，
 >   或跑 `Tools/Live2DAction/[9] 武士 Attack Timing Report` 選單看即時推導。
 > - 規格逐項進度見 `WUSHI_COMBAT_ENGINEERING_SPEC.md` 開頭的「實作進度」表。

@@ -34,6 +34,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             {
                 boss.FlagPerfectDodge();
                 Live2DAction.Combat.HitStopController.Request(0.10f, 0.15f);
+                YuanpeiScreenFlash.Flash(0.5f, 0.13f);   // spec §8.2 白色閃光
             }
         }
 

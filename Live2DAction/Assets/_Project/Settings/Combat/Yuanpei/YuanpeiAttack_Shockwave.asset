@@ -16,14 +16,14 @@ MonoBehaviour:
   displayName: "\u8FD1\u8EAB\u9707\u9000"
   requiredPhase: 1
   energyCost: 20
-  cooldownSeconds: 9
+  cooldownSeconds: 6.2999997
   minRange: 0
   maxRange: 4.5
   isMajorHazard: 0
-  telegraphSeconds: 0.6
+  telegraphSeconds: 0.45
   windupSeconds: 0.1
   activeSeconds: 1.2
-  recoverySeconds: 0.9
+  recoverySeconds: 0.6
   healthDamage: 18
   playerPostureDamage: 0
   maxHitsPerTarget: 1

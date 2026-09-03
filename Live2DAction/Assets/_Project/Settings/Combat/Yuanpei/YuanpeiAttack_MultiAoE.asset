@@ -14,16 +14,16 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   attackId: 3
   displayName: "\u591A\u91CD\u5EF6\u9072\u7BC4\u570D\u5149\u7206"
-  requiredPhase: 2
+  requiredPhase: 1
   energyCost: 30
-  cooldownSeconds: 9
+  cooldownSeconds: 6.2999997
   minRange: 7
   maxRange: 16
   isMajorHazard: 1
-  telegraphSeconds: 0.4
+  telegraphSeconds: 0.35
   windupSeconds: 0.1
   activeSeconds: 2
-  recoverySeconds: 1
+  recoverySeconds: 0.6
   healthDamage: 26
   playerPostureDamage: 0
   maxHitsPerTarget: 1

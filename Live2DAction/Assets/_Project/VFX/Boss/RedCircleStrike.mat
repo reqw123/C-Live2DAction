@@ -1,0 +1,50 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: RedCircleStrike
+  m_Shader: {fileID: 4800000, guid: e4a15da082bb4f34a8a959e75f590d21, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BaseMap:
+        m_Texture: {fileID: 2800000, guid: 8327788297f605946a8d9461a9d884dd, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _AddBright: 0.78
+    - _Cols: 6
+    - _EdgeFade: 0.05
+    - _Fade: 1
+    - _FloorCut: 0.24
+    - _Frame: 0
+    - _Intensity: 1.5
+    - _KeyWidth: 0.3
+    - _MaskAspectY: 1
+    - _MaskCenterY: 0.5
+    - _MaskRadius: 0.5
+    - _MaskSoft: 0.09
+    - _Opacity: 1.45
+    - _RedBoost: 2
+    - _Rows: 6
+    m_Colors:
+    - _Tint: {r: 1, g: 0.28, b: 0.14, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

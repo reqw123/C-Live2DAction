@@ -54,11 +54,15 @@ namespace Live2DAction.Characters
         // class rather than special-cased per character, matching "適用任何角色".
         [SerializeField] private StancePoise targetStance;
 
-        // 2026-08-12: raised from 0.5s to 5s by explicit user request for Player (still no UI/
-        // game-over screen - the simplest death handling, just a longer pause before it kicks
-        // in). Mecha reuses the same default rather than inventing a separate value with no
-        // particular reasoning behind it.
+        // 2026-08-12: raised from 0.5s to 5s by explicit user request for Player. Mecha reuses the
+        // same default rather than inventing a separate value with no particular reasoning.
         [SerializeField] private float respawnDelaySeconds = 5f;
+
+        // 2026-09-03, user request - the Player's instance shows a centre-screen game-over taunt
+        // after the death animation. Off by default so Mecha's instance stays screen-less.
+        [SerializeField] private bool showGameOverScreen;
+        [SerializeField] private string gameOverMessage = "你菜完了";
+        [SerializeField] private float gameOverScreenDelaySeconds = 0.9f; // let the death anim start first
 
         private bool _wasDead;
         private bool _respawnScheduled;
@@ -82,7 +86,16 @@ namespace Live2DAction.Characters
 
         private IEnumerator RespawnAfterDelay()
         {
-            yield return new WaitForSeconds(respawnDelaySeconds);
+            if (showGameOverScreen)
+            {
+                yield return new WaitForSeconds(gameOverScreenDelaySeconds);   // death anim gets a head start
+                Live2DAction.UI.PlayerDeathScreen.Show(gameOverMessage);
+                yield return new WaitForSeconds(Mathf.Max(0f, respawnDelaySeconds - gameOverScreenDelaySeconds));
+            }
+            else
+            {
+                yield return new WaitForSeconds(respawnDelaySeconds);
+            }
 
             targetHealth.ResetHealth();
             if (targetStance != null)
@@ -90,6 +103,7 @@ namespace Live2DAction.Characters
                 targetStance.EndStagger();
             }
             target.SetActive(true);
+            if (showGameOverScreen) Live2DAction.UI.PlayerDeathScreen.Hide();
             _respawnScheduled = false;
             _wasDead = false;
         }

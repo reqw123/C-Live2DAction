@@ -92,6 +92,9 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 case YuanpeiAttackId.MultiAoE:        return s.arenaHasGoodFloor;
                 case YuanpeiAttackId.Shockwave:       return s.playerDistance <= 4.5f;
                 case YuanpeiAttackId.BodyCharge:      return (s.playerDistance >= 5f && s.playerDistance <= 12f) || s.energy < 25f;
+                case YuanpeiAttackId.ChargeLine:      return s.playerDistance >= 9f;                    // reward it at range
+                case YuanpeiAttackId.ChargeCrush:     return s.playerLingeringArea;                     // punish a camper
+                case YuanpeiAttackId.OrbitDash:       return s.playerDistance >= 5f && s.playerDistance <= 13f;
                 default: return false;
             }
         }

@@ -1,6 +1,9 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using Live2DAction.Input;
+using Live2DAction.Combat;
+using Live2DAction.World;
 
 namespace Live2DAction.AI.Boss.Yuanpei
 {
@@ -16,8 +19,24 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [SerializeField] private Vector3 combatCenter = new Vector3(0f, 0f, -114f);
         [SerializeField] private bool startOnTrigger = true;
 
+        [Header("Victory sequence (spec §20)")]
+        [SerializeField] private string victoryMessage = "戰鬥勝利";
+        [SerializeField] private float dissolveSeconds = 1.6f;
+        [SerializeField] private float victoryHoldSeconds = 5f;
+        [Tooltip("Scene unloaded when the victory sequence returns the player. Empty = don't unload.")]
+        [SerializeField] private string returnUnloadScene = "Map_School";
+        [Tooltip("Where the player is placed on return - default matches SchoolGate_Exit (在路口前).")]
+        [SerializeField] private Vector3 returnArrivalPosition = new Vector3(0f, 1.1f, -78f);
+        [SerializeField] private float returnArrivalYaw = 0f;
+
         public bool Started { get; private set; }
         public bool Won { get; private set; }
+
+        // spec §8.1 - this fight forbids defence / block / parry. While the encounter is live the
+        // player's PlayerGuard is disabled so a guard input can't "look like it worked" and still
+        // eat unexplained damage. Restored on victory / when the encounter object goes away.
+        private Behaviour _playerGuard;
+        private bool _guardWasEnabled;
 
         private void Reset()
         {
@@ -48,26 +67,313 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (Started || boss == null) return;
             Started = true;
             hud?.SetVisible(true);
+            ApplyNoDefenceRule(triggeringPlayer);
             boss.BeginEncounter(combatCenter, triggeringPlayer);
         }
+
+        private void ApplyNoDefenceRule(Transform player)
+        {
+            Transform root = player != null ? player.root : null;
+            if (root == null)
+            {
+                foreach (var pip in FindObjectsByType<PlayerInputProvider>(FindObjectsSortMode.None))
+                    if (pip.transform.root.name == "Player") { root = pip.transform.root; break; }
+            }
+            if (root == null) return;
+            _playerGuard = root.GetComponentInChildren<PlayerGuard>();
+            if (_playerGuard != null)
+            {
+                _guardWasEnabled = _playerGuard.enabled;
+                _playerGuard.enabled = false; // PlayerGuard.OnDisable releases its speed knob cleanly
+            }
+        }
+
+        private void RestoreDefenceRule()
+        {
+            if (_playerGuard != null && _guardWasEnabled) _playerGuard.enabled = true;
+            _playerGuard = null;
+        }
+
+        private void OnDisable() => RestoreDefenceRule();
+        private void OnDestroy() => RestoreDefenceRule();
+
+        private bool _ended;
+        private Live2DAction.Core.Health _playerHealth;
 
         // YuanpeiBoss.EnterDeath() sends "OnYuanpeiBossDefeated" to its own GameObject; this
         // component listens on the same object if it's placed there, otherwise poll.
         private void Update()
         {
-            if (!Started || Won || boss == null) return;
+            if (!Started || _ended || boss == null) return;
+
             if (boss.BattleOver && boss.Vitals != null && boss.Vitals.IsDead)
+            {
+                _ended = true;
                 StartCoroutine(Victory());
+                return;
+            }
+
+            // player died in this fight -> show "你菜完了" (RespawnController owns that) then kick
+            // them out of the boss map, and reset the fight so re-entering starts fresh.
+            if (_playerHealth == null && boss.Player != null)
+                _playerHealth = boss.Player.GetComponentInChildren<Live2DAction.Core.Health>();
+            if (_playerHealth != null && _playerHealth.IsDead)
+            {
+                _ended = true;
+                StartCoroutine(Defeat());
+            }
+        }
+
+        private IEnumerator Defeat()
+        {
+            Transform player = boss != null ? boss.Player : null;
+            // let RespawnController run its course: 你菜完了 at ~0.9s, respawn at respawnDelaySeconds
+            // (5s). Wait a touch past that so the player is active again before we teleport it.
+            yield return new WaitForSecondsRealtime(5.6f);
+            Live2DAction.UI.PlayerDeathScreen.Hide();
+
+            RestoreDefenceRule();
+            hud?.SetVisible(false);
+            if (boss != null) boss.ResetForRematch();
+            Started = false;
+            _ended = false;
+            _playerHealth = null;
+
+            if (SceneTransitionRunner.Instance != null)
+                SceneTransitionRunner.Instance.Begin("", returnUnloadScene, player,
+                    returnArrivalPosition, returnArrivalYaw, "", 0.4f, 3);
+            else if (player != null)
+            {
+                var cc = player.GetComponent<CharacterController>();
+                if (cc != null) cc.enabled = false;
+                player.SetPositionAndRotation(returnArrivalPosition, Quaternion.Euler(0f, returnArrivalYaw, 0f));
+                if (cc != null) cc.enabled = true;
+            }
         }
 
         private IEnumerator Victory()
         {
             Won = true;
-            // lock-on drops itself once the boss's LockOnTarget is disabled (YuanpeiBoss.EnterDeath).
-            yield return new WaitForSeconds(1.5f);
+            RestoreDefenceRule();                 // spec §20.7 - lift the combat rule set on defeat
+            Transform player = boss != null ? boss.Player : null;
+
+            // 1. death演出 (user: "boss 回到廣場空中做一段震動動畫後碎裂消失" + a camera move).
+            //    Runs here on the encounter - YuanpeiBoss.EnterDeath already stopped the boss's own
+            //    coroutines + disabled its colliders / lock-on.
+            yield return DeathDissolve();
+
+            // 2. centre-screen "戰鬥勝利"
+            YuanpeiVictoryBanner.Show(victoryMessage);
             hud?.SetVisible(false);
             SendMessage("OnYuanpeiEncounterWon", SendMessageOptions.DontRequireReceiver);
             Debug.Log("[YuanpeiEncounter] yuanpei_LogoSky defeated - player victory.");
+
+            // 3. hold, then auto-return the player to the road entrance
+            yield return new WaitForSecondsRealtime(victoryHoldSeconds);
+            YuanpeiVictoryBanner.Hide();
+
+            if (SceneTransitionRunner.Instance != null)
+            {
+                SceneTransitionRunner.Instance.Begin(
+                    "", returnUnloadScene, player,
+                    returnArrivalPosition, returnArrivalYaw, "", 0.4f, 3);
+            }
+            else if (player != null)
+            {
+                var cc = player.GetComponent<CharacterController>();
+                if (cc != null) cc.enabled = false;
+                player.SetPositionAndRotation(returnArrivalPosition, Quaternion.Euler(0f, returnArrivalYaw, 0f));
+                if (cc != null) cc.enabled = true;
+            }
+        }
+
+        private IEnumerator DeathDissolve()
+        {
+            Transform vis = boss != null ? boss.VisualRoot : null;
+            Transform bt = boss != null ? boss.transform : null;
+            if (bt == null) { yield return new WaitForSeconds(0.5f); yield break; }
+
+            var renderers = vis != null ? vis.GetComponentsInChildren<Renderer>() : new Renderer[0];
+            Vector3 baseScale = vis != null ? vis.localScale : Vector3.one;
+            var mpb = new MaterialPropertyBlock();
+
+            // --- take the camera (store + restore) ---
+            Camera cam = Camera.main;
+            Behaviour camCtrl = cam != null
+                ? cam.GetComponent(typeof(Live2DAction.CameraSystem.ThirdPersonCameraController)) as Behaviour
+                : null;
+            bool camCtrlWas = camCtrl != null && camCtrl.enabled;
+            if (camCtrl != null) camCtrl.enabled = false;
+
+            // --- 1. rise back to the plaza centre, up in the air ---
+            Vector3 center = boss.Config != null ? boss.Config.arenaCenter : bt.position;
+            float groundY = SampleGroundY(new Vector3(center.x, bt.position.y, center.z));
+            Vector3 skyPos = new Vector3(center.x, groundY + 13f, center.z);
+            Vector3 from = bt.position;
+
+            float t = 0f, dur = 1.2f;
+            while (t < dur)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.SmoothStep(0f, 1f, t / dur);
+                bt.position = Vector3.Lerp(from, skyPos, k);
+                if (vis != null) vis.Rotate(0f, 200f * Time.deltaTime, 0f, Space.Self);
+                DriveDeathCam(cam, skyPos, k, 0);
+                yield return null;
+            }
+            bt.position = skyPos;
+
+            // --- 2. vibrate / 震動 in place (spec §3.2 "縮放脈衝、傾斜、Emission 變化") ---
+            float vibDur = 1.5f;
+            t = 0f;
+            while (t < vibDur)
+            {
+                t += Time.deltaTime;
+                float k = t / vibDur;
+                float amp = 0.05f + 0.55f * k;
+                Vector3 jitter = new Vector3(
+                    (Mathf.PerlinNoise(Time.time * 47f, 0.3f) - 0.5f),
+                    (Mathf.PerlinNoise(0.7f, Time.time * 53f) - 0.5f),
+                    (Mathf.PerlinNoise(Time.time * 41f, 0.9f) - 0.5f)) * 2f * amp;
+                bt.position = skyPos + jitter;
+                if (vis != null)
+                {
+                    vis.Rotate(0f, (140f + 500f * k) * Time.deltaTime, 0f, Space.Self);
+                    float pulse = 1f + Mathf.Sin(Time.time * (18f + 30f * k)) * 0.06f * (0.3f + k);
+                    vis.localScale = baseScale * pulse;
+                    float emi = 2f + 6f * k + Mathf.Sin(Time.time * 40f) * k;
+                    foreach (var r in renderers)
+                    {
+                        if (r == null) continue;
+                        r.GetPropertyBlock(mpb);
+                        mpb.SetColor("_EmissionColor", new Color(0.45f, 0.6f, 1f) * emi);
+                        r.SetPropertyBlock(mpb);
+                    }
+                }
+                DriveDeathCam(cam, skyPos, k, 1);
+                yield return null;
+            }
+
+            // --- 3. shatter / 碎裂 ---
+            HitStopController.Request(0.09f, 0.15f);
+            var shards = SpawnShards(skyPos, 26);
+            t = 0f;
+            while (t < dissolveSeconds)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / dissolveSeconds);
+
+                if (vis != null)
+                {
+                    vis.localScale = baseScale * Mathf.Max(0f, 1f - k * 1.4f);
+                    vis.Rotate(0f, 600f * Time.deltaTime, 0f, Space.Self);
+                    foreach (var r in renderers)
+                    {
+                        if (r == null) continue;
+                        r.GetPropertyBlock(mpb);
+                        mpb.SetColor("_EmissionColor", new Color(0.5f, 0.65f, 1f) * (10f * (1f - k)));
+                        r.SetPropertyBlock(mpb);
+                    }
+                }
+                for (int i = 0; i < shards.Count; i++)
+                {
+                    var s = shards[i];
+                    if (s.tr == null) continue;
+                    s.vel += Vector3.down * 9f * Time.deltaTime;
+                    s.tr.position += s.vel * Time.deltaTime;
+                    s.tr.Rotate(s.spin * Time.deltaTime, Space.Self);
+                    s.tr.localScale = s.size * Mathf.Max(0f, 1f - k);
+                }
+                DriveDeathCam(cam, skyPos, k, 2);
+                yield return null;
+            }
+
+            if (vis != null) vis.gameObject.SetActive(false);
+            foreach (var s in shards) if (s.tr != null) Destroy(s.tr.gameObject);
+
+            // hand the camera back (the scene transition's SnapYawToTarget + the player standing
+            // where they were will settle it) - do it now so the victory-banner hold shows a
+            // normal follow cam, not a frozen death angle.
+            if (camCtrl != null) camCtrl.enabled = camCtrlWas;
+        }
+
+        // Frames the boss during the death演出. phase 0 = rise (ease from behind the player up to a
+        // low hero angle), 1 = vibrate (slow push-in + orbit), 2 = shatter (small kick + pull back).
+        private void DriveDeathCam(Camera cam, Vector3 bossPos, float k, int phase)
+        {
+            if (cam == null) return;
+
+            // slow continuous orbit so the shot always feels alive
+            float orbitDeg = (phase == 0 ? 15f : phase == 1 ? 40f : 70f) + k * (phase == 1 ? 30f : 10f);
+            float dist = phase == 0 ? Mathf.Lerp(15f, 9f, k)
+                       : phase == 1 ? Mathf.Lerp(9f, 7.5f, k)
+                                    : Mathf.Lerp(7.5f, 16f, k);           // pull back on the shatter
+            float height = phase == 0 ? Mathf.Lerp(-2f, 2.5f, k) : phase == 1 ? 2.5f : 2f;
+
+            Vector3 offset = Quaternion.Euler(0f, orbitDeg, 0f) * new Vector3(0f, height, -dist);
+            Vector3 want = bossPos + offset;
+
+            float shake = phase == 2 ? Mathf.Max(0f, 0.5f - k) : 0f;
+            want += new Vector3(Mathf.PerlinNoise(Time.time * 60f, 0f) - 0.5f,
+                                Mathf.PerlinNoise(0f, Time.time * 60f) - 0.5f, 0f) * shake * 2f;
+
+            cam.transform.position = Vector3.Lerp(cam.transform.position, want, 6f * Time.deltaTime);
+            cam.transform.rotation = Quaternion.Slerp(cam.transform.rotation,
+                Quaternion.LookRotation((bossPos - cam.transform.position).normalized, Vector3.up),
+                6f * Time.deltaTime);
+        }
+
+        private struct Shard { public Transform tr; public Vector3 vel; public Vector3 spin; public Vector3 size; }
+
+        private List<Shard> SpawnShards(Vector3 center, int count)
+        {
+            var list = new List<Shard>(count);
+            var rng = new System.Random();
+            for (int i = 0; i < count; i++)
+            {
+                var g = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Destroy(g.GetComponent<Collider>());
+                var r = g.GetComponent<Renderer>();
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                var mpb = new MaterialPropertyBlock();
+                r.GetPropertyBlock(mpb);
+                var c = new Color(0.35f + (float)rng.NextDouble() * 0.2f, 0.4f, 0.9f);
+                mpb.SetColor("_BaseColor", c);
+                mpb.SetColor("_EmissionColor", c * 2f);
+                r.SetPropertyBlock(mpb);
+
+                float sz = 0.25f + (float)rng.NextDouble() * 0.55f;
+                g.transform.position = center + new Vector3((float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() * 1.5f, (float)rng.NextDouble() - 0.5f) * 2f;
+                g.transform.localScale = Vector3.one * sz;
+                g.transform.rotation = Random.rotation;
+
+                float a = (float)(rng.NextDouble() * System.Math.PI * 2.0);
+                var outward = new Vector3(Mathf.Cos(a), 0.6f + (float)rng.NextDouble() * 0.9f, Mathf.Sin(a));
+                list.Add(new Shard
+                {
+                    tr = g.transform,
+                    vel = outward * (2.5f + (float)rng.NextDouble() * 4f),
+                    spin = new Vector3((float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f) * 720f,
+                    size = Vector3.one * sz,
+                });
+            }
+            return list;
+        }
+
+        private float SampleGroundY(Vector3 at)
+        {
+            var hits = Physics.RaycastAll(new Vector3(at.x, at.y + 40f, at.z), Vector3.down, 320f, ~0, QueryTriggerInteraction.Ignore);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+            foreach (var h in hits)
+            {
+                if (h.collider == null) continue;
+                if (h.collider.GetComponentInParent<PlayerInputProvider>() != null) continue;
+                if (h.collider.GetComponentInParent<CharacterController>() != null) continue;
+                if (boss != null && h.collider.transform.root == boss.transform.root) continue;
+                if (h.collider.gameObject.layer == 9) continue; // building AABBs
+                return h.point.y;
+            }
+            return combatCenter.y + 0.5f;
         }
     }
 }

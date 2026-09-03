@@ -9,7 +9,10 @@ namespace Live2DAction.AI.Boss.Yuanpei
         LightningMark,     // 雷擊標記
         MultiAoE,          // 多重延遲範圍光爆
         Shockwave,         // 近身震退
-        BodyCharge,        // 肉身衝撞
+        BodyCharge,        // 肉身衝撞（原本的直線版）
+        ChargeLine,        // 肉身衝撞：長距離高速直線衝
+        ChargeCrush,       // 肉身衝撞：滑到玩家頭頂正上方後垂直下壓（命中 = 秒殺）
+        OrbitDash,         // 肉身衝撞：繞玩家轉圈，某一瞬間突然直衝
     }
 
     // Per-attack data (spec §9, §14.1). Every timing/number lives here, not in code.
