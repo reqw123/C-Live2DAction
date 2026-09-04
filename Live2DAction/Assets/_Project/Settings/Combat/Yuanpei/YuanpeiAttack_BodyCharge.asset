@@ -16,7 +16,7 @@ MonoBehaviour:
   displayName: "\u8089\u8EAB\u885D\u649E"
   requiredPhase: 1
   energyCost: 5
-  cooldownSeconds: 5.6
+  cooldownSeconds: 3.8
   minRange: 5
   maxRange: 12
   isMajorHazard: 0
@@ -29,7 +29,7 @@ MonoBehaviour:
   maxHitsPerTarget: 1
   baseWeight: 1
   situationalWeightBonus: 2.5
-  number1: 26
+  number1: 18
   number2: 15
   number3: 1.8
   count: 1

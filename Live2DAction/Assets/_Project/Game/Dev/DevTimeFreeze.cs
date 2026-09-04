@@ -1,3 +1,6 @@
+// Dev-only freeze toggle - compiled into the Editor and Development builds, stripped from
+// release builds (its GameObject in GreyboxTest then loads as a harmless missing-script slot).
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -9,8 +12,8 @@ namespace Live2DAction.Dev
     // "Play Mode stop" you can get without leaving Play. Press again to resume.
     //
     // Reads the key directly via the new Input System (same pattern as ExecutionAbility's F key) so it
-    // doesn't need a binding in the shared IInputCommand. Editor-and-build safe. Remove before shipping
-    // (or leave - it's harmless and there's no menu that adds it to a release scene).
+    // doesn't need a binding in the shared IInputCommand. The file-level #if keeps it out of release
+    // builds so `\`` can't freeze a shipped game.
     public class DevTimeFreeze : MonoBehaviour
     {
         // Backquote (` , the key left of 1 / above Tab) - the classic dev-console key. Backspace is
@@ -76,3 +79,4 @@ namespace Live2DAction.Dev
         }
     }
 }
+#endif

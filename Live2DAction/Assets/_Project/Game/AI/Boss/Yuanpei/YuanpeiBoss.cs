@@ -70,6 +70,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _cam = Camera.main;
             _skyStartPos = transform.position;
             _skyVisualScale = visualRoot != null ? visualRoot.localScale : Vector3.one;
+            _skyVisualLocalRot = visualRoot != null ? visualRoot.localRotation : Quaternion.identity;   // authored upright disc orientation
         }
 
         private void OnEnable()
@@ -96,8 +97,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
         {
             _arenaCenter = combatCenter;
             if (config != null) config.arenaCenter = combatCenter;
-            if (triggeringPlayer != null) player = triggeringPlayer.root;
-            if (player == null) player = ResolvePlayer();
+            if (triggeringPlayer != null)
+            {
+                // never target a vehicle: walk up to the "Player" GameObject rather than blindly
+                // taking .root (which is the car while the player is seated). 續 124.
+                Transform t = triggeringPlayer;
+                while (t != null && t.name != "Player") t = t.parent;
+                player = t != null ? t : triggeringPlayer.root;
+            }
+            if (player == null || player.name != "Player") player = ResolvePlayer();
             StartCoroutine(IntroRoutine());
         }
 
@@ -124,7 +132,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 if (config != null) vitals.SetEnergy(config.maxEnergy);
                 vitals.EvaluatePhase();
             }
-            if (visualRoot != null) visualRoot.localScale = _skyVisualScale;
+            if (visualRoot != null)
+            {
+                visualRoot.localScale = _skyVisualScale;
+                visualRoot.localRotation = _skyVisualLocalRot;
+            }
             transform.position = _skyStartPos;
             transform.rotation = Quaternion.identity;
 
@@ -238,12 +250,29 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 case YuanpeiState.AttackTelegraph:
                 case YuanpeiState.Attacking:
                 case YuanpeiState.AttackRecovery:
-                    // hover pose held; attack coroutine drives translation for BodyCharge
-                    HoldHover();
+                    // hover pose held; attack coroutine drives translation for BodyCharge.
+                    // A charge move calls SuspendHover() so HoldHover's 8 m/s Y pull can't drag
+                    // the boss back up to hover height mid-dash - that made every charge read as
+                    // a flat twitch 2.6 m above the player instead of a dive (user: "感覺只有頭跟尾").
+                    if (Time.time >= _hoverSuspendUntil) HoldHover();
                     FaceTarget(config.faceTurnSpeedDegPerSec * 0.4f);
                     break;
             }
+
+            // 續 120 (user "架式條可由時間緩慢積累"): posture creeps up on its own while the boss is
+            // actively fighting, so a patient player still earns a fall + F-execution window. Only in
+            // air-combat / attack states - never while downed / recharging / intro / dead.
+            if (config.postureRegenPerSecond > 0f && IsActiveCombatState())
+                vitals.AddPosture(config.postureRegenPerSecond * Time.deltaTime);
         }
+
+        // Passive-posture states. Deliberately EXCLUDES Attacking / AttackRecovery: a posture-full
+        // there would `CancelAll()` an in-flight attack mid-Active - e.g. interrupting ChargeCrush's
+        // VoidPunt before the 秒殺 lands, so the player survives a clean crush. Telegraph is safe
+        // to break (nothing lethal in flight yet) and covers most of a fight's non-hover time.
+        private bool IsActiveCombatState() =>
+            State == YuanpeiState.Hover || State == YuanpeiState.Reposition
+            || State == YuanpeiState.AttackTelegraph;
 
         // ---------------------------------------------------------------- air combat (spec §7)
 
@@ -269,8 +298,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // schedule
             if (Time.time < _globalRestUntil) { _stuckSince = Time.time; return; }
             var chosen = PickAttack();
-            if (chosen == null && Time.time - _stuckSince > 0.3f)
-                chosen = ForceAnyInRangeAttack();   // watchdog - the scheduler's soft gates (on-screen / LOS / no-repeat) stall a ranged boss into passivity; keep it pressuring the player (user: "攻擊慾望太低")
+            if (chosen == null && Time.time - _stuckSince > 0.12f)
+                chosen = ForceAnyInRangeAttack();   // watchdog - the scheduler's soft gates (on-screen / LOS / no-repeat) stall a ranged boss into passivity; keep it pressuring the player (user: "攻擊慾望太低" ×2, 續 119 0.3→0.12)
             if (chosen != null) { BeginAttack(chosen); _stuckSince = Time.time; }
         }
         private float _stuckSince;
@@ -370,6 +399,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
         // suspends the Y ceiling for a moment so ClampWorldY doesn't fight it.
         private float _yClampSuspendUntil;
         public void SuspendYClamp(float seconds) => _yClampSuspendUntil = Time.time + Mathf.Max(0f, seconds);
+
+        // Charge moves (BodyCharge / OrbitDash / ChargeCrush) take over the boss's Y for the
+        // duration of the dash so HoldHover() doesn't fight the descent. Restores itself.
+        private float _hoverSuspendUntil;
+        public void SuspendHover(float seconds) => _hoverSuspendUntil = Time.time + Mathf.Max(0f, seconds);
 
         private void ClampWorldY()
         {
@@ -562,8 +596,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // stop lock-on chasing a dead object (spec §17/§20.7) + stop taking hits
             foreach (var lt in GetComponentsInChildren<Live2DAction.Targeting.LockOnTarget>(true))
                 lt.enabled = false;
+            // 續 129: BodyCollider / CoreWeakPoint are triggers now (a solid boss body PhysX-shoved
+            // the player off the map during a charge). Disable them all on death so nothing
+            // interacts with the corpse; ResetForRematch re-enables.
             foreach (var col in GetComponentsInChildren<Collider>(true))
-                if (!col.isTrigger) col.enabled = false;
+                col.enabled = false;
             SendMessage("OnYuanpeiBossDefeated", SendMessageOptions.DontRequireReceiver);
         }
 
@@ -593,15 +630,21 @@ namespace Live2DAction.AI.Boss.Yuanpei
             float dur = config.reAscendSeconds;
             float startY = transform.position.y;
             float endY = floor + config.hoverHeight;
+            Quaternion visFrom = visualRoot != null ? visualRoot.localRotation : Quaternion.identity;
             while (t < dur)
             {
                 t += Time.deltaTime;
                 Vector3 p = transform.position;
                 p.y = Mathf.Lerp(startY, endY, t / dur);
                 transform.position = p;
-                if (visualRoot != null) visualRoot.Rotate(0f, -config.fallSpinSpeedDeg * Time.deltaTime * (1f - t / dur), 0f, Space.Self);
+                // 續 121 (user "處決後 boss 會變歪斜"): level the disc back to its authored upright
+                // orientation while re-ascending, instead of only spinning down the yaw and leaving
+                // the fall's X/Z tumble baked in.
+                if (visualRoot != null)
+                    visualRoot.localRotation = Quaternion.Slerp(visFrom, _skyVisualLocalRot, Mathf.SmoothStep(0f, 1f, t / dur));
                 yield return null;
             }
+            if (visualRoot != null) visualRoot.localRotation = _skyVisualLocalRot;
             if (invuln > 0f)
             {
                 yield return new WaitForSeconds(invuln);
@@ -661,6 +704,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             State = YuanpeiState.Hover;
         }
         private Vector3 _skyVisualScale = Vector3.one;
+        private Quaternion _skyVisualLocalRot = Quaternion.identity;
 
         private void OnDrawGizmosSelected()
         {

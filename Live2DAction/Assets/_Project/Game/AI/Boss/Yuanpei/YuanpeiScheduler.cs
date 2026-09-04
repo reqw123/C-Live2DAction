@@ -89,9 +89,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 case YuanpeiAttackId.ProjectileBurst: return s.playerDistance >= 8f && s.playerDistance <= 14f;
                 case YuanpeiAttackId.FocusLaser:      return s.playerMovingStraightLong;
                 case YuanpeiAttackId.LightningMark:   return s.playerLingeringArea;
-                case YuanpeiAttackId.MultiAoE:        return s.arenaHasGoodFloor;
                 case YuanpeiAttackId.Shockwave:       return s.playerDistance <= 4.5f;
-                case YuanpeiAttackId.BodyCharge:      return (s.playerDistance >= 5f && s.playerDistance <= 12f) || s.energy < 25f;
+                case YuanpeiAttackId.BodyCharge:      return s.playerDistance >= 5f && s.playerDistance <= 12f;   // 續 120: dropped the "|| energy < 25" low-energy fallback (user)
                 case YuanpeiAttackId.ChargeLine:      return s.playerDistance >= 9f;                    // reward it at range
                 case YuanpeiAttackId.ChargeCrush:     return s.playerLingeringArea;                     // punish a camper
                 case YuanpeiAttackId.OrbitDash:       return s.playerDistance >= 5f && s.playerDistance <= 13f;

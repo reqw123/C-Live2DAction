@@ -4662,3 +4662,201 @@ Play 回報三修：
 改 `KnockbackReceiver.cs` + `YuanpeiAttacks.cs` + `GreyboxTest.unity`（Player KnockbackReceiver）。編譯無錯，**EditMode 306/306 綠**。手感待焦點 Play 確認。
 
 > ⚠️ 踩坑：用 Edit 工具直接改 `GreyboxTest.unity` 會把整份 CRLF→LF 重寫、還可能吃掉內嵌 Mesh 區塊——已 `git checkout` 還原，改走 Unity SerializedObject 存檔。Unity 場景/asset 一律不要用純文字 Edit。（另註：GreyboxTest.unity 每次存檔本來就會因為內嵌 Cubism ArtMesh 重新烘出巨大 diff，非本次造成。）
+
+### 追加94 續 117（2026-09-04）— 專案漏洞掃描 + debug 腳本擋出正式 Build
+
+使用者要求「檢查專案中是否有漏洞」。掃描結果：**無密鑰外洩**（全 repo grep `api_key/secret/token/private_key` 命中皆為英文註解字；`ProjectSettings.asset` 的 `ps4NPTitleSecret`／`metroCertificatePassword` 皆空）、**無危險執行期程式碼**（無 `BinaryFormatter`／`XmlSerializer`／執行期網路連線／`Process.Start`／`Assembly.Load`；檔案 I/O 全在 Editor 端烘圖工具與第三方匯入器）。單機離線遊戲，無傳統資安面。
+
+發現並記錄（未改，待處理）：
+
+1. `DoNotShipBuildGuard.cs` 的擋 build 清單與 `ASSET_LICENSES.md` 對不齊——`Environment/Meshy/YuanpeiLogo`（文件標 DoNotShip／真實商標）與 `Characters/Weapons/BloodKatana`（授權待確認）不在清單裡；`MechaModel_DoNotShip` 那條路徑已失效（資產已移除，但 `MechaVisualSetup.cs` 選單仍會加回）；guard 用 `AssetDatabase.IsValidFolder` 檢查、路徑打錯會靜默放行且**無對應 EditMode 測試**；guard 只擋非 Development build。**2026-09-04 使用者回覆：YuanpeiLogo／BloodKatana 兩項已有授權，第 1 點暫不處理。**
+2. `MechanicalWings.fbx`（玩家翅膀，用於 GreyboxTest）未登記在 `ASSET_LICENSES.md`，來源不明。
+3. `Skybox_Procedural` shader stripping 風險（`KNOWN_ISSUES.md` 既有項，非新發現）。
+
+本次唯一改動：三個 debug overlay 腳本包 `#if UNITY_EDITOR || DEVELOPMENT_BUILD` 全檔——`SekiroDeflectDebug.cs`（F9）、`BossAnimationDebugMode.cs`（F7）、`DevTimeFreeze.cs`（`` ` ``）。三者都掛在 build scene `GreyboxTest`、原本無任何 `#if` 保護，會編進正式 Build 讓熱鍵在出貨版可用（作弊、檢視未完成內容）。三者僅被 Editor setup 工具與註解引用（無執行期相依），包全檔編譯安全；正式 Build 下 `GreyboxTest` 上的對應元件變成無害的 missing-script 空槽。`DevTimeFreeze` 檔頭「Remove before shipping」註解一併更新。編譯無錯、Console 無錯。
+
+### 追加94 續 118（2026-09-04）— 元培 Boss 衝撞攻擊「剛看到就中／只有頭跟尾」修正
+
+使用者：「元培boss 衝撞類攻擊常常剛看到動畫玩家就受到攻擊了 而且過程沒平滑 感覺只有頭跟尾」。
+
+**根因**：`YuanpeiBoss.Update()` 在 `Attacking` state 每幀呼叫 `HoldHover()`，以 8 m/s 把 Boss 的 Y 拉回 hover 高度（config `hoverHeight` 2.6）。衝撞協程只用 `dir.y *= 0.3` 加一點點向下位移 → HoldHover 贏 → **Boss 在離地 2.6m 高度平移衝過去，完全沒有俯衝**。再加上 `DiscFaceHitsPlayer` 命中體積 `hitR * 2.8`（≈5m 球）＋ forward window `forwardReach * 1.6`（提早 ~2.9m 觸發），衝刺一啟動玩家就被判中、迴圈立刻 `hitPlayer=true` 結束 → 只剩前搖（頭）＋ recovery（尾）。
+
+1. **`YuanpeiBoss.cs`**：新增 `SuspendHover(seconds)` + `_hoverSuspendUntil`；`AttackTelegraph/Attacking/AttackRecovery` 分支在 suspend 期間跳過 `HoldHover()`（`FaceTarget` 照跑），讓衝撞招式自己掌管 Y。
+2. **`YuanpeiAttacks.cs` `BodyCharge`（含 `ChargeLine`）**：
+   - 進招即 `SuspendHover(前搖+衝刺+尾巴的總預算)`。
+   - 保證助跑：後退到離玩家 ~6.5m（`EaseMove` 0.32s 平滑、夾在 arena 內），取代固定 1.5m。
+   - 鎖定時用**完整俯衝向量**瞄 `player + up*0.9`，衝刺途中 Y 一路 `MoveTowards` 到 `groundY + 1.1` 後轉平——先俯衝再貼地推進的可讀弧線。
+   - `DiscFaceHitsPlayer` 命中體積 `hitR*2.8`→`hitR*1.3`；forward window `forwardReach*1.6`→`forwardReach`（只有圓盤真的跟玩家齊平才判中）。
+   - 新 `SlerpDiscInto(dir, 0.12s)`：衝刺入場的 VisualRoot 轉向改 slerp、不硬切（修「沒平滑」）。
+3. **`OrbitDash`**：同樣 `SuspendHover`（涵蓋繞圈+衝刺）、衝刺改完整俯衝向量 + 貼地 skim、命中體積 `hitR*1.3`、`SlerpDisc`。衝刺方向拆 `dashDir`（3D 俯衝）/ `dashFlat`（水平，給 SphereCast、命中判定、`FaceDiscSideAlong`）。
+4. **`ChargeCrush`**：進招時除既有 `SuspendYClamp` 外一併 `SuspendHover`（原本 HoldHover 也在扯它爬升到 12m 頂點）。
+5. **數值（ScriptableObject，走 MCP SerializedObject 不文字編輯）**：`YuanpeiAttack_BodyCharge.number1` 26→18、`YuanpeiAttack_ChargeLine.number1` 46→28、`YuanpeiAttack_OrbitDash.number2` 34→24（衝刺速度），讓可見衝刺拉長到 ~20–40 幀。
+
+改 `YuanpeiBoss.cs` + `YuanpeiAttacks.cs` + 3 個 `YuanpeiAttack_*.asset`。`validate_script` 乾淨、**EditMode 306/306 綠**、Console 無錯。實際俯衝弧線 + 助跑手感待焦點 Play 確認。
+
+### 追加94 續 119（2026-09-04）— 移除多重光爆 + 加強元培 Boss 攻擊慾望
+
+使用者：「移除 多重光爆 這個招式；目前對玩家的施壓程度低 請加強 boss 攻擊慾望」。
+
+**移除 MultiAoE（多重延遲範圍光爆）**：
+- 從 `yuanpei_LogoSky` 的 `YuanpeiBoss.attackPool` 移除（Map_School.unity，走 SerializedObject，9→8 招）
+- 刪 `YuanpeiAttack_MultiAoE.asset`、`YuanpeiAoePlacement.cs`（+ meta）、`YuanpeiBossLogicTests` 的 3 個 AoE safe-route 測試、`YuanpeiAttacks.MultiAoE()` 協程 + switch arm + 只給它用的 `RandXZ()`、`YuanpeiScheduler.Matches` 的 MultiAoE case。`YuanpeiAttackId.MultiAoE` enum 值保留（無害標籤，switch 無對應 arm＝no-op）。`Situation.arenaHasGoodFloor` 變成死欄位（留著，移除牽涉 struct + PickAttack）。
+
+**加強攻擊慾望**（施壓低的主因是冷卻長 + 大型法術互斥槽把遠程招卡死，只剩衝撞在冷卻）：
+- **冷卻全面砍**（`.asset` `cooldownSeconds`）：ProjectileBurst 2→1.5、FocusLaser 5.6→4.2、LightningMark 3.5→2.8、Shockwave 6.3→4.5、BodyCharge 5.6→3.8、ChargeLine 5→3.8、ChargeCrush 12→9、OrbitDash 9→6.5
+- **ProjectileBurst `isMajorHazard` 1→0**：不再佔用/被「同時只能一個大型法術」槽擋 → 隨時可當填招（三連射本來就是最便宜最短的 chip 傷）。大型法術槽現在只剩 FocusLaser + LightningMark 兩招互斥
+- `YuanpeiBossConfig`：`onScreenGraceBeforeAttack` 0.15→0.08、`rotationRecoverySeconds` 6→4、`rotationRecentWeightFactor` 0.35→0.55（LRU 抑制變輕、恢復更快 → 剛用過的招權重回升快，不會被逼著一直換招而卡住）
+- `YuanpeiBoss` 看門狗：`PickAttack` 回 null 撐過 0.3s→**0.12s** 就 `ForceAnyInRangeAttack`
+
+改 `YuanpeiAttacks.cs` + `YuanpeiScheduler.cs` + `YuanpeiBoss.cs` + `YuanpeiBossConfig.cs`（註解）+ `YuanpeiBossLogicTests.cs` + 刪 `YuanpeiAoePlacement.cs` + 8 個 `YuanpeiAttack_*.asset` + `YuanpeiBossConfig.asset` + `Map_School.unity`（attackPool）。編譯無錯、Console 無錯、**EditMode 303/303 綠**（少了 3 個 AoE 測試）。實際施壓強度待焦點 Play 確認——冷卻若砍太兇再往回加。
+
+### 追加94 續 120（2026-09-04）— 三連射→六連射、衝撞情境放寬、下壓拋進虛空、架勢隨時間累積、處決特寫鏡頭
+
+使用者 4 項：(1) 光粒子三連射→6連射且權重調高；(2) 肉身衝撞拿掉「能量<25」情境條件；(3) 頭頂垂直下壓命中→把玩家擠出地圖外（虛空）同樣秒殺；(4) 架勢條可隨時間緩慢累積、滿→落地硬直、按 F 處決給近距離側邊特寫鏡頭。
+
+1. **六連射**：`YuanpeiAttack_ProjectileBurst.asset` `count` 3→6、`baseWeight` 1.2→**2.5**、`displayName` 三連射→六連射、`cooldownSeconds` 已在續 119 設 1.5。`ProjectileBurst()` 節奏：起手一對慢拍（0/0.4s）後轉快串流（0.16s），最後**兩顆**改預判走位（原本只有最後一顆）。約 1s 打完 6 顆。
+2. **肉身衝撞情境**：`YuanpeiScheduler.Matches` 的 `BodyCharge` 拿掉 `|| s.energy < 25f`，只剩距離 5–12m。
+3. **下壓拋進虛空**：`ChargeCrush` 命中改成 `crushed=true; break` 出砸落迴圈 → 生成衝擊環 → **`VoidPunt(player)`**（停用玩家 `CharacterController`+`CharacterMovement`、0.5s 沿「遠離場地中心」方向外拋 + 小上拋弧再急墜到場地邊緣外 14m、地面下 32m）→ 才 `DamagePlayer(999999)`。安全性：玩家死後 `YuanpeiEncounter.Defeat()` 本來就會在 ~5.6s 後把死亡玩家傳回大馬路，死亡畫面「你菜完了」蓋著虛空墜落。`VoidPunt` 停用的元件記在欄位裡，`CancelAll()` 會 `RestorePuntedPlayer()` 還原（協程被中途 stop 也不會把玩家鎖死）。`YuanpeiAttacks` 加 `using Live2DAction.Characters`。
+4a. **架勢隨時間累積**：新 config `postureRegenPerSecond`（=1.6，約 62s 從空到滿）。`YuanpeiBoss.Update()` 在 `IsActiveCombatState()`（Hover/Reposition/AttackTelegraph/Attacking/AttackRecovery）每幀 `vitals.AddPosture(rate * dt)`。滿→既有 `PostureFull`→`OnPostureFull`→落地硬直→F 窗口流程不變。downed/recharge/intro/dead 狀態不累積。
+4b. **處決特寫鏡頭**：`YuanpeiExecution.Finisher()` 抓 `Camera.main`、關 `ThirdPersonCameraController`、起 `DriveExecutionCam` 協程——玩家↔Boss 連線側面（隨機左右肩）、近距離 4.3m→2.9m 慢推進、微低角、看向兩者中點。處決 anim 結束停協程：致命→不還原（交給 `DeathDissolve` 抓鏡頭）、非致命→還原 `ThirdPersonCameraController`。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiScheduler.cs` + `YuanpeiBoss.cs` + `YuanpeiBossConfig.cs` + `YuanpeiExecution.cs` + `YuanpeiAttack_ProjectileBurst.asset` + `YuanpeiBossConfig.asset`。`validate_script` 對 `YuanpeiExecution` 誤報「Duplicate PlayerInRange」（heuristic 對 `while(true)+yield` 誤判，實際只有一個、Unity 編譯乾淨）。編譯無錯、Console 無錯、**EditMode 303/303 綠**。虛空拋飛弧線、架勢累積速率、處決鏡位待焦點 Play 確認。
+
+### 追加94 續 121（2026-09-04）— 六連彈實體命中、下壓改「壓穿地板」、處決後 Boss 回正
+
+使用者 Play 回饋 3 點：(1) 六連彈要真的碰到玩家表面體積才造成傷害；(2) 頭頂垂直下壓動畫奇怪、不像「被壓進地下虛空」；(3) 處決後 Boss 變歪斜、沒回到正面直立。
+
+1. **`YuanpeiProjectile` 實體命中**：命中判定從「orb 位置 vs `player.position + up*1.0` 單點球檢查（半徑 `hitRadius + 0.35`）」改成 **`Physics.OverlapSphereNonAlloc`**（半徑＝可見 orb 半徑 `hitRadius*1.3 + 0.05` skin），逐一比對 `col.transform.root == _player` → 只有 orb 球體真的和玩家 collider 重疊才 `ApplyDamage`。static buffer 免 GC。
+2. **`VoidPunt` 改成「壓穿地板」**：不再往場地外側拋。改成 press（0.42s，玩家沿 `k²` 加速直落到地面下 2.2m、只留 0.35m 橫向偏移不穿過圓盤軸心；圓盤跟著壓到 `groundY+0.9` 且維持在玩家頭頂上方 1.7m）→ sink（0.5s，玩家繼續 `k²` 加速直墜 36m 進虛空）→ 才秒殺。衝擊環 + HitStop 抽成 `SpawnCrushImpact()`，crush 時在 press 結束（圓盤落地那刻）觸發、miss 時照舊。移除 crush 分支原本的 boss Y snap（VoidPunt 現在自己掌管）。
+3. **處決後 Boss 回正**：`YuanpeiBoss` 新增 `_skyVisualLocalRot`（Awake 記錄 `visualRoot.localRotation` 原始直立姿態）。`RecoverRoutine`（重新升空）把原本「只遞減 yaw 自轉、留著墜落的 X/Z 翻滾」改成 **slerp `visualRoot.localRotation` → `_skyVisualLocalRot`**（SmoothStep over `reAscendSeconds`）、結尾強制設準。`ResetForRematch` 也一併還原 `visualRoot.localRotation`。
+
+改 `YuanpeiProjectile.cs` + `YuanpeiAttacks.cs` + `YuanpeiBoss.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。壓穿弧線 / orb 命中判定 / 處決回正待焦點 Play 確認。
+
+### 追加94 續 122（2026-09-04）— 六連彈鎖定人物中心、下壓改「完全蓋地才觸發＋運鏡」
+
+使用者 Play 回饋：(1) 六連彈每一下都要先鎖定玩家「當前人物中心」才射，不預判；(2) 頭頂垂直下壓要**真的碰到**（圓盤完全蓋地）才播玩家被擠出的演出，且擠出瞬間攝影機快速聚焦回玩家、做一個運鏡。
+
+1. **六連彈鎖定人物中心**：`ProjectileBurst` 每顆瞄準改成 `PlayerCenter(player)`（新 helper：玩家 `CharacterController` 的世界 collider 中心，退而求其次 collider bounds 中心 / `pos + up*0.9`）——**無預判、無提前量**，每顆在射出當下重讀。順帶把 homing 全關（`homeTime`/`homing` 傳 0，鎖定射擊不需追蹤）。移除已無用的 `PredictedPlayerPoint` + `_lastPP`。
+2. **下壓「完全蓋地才觸發」**：砸落迴圈不再中途做 XZ 距離猜測，**一路砸到 `floorY + 0.15`**（圓盤真的貼地＝完全蓋地）→ 才判定玩家是否在圓盤 footprint 內（`hitR` 半徑，對齊可見標記圈）＋玩家在地面高度附近。中了才 → `CrushEjectCam` + `VoidPunt` + `SpawnCrushImpact` + 秒殺；沒中 → 照舊落地硬直節奏。
+3. **運鏡 `CrushEjectCam`**（1.15s，`attacks` 上平行協程）：抓 `Camera.main`、關 `ThirdPersonCameraController` → 前 ~0.35s 以 rate 20 快速 whip 到玩家側面 6.5m→3.6m、俯角，之後 rate 9 平滑跟拍玩家被壓穿地板往虛空下沉（相機高度 3.6→1.4 隨之放平）→ 結束還原 `ThirdPersonCameraController`。停用的元件記在 `_crushCamCtrl`，`CancelAll()` 加 `RestoreCrushCam()`（協程被中途 stop 也不會卡住相機）。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiProjectile.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。六連彈準度、下壓命中時機、運鏡待焦點 Play 確認。
+
+### 追加94 續 123（2026-09-04）— 勝利相機回位、處決鎖操控、六連彈加難、下壓運鏡放平、車輛觸發、中心點才啟動
+
+使用者 Play 回饋 6 點：
+
+1. **勝利後相機沒回到玩家**：`DeathDissolve` 結尾原本 `camCtrl.enabled = camCtrlWas`——若這場是 F 處決致命，`Finisher` 把 `ThirdPersonCameraController` 關掉、沒還原（memory 留給死亡演出接手），`camCtrlWas` 讀到 false → 死亡演出「還原」成關閉 → 相機永遠凍在死亡角度。改成**無條件 `camCtrl.enabled = true` + `SnapYawToTarget()`**。
+2. **處決要進運鏡視角 + 鎖玩家操控**：`YuanpeiExecution.Finisher()` 加 `LockPlayer(true)`（停用玩家 `CharacterMovement` + `PlayerCombat`，記原狀態）→ 處決結束/致命/`OnDisable` 都 `LockPlayer(false)` 還原。運鏡（`DriveExecutionCam`）本來就有，維持。
+3. **六連彈太好躲（shift）**：`number1`(速度) 16→**27**、`number2`(半徑) 0.35→**0.5**；發射節奏改成**兩波緊發**（3+3，波內每顆 0.09s、波間 0.34s）——一次 shift 閃避（~0.5s 無敵）只能吃掉一波，第二波要再抓時機。每顆仍鎖當前人物中心。
+4. **下壓運鏡突兀**：`CrushEjectCam` 重寫——不再 rate-20 硬 whip。改成擷取相機當下 pos/rot，用單一 `SmoothStep` 混合曲線（1.2s）平滑帶到俯視追拍位（距離 5.5→3.4、高度 3.2→1.3），一氣呵成不跳。
+5. **車輛駛入無法觸發 boss**：`YuanpeiEncounter` 觸發判定重寫——`ResolvePlayerFrom(other)`：從 `other.transform.root` 往下找 `PlayerInputProvider`、再往上找名為 `Player` 的 GO。玩家坐車時 `VehicleEntrySystem` 會把 Player 掛進車底座錨點，所以車體 collider 進 trigger 時一樣找得到 Player（貓單獨開車 → null，正確忽略）。
+6. **要到廣場最內部中心才啟動**：新 `centerActivationRadius`(3.5m)。`OnTriggerEnter/Exit` 只記錄 `_zonePlayer`（人在 trigger 體積內），`Update()` 每幀檢查 `_zonePlayer` 到 `combatCenter` 的平面距離 ≤ 半徑才 `StartEncounter`——光站在觸發區邊緣不算。
+
+改 `YuanpeiEncounter.cs` + `YuanpeiExecution.cs` + `YuanpeiAttacks.cs` + `YuanpeiAttack_ProjectileBurst.asset`。編譯無錯（domain reload 後使用者已在 Play）。EditMode 因使用者正在 Play 未跑（`YuanpeiScheduler` 改動不影響任何測試）。6 項全待焦點 Play 確認。`validate_script` 對 `YuanpeiExecution` 續報「Duplicate PlayerInRange」誤判（heuristic，實際單一、Unity 編譯乾淨、已在 Play 佐證）。
+
+### 追加94 續 124（2026-09-04）— boss 不把車輛當目標
+
+使用者：續 123 讓開車能觸發 boss 戰後，boss 把車輛當成目標物件。
+
+原因：玩家坐車時 `VehicleEntrySystem.Mount` 把 Player GameObject `SetParent` 到車底座錨點 → `Player.root` 變成車體。`YuanpeiBoss.BeginEncounter` 的 `player = triggeringPlayer.root` 與 `ResolvePlayer()` 的 `p.transform.root` 都因此指到車。
+
+1. **`VehicleEntrySystem`** 新增 `public void ForceDismountAll()`（不用按 F，直接把 Player + Cat 下車；空座位 no-op）。
+2. **`YuanpeiEncounter.StartEncounter`** 開場先掃全場 `VehicleEntrySystem`，只要 Player/Cat 有坐 → `ForceDismountAll()`——這場在地面打、車不進戰場目標。加回 `using Live2DAction.Vehicles`。
+3. **`YuanpeiBoss.BeginEncounter`** 防呆：不再盲取 `triggeringPlayer.root`，改成往上走父鏈找名為 `Player` 的 GO；若 `player` 名字不是 `Player` 就 `ResolvePlayer()` 重解。
+
+改 `VehicleEntrySystem.cs` + `YuanpeiEncounter.cs` + `YuanpeiBoss.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。`validate_script` 對 `VehicleEntrySystem` 誤報「Duplicate CurrentPossessed」（同 heuristic bug，實際單一、Unity 編譯乾淨）。開車進場→強制下車→boss 鎖玩家待 Play 確認。
+
+### 追加94 續 125（2026-09-04）— 下壓運鏡改「放遠看擠出→平滑回玩家」
+
+使用者：下壓運鏡改成放遠視角，看得到玩家被 boss 壓穿地板/擠出地圖，隨後攝影機平滑快速回到玩家身上。
+
+`CrushEjectCam(player, crushGround)` 重寫成兩段（都 `SmoothStep` 不跳）：
+1. **Phase 1 wide（0.9s）**：從相機當下姿態 ease 到「crushGround 後方 15m、上方 12m」的高遠位、看向 crushGround 下方——整個「圓盤蓋地壓玩家穿地板」全都入鏡。
+2. **Phase 2 return（0.5s）**：從遠景平滑帶回 crushGround 的普通過肩位（後方 4.5m、上方 1.9m）。
+
+結束後**刻意讓 `ThirdPersonCameraController` 保持關閉**——此時玩家已死、在虛空下方 36m，開回控制器會把鏡頭甩到屍體。改由 **`YuanpeiEncounter.Defeat()` 在死亡畫面 hold + 傳送前無條件 `tpc.enabled = true`**（`SceneTransitionRunner` 只 `SnapYawToTarget`、不開控制器）。`CrushEjectCam` 收尾把 `_crushCamCtrl` 清 null（`CancelAll()` 的 `RestoreCrushCam()` 安全網仍在，協程被中途 stop 時才動作）。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiEncounter.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。遠景構圖 + 回鏡平滑度待焦點 Play 確認。
+
+### 追加94 續 126（2026-09-04）— 六連彈專屬前搖、處決全套運鏡、直線衝刺預警＋加速
+
+使用者 Play 回饋 3 點：
+
+1. **六連彈缺專屬辨識**：`ProjectileBurst` 起手加 `MuzzleCharge(shots, radius, 0.55s)`——`shots` 顆光點螺旋內收、聚成漸亮的核心，再開火。跟其他招的通用 `TelegraphPulse` 明顯不同（「子彈正在成形」）。加上 `Run()` 既有的 telegraph pulse ≈ 1s 預告。
+2. **F 處決全套運鏡**：`Finisher()` 重寫——先擷取玩家/boss 位置，`DriveExecutionCam` 改成 4 段 `ExecCamMode` state machine：
+   - `FrameBoth`：側面、依兩者間距動態拉遠（3.7–6.8m），處決動畫期間同時框住玩家＋boss。
+   - `FollowPlayer`：處決命中後，boss `BossBump`（往玩家方向撲 1.1m 再彈回＝肉身彈開）＋玩家 `ShoveBack`（沿遠離 boss 方向滑退 5m、ease-out、小跳；CC 暫關），鏡頭跟玩家。
+   - `FollowBossUp`：`RecoverToAir` 讓 boss 升空，鏡頭低位仰角同時帶到地面玩家＋升空 boss。
+   - `ReturnToPlayer`：平滑帶回玩家過肩位。
+   - `Done`：`DriveExecutionCam` 開回 `ThirdPersonCameraController` + `SnapYawToTarget`。玩家操控（`LockPlayer`）到 `ReturnToPlayer` 結束才解鎖。致命則 `_execCamHandBack = false` + 停協程、交給 `DeathDissolve`。
+3. **直線衝刺（`BodyCharge`/`ChargeLine`/`OrbitDash`）**：
+   - **預警看得見**：`ChargePathTelegraph` 重寫——`Live2DAction/VFX/AdditiveUnlit`（Blend One One）的地面填充 quad ＋兩條亮脈動邊軌（cube），寬度＝2×hitR（對齊實際命中 `faceRadius`）。lane 不再一啟動就消失，改由新 `FadeChargeLane` 在衝刺頭 ~0.35–0.4s 邊衝邊淡出。
+   - **加速不跳**：衝刺 `speed` 前 3–3.5m 由 0.35→1.0 ramp（原本 0→全速瞬跳）；`SlerpDiscInto` 0.12→0.2s ＋ 加 `EaseMove` 0.7m 後座（load-then-fire）。
+   - **命中對齊視覺**：`DiscFaceHitsPlayer` 的 `forwardReach` `hitR`→`hitR*0.55`（原本圓盤還離玩家 ~2m 就判中＝「撞擊與視覺不匹配」）。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiExecution.cs`。編譯無錯（domain reload 後使用者已在 Play）。EditMode 因使用者 Play 中未跑（改動不碰任何 pure-class 測試面）。3 項全待焦點 Play 確認。
+
+### 追加94 續 127（2026-09-04）— F 處決完強制玩家降落地面
+
+使用者：F 處決完後要強制讓玩家降落到地面（處決運鏡裡 `ShoveBack` 的小跳、或半空按 F，會讓玩家在運鏡剩下的時間浮空）。
+
+新 `SnapPlayerToGround(bool puff)`：以 `SampleGround`（跳過玩家/boss/hazard）從玩家當下 XZ 往下打地面 → CC toggle 把 root 傳送到 `groundY + footToRoot + 0.02`（`footToRoot` = `cc.height/2 - cc.center.y`）→ 可選 `SpawnLandingImpact` 落地灰塵。
+
+- `Finisher()` 存活路徑：`ShoveBack` 之後、`FollowBossUp` 之前呼叫 `SnapPlayerToGround(true)`——玩家滑退落定即刻著地，運鏡剩餘段落站在地上。
+- 對齊步驟：`stand.y = _player.position.y`（沿用當下高度、半空按 F 就浮空）改成 `SampleGround(...).y + footToRoot + 0.02`——處決一開始就站穩在錨點前地面。
+
+改 `YuanpeiExecution.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。
+
+### 追加94 續 128（2026-09-04）— 撞擊只在本體接觸才生效、擠出地圖只留秒殺、紅圈追蹤
+
+使用者 Play 回饋 3 點：
+
+1. **只有秒殺招擠出地圖**：`BodyCharge`/`ChargeLine` 的擊退力 13→**6**、`OrbitDash` 15→**7**——firm stagger 而非 launch，不會把玩家推下地圖邊緣。`VoidPunt`（把玩家壓穿地板進虛空）本來就只有 `ChargeCrush` 用，維持。
+2. **撞擊只在 boss 本體碰到玩家本體才生效**：`DiscFaceHitsPlayer` 重寫——(a) 圓盤平面必須跟玩家沿行進軸齊平（`|along| ≤ hitR*0.35`，原本 `hitR*0.55` 還會提早 ~1m），(b) **`Physics.OverlapSphereNonAlloc`（半徑 `hitR*1.15`）真的和玩家 collider 重疊**（`col.transform.root == player.root`）才判中——不再是幾何 proximity 猜測，「站在預警範圍上但 boss 還沒到」不會受擊。命中後照舊擊退（力道已降）。預警 lane 寬度也改成 `hitR*1.15`＝實際命中 `faceRadius`（`ChargePathTelegraph` 兩處呼叫）。
+3. **紅圈攻擊（`LightningMark`）加難**：`YuanpeiHazard` 新增 `SetHoming(trackSeconds, easeRate, groundMask)`——`StrikeCircle` 在 warn 前 55% 時間內以 ease rate 4 追蹤玩家地面位置、然後鎖定（走出去沒用）。SO 數值：radius 2→**2.4**、warn 1.4→**1.1**、between 0.55→**0.4**、count 6→**7**。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiHazard.cs` + `YuanpeiAttack_LightningMark.asset`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。撞擊命中時機 / 紅圈難度待焦點 Play 確認。
+
+### 追加94 續 129（2026-09-04）— 直線衝撞把玩家頂出地圖：boss 本體 collider 其實是實心
+
+使用者：續 128 之後還是被直線衝撞頂出地圖外。
+
+**真因**：boss 的 `CollisionRoot/BodyCollider`（SphereCollider r3.6）與 `CoreWeakPoint`（r1.9）**在 Map_School 場景裡是 `isTrigger = 0`（實心）**——memory 舊記錄「both trigger」是錯的。boss 以 ~28 m/s 衝過玩家位置時，玩家 `CharacterController.Move()` 每幀對這顆 3.6m 實心球做 depenetration，把玩家一路推出地圖。擊退力（續 128 已降到 6）根本不是元凶。
+
+- **兩顆 SphereCollider 改成 trigger**（Map_School.unity，走 MCP SerializedObject）。玩家武器命中仍有效（`PlayerWeaponHitbox` 用 `QueryTriggerInteraction.Collide`、`PlayerCombat` 的 `OverlapCapsule` 預設也含 trigger）；鎖定、`YuanpeiBossHitReceiver`（`IDamageable`）都不受影響。衝撞命中一律由 `DiscFaceHitsPlayer`（續 128 的 OverlapSphere）判定。
+- `YuanpeiBoss.EnterDeath`：`if (!col.isTrigger) col.enabled = false` → 直接 `col.enabled = false`（現在都是 trigger 了，舊寫法變 no-op）；`ResetForRematch` 照舊全開。
+
+改 `Map_School.unity`（2 個 collider）+ `YuanpeiBoss.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。
+
+### 追加94 續 130（2026-09-04）— 直線衝刺改側身、下壓虛空可見、處決穿模、觸發點更深
+
+使用者 Play 回饋 4 點：
+
+1. **直線衝刺改側身（硬幣最窄那面）**：`BodyCharge`/`ChargeLine`/`OrbitDash` 全改 `FaceDiscSideAlong`（rim 領先，原本 BodyCharge 是 `FaceDiscAlong` 平面領先）。`SlerpDiscInto` 加 `edgeFirst` 參數（各招入場 slerp 對）。`DiscFaceHitsPlayer` 重寫：sphere 中心從 root 改到 **圓盤前緣**（`transform.position + dir * hitR*0.9`），半徑 1.1m（薄刃 + 玩家）——命中點＝視覺前緣。預警 lane 寬度也縮到 2.2m 配合。
+2. **下壓掉虛空看不到**：`VoidPunt` 重排——press 只把玩家壓到地表 `groundY+0.12`（仍可見）0.36s → pin 0.14s → 46 m/s 加速直墜（0.42s）。新增 `MakeVoidHole`/`GrowVoidHole`/`FadeVoidHole`：地面深色 Quad「虛空洞」隨壓下擴張到 5.5m、玩家墜入、之後縮回消失——不透明地板從上方遮不住它。`CrushEjectCam`：wide 鏡頭 **前 40% 就到位**（原本 SmoothStep 整段、鏡到位時玩家已墜完）、加**遮擋 raycast**（wide 位卡在建物內就往內拉+往上抬，最多 4 次）。
+3. **F 處決穿模**：對齊距離 `anchorPos - faceDir * 1.6` → **2.8m**（玩家模型原本插進圓盤）；`BossBump` lunge 1.1m → **0.7m**；落地 clearance +0.02 → +0.05。
+4. **觸發點太靠門口**：`YuanpeiEncounter` 新增 `centerActivationOffset`（Vector3，往 boss/廣場內），`centerActivationRadius` 3.5→**2.0**（使用者指定）。啟動點＝`combatCenter + centerActivationOffset` = `(-2,0.5,-105) + (0,0,-4)` = `(-2,-109)`。**場景已更新**（走 MCP SerializedObject）：`centerActivationRadius` 2.0、`centerActivationOffset` (0,0,-4)、trigger box 往南拉大（local center.z 0→-3、size.z 12→18，world Z span [-111,-99]→[-117,-99]，北緣不動）。啟動點在 box 內、離門口（~Z -99）約 10m。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiExecution.cs` + `YuanpeiEncounter.cs` + `Map_School.unity`（YuanpeiEncounter 欄位 + BoxCollider）。編譯無錯、Console 無錯、**EditMode 303/303 綠**。4 項的手感/構圖待焦點 Play 確認。
+
+### 追加94 續 131（2026-09-04）— boss 戰觸發改成「跨過一條橫線」
+
+使用者：改成地圖中心切一條線，玩家不管走到 X（橫向）哪裡，只要跨過這條線（Z）就觸發 boss 戰。
+
+`YuanpeiEncounter`：移除 `centerActivationRadius` + `centerActivationOffset`（點 + 半徑），改成 `activationLineZ`（world Z，預設 -109）+ `activationCrossSouth`（預設 true）。`Update()`：玩家在 trigger 體積內（`_zonePlayer` 有值）且 `position.z <= activationLineZ`（或 `>=`，看 `activationCrossSouth`）→ `StartEncounter`。X 完全不管。
+
+場景（走 MCP SerializedObject）：`activationLineZ = -109`、`activationCrossSouth = true`；trigger BoxCollider X 加寬 `size.x 20→34`（world X span [-17,17]，「任何橫向位置」名符其實），Z 維持 [-117,-99]。
+
+改 `YuanpeiEncounter.cs` + `Map_School.unity`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。
+
+### 追加94 續 132（2026-09-04）— 今日修正回頭審查：2 個真 bug 修掉
+
+回頭審 續 118–131 全部改動（YuanpeiAttacks +698 行等）。抓到 2 個真 bug，已修：
+
+1. **`YuanpeiEncounter.StartEncounter` 的 `ForceDismountAll` 會誤踢貓**：開場迴圈條件是 `PlayerSeat != None || CatSeat != None`——貓在地圖別處開車時，玩家徒步觸發 boss 戰也會把貓從車上強制彈下來。改成只在 `PlayerSeat != None`（玩家真的在車上）才 `ForceDismountAll`。
+2. **被動架勢在攻擊 Active 中累滿會中斷攻擊**：`IsActiveCombatState()` 原本含 `Attacking`/`AttackRecovery`。若被動架勢剛好在此累到滿 → `OnPostureFull` → `attacks.CancelAll()`——最糟情況是打斷 `ChargeCrush` 的 `VoidPunt`，讓 `DamagePlayer(999999)` 沒執行到，玩家「被完美壓中」卻活下來。改成只在 `Hover`/`Reposition`/`AttackTelegraph` 累積（Telegraph 打斷無害、涵蓋大部分非 hover 時間，累積速度不受影響）。
+
+其他審過認為可接受（非 bug）：boss 秒殺後 ~1.5s 內若玩家還沒 deactivate 可能再出一招（既有行為）；`YuanpeiProjectile` 極低幀率下理論可穿透（greybox 容忍）；`Situation.arenaHasGoodFloor` 死欄位（無害）。
+
+改 `YuanpeiBoss.cs` + `YuanpeiEncounter.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。

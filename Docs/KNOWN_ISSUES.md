@@ -43,6 +43,12 @@
 1b. **Player2（GameObject 名 `Mecha`）機甲模型來源不明**（高風險）：`MechaModel_DoNotShip/MechaCharacter2.fbx` 來源與授權都無法驗證，外觀疑似既有機甲動畫作品設計。**2026-08-31：使用者要求把 `Mecha` 從場景移除**（實機看到的是「只有血量條、沒有人物的幽靈」——那顆網格 material 為 NULL、bounds 退化，Play 下完全不顯示，只剩浮空血條）。已刪 `GreyboxTest` 的 `Mecha` GameObject ＋ `GameManager` 上對應的 `RespawnController`（9→8）。**磁碟上 `MechaModel_DoNotShip/` 資料夾、`MechaVisualSetup.cs`／`MechaDamageableSetup.cs`／`MechaRespawnSetup.cs` 選單工具都還在**——重跑那些選單會把它加回來。要永久清掉再刪那些檔（DoNotShip 素材，刪掉對正式 Build 只有好處）。`GreyboxSceneBuilder.Build()` 不會重建它（只在註解裡提到）。
 2. ~~缺少 3D 人形角色模型~~ → 已解決（2026-08-10），見下方「Humanoid 角色佔位」項。
 3. **灰盒原型手感尚未完整人眼驗證**（中風險，Phase 2 開始前應確認）：使用者已實際 Play 過一次並回報一個真實 bug（見下方「方向鍵畫圈」項，已修好），證明人眼驗證確實會抓到自動化測試漏掉的問題。移動方向已修正，但攻擊手感、攝影機滑鼠視角順暢度、掩體方塊視覺配置是否合理，仍需要使用者再實際 Play 確認。
+4. **`DoNotShipBuildGuard` 擋 build 清單有缺口**（2026-09-04 漏洞掃描發現，低～中風險）：
+   - guard 的 `BlockedAssetFolders` 只有 6 條，`ASSET_LICENSES.md` 標 DoNotShip 的 `Environment/Meshy/YuanpeiLogo`（真實商標）與授權待確認的 `Characters/Weapons/BloodKatana` 不在其中。**2026-09-04 使用者回覆這兩項已有授權，暫不加入。** 日後若授權狀態改變需補上。
+   - `MechaModel_DoNotShip` 那條路徑已失效（資產移除），guard 那條變成無作用；`MechaVisualSetup.cs` 選單仍會從該路徑加回。
+   - guard 用 `AssetDatabase.IsValidFolder`，路徑打錯會**靜默放行**，且沒有 EditMode 測試驗證每條路徑存在。
+   - guard 只擋非 Development build（設計如此，但 Development build 仍會夾帶）。
+5. **`MechanicalWings.fbx` 未登記授權**（2026-09-04 發現，低風險）：`Assets/_Project/Characters/Placeholder/MechanicalWings/_FBX/MechanicalWings.fbx`（玩家翅膀，用於 `GreyboxTest`）不在 `ASSET_LICENSES.md` 任何一張表裡，來源不明。發布前需確認來源／授權或換成原創／CC0 素材。
 
 ## Live2D 立牌視覺（2026-08-10 新增，已用自動化截圖驗證，未經人眼互動確認）
 

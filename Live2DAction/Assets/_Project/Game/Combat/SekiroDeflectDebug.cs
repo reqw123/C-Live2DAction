@@ -1,3 +1,6 @@
+// Dev overlay only - compiled into the Editor and Development builds, stripped from release
+// builds (its GameObject in GreyboxTest then loads as a harmless missing-script slot).
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
 using UnityEngine;
 using Live2DAction.Combat.Boss;
 using Live2DAction.Core;
@@ -251,3 +254,4 @@ namespace Live2DAction.Combat
         }
     }
 }
+#endif

@@ -5,7 +5,7 @@
 
 ## 一句話
 
-空中遠距法術型 Boss：升空保持射程、6 種招式逼玩家走位、玩家攻擊削 HP＋累積架勢 → 架勢滿 → 墜地 →
+空中遠距法術型 Boss：升空保持射程、8 種招式逼玩家走位（追加94 續 119：MultiAoE 多重光爆已移除、含 3 種肉身衝撞變體）、玩家攻擊削 HP＋累積架勢 → 架勢滿 → 墜地 →
 5 秒 F 處決窗口 → 20~22% 最大 HP 傷害 →（未死）重新升空。**只有 HP 歸零才勝利。**
 
 ## 檔案
@@ -17,7 +17,7 @@
 | `…/YuanpeiBossVitals.cs` | HP（委派 `Core.Health`）／Energy／Posture 權威；倍率、階段、事件。`YuanpeiPhaseLogic` 純函式 |
 | `…/YuanpeiScheduler.cs` | **純**招式選擇（候選過濾 §10.1 + 情境權重 §10.2 + LRU）。EditMode 測 |
 | `…/YuanpeiBoss.cs` | 頂層 FSM（15 狀態）＋ 空中移動（懸浮/面向/保持距離/避繞出場外）＋ 排程驅動＋ Intro（從天空校徽降下縮小） |
-| `…/YuanpeiAttacks.cs` | 6 招 coroutine，greybox 幾何＋純色 emission，明確 Hit Window |
+| `…/YuanpeiAttacks.cs` | 8 招 coroutine（續 119 起），greybox 幾何＋純色 emission，明確 Hit Window |
 | `…/YuanpeiProjectile.cs` | 光粒子（可閃可被武器打掉，`IDamageable`），初段輕微追蹤 |
 | `…/YuanpeiHazard.cs` | 地面危險：落雷圈 / 延遲光爆圈 / 擴張衝擊環（環帶命中一次） |
 | `…/YuanpeiExecution.cs` | 架勢崩潰→墜落→5s F 窗口→處決傷害（在命中事件，非按下瞬間）→重升空／死亡 |
@@ -43,7 +43,7 @@
 - ✅ Boss prefab / pivot / collider / anchor
 - ✅ HP / Energy / Posture + 狀態優先順序 + 死亡一次性鎖 + 3 條 HUD
 - ✅ 懸浮 / 面向 / 理想距離 / 視線 / 出場外拉回 + Phase 解鎖 + 候選過濾 + Attack Lock + 冷卻 + 全域間隔
-- ✅ 6 招原型（幾何＋純色），各有 Telegraph/Active/Recovery/Cancel
+- ✅ 8 招原型（幾何＋純色），各有 Telegraph/Active/Recovery/Cancel（續 111 +3 衝撞變體、續 119 −MultiAoE）
 - ✅ 架勢滿鎖定 + 攻擊取消 + 墜落 + 地面定位 + ExecutionWindow + F 判定 + 對齊 + 處決傷害事件 + 錯過處決 + 重升空
 - ✅ 能量耗盡 ≠ 可處決（HUD 不顯示 F）；HP 歸零優先於一切
 - ✅ 完美閃避 → 反擊架勢加成（greybox 版）

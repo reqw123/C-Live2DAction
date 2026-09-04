@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using Live2DAction.Core;
+using Live2DAction.Characters;
 
 namespace Live2DAction.AI.Boss.Yuanpei
 {
@@ -38,6 +39,12 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private bool _majorHazardActive;
         private Transform _core;   // visual core for emission tint
 
+        // ChargeCrush void-punt: components we turned off on the player, restored even if the
+        // punt coroutine is stopped mid-flight (see RestorePuntedPlayer / CancelAll).
+        private CharacterController _puntCC;
+        private Behaviour _puntMove;
+        private bool _puntCCWas, _puntMoveWas;
+
         public bool MajorHazardActive => _majorHazardActive;
 
         private void Awake()
@@ -49,11 +56,115 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         public void CancelAll()
         {
+            RestorePuntedPlayer();
+            RestoreCrushCam();
+            if (_chargeLane != null) { Destroy(_chargeLane); _chargeLane = null; }
             for (int i = _spawned.Count - 1; i >= 0; i--)
                 if (_spawned[i] != null) Destroy(_spawned[i]);
             _spawned.Clear();
             _majorHazardActive = false;
             StopAllCoroutines();
+        }
+
+        private void RestorePuntedPlayer()
+        {
+            if (_puntCC != null) { _puntCC.enabled = _puntCCWas; _puntCC = null; }
+            if (_puntMove != null) { _puntMove.enabled = _puntMoveWas; _puntMove = null; }
+        }
+
+        // ChargeCrush clean hit: the disc PRESSES the player straight down through the floor and
+        // they sink into the void, THEN the 秒殺 lands (user: not "flung sideways", it should read
+        // as "pressed down into the underground void"). Safe because YuanpeiEncounter.Defeat()
+        // teleports the dead player back to the road ~5.6s later and the death screen covers the fall.
+        private IEnumerator VoidPunt(Transform player, Vector3 groundPoint)
+        {
+            _puntCC = player.GetComponent<CharacterController>();
+            _puntMove = player.GetComponent<CharacterMovement>();
+            _puntCCWas = _puntCC != null && _puntCC.enabled;
+            _puntMoveWas = _puntMove != null && _puntMove.enabled;
+            if (_puntCC != null) _puntCC.enabled = false;
+            if (_puntMove != null) _puntMove.enabled = false;
+
+            float groundY = groundPoint.y;
+            Vector3 pStart = player.position;
+            Vector3 hole = new Vector3(groundPoint.x, groundY, groundPoint.z);
+
+            // a dark "void hole" in the floor the player is driven into - so the fall reads from any
+            // camera angle even though an opaque floor occludes anything below it (續 130, user:
+            // "有時看不到玩家掉落虛空").
+            var voidHole = MakeVoidHole(hole);
+
+            // --- press: the disc crushes the player flat AT the surface (still visible), disc lands ---
+            const float press = 0.36f;
+            float bossY0 = transform.position.y;
+            float t = 0f;
+            while (t < press)
+            {
+                t += Time.deltaTime;
+                float k = t / press;
+                float py = Mathf.Lerp(pStart.y, groundY + 0.12f, k * k);
+                player.position = new Vector3(pStart.x, py, pStart.z);
+                float by = Mathf.Lerp(bossY0, groundY + 0.8f, Mathf.SmoothStep(0f, 1f, k));
+                transform.position = new Vector3(transform.position.x, Mathf.Max(by, player.position.y + 1.4f), transform.position.z);
+                FaceDiscAlong(Vector3.down);
+                GrowVoidHole(voidHole, k * 0.6f);
+                yield return null;
+            }
+            transform.position = new Vector3(transform.position.x, groundY + 0.8f, transform.position.z);
+
+            // --- brief pin, then the void SWALLOWS them (fast accelerating plunge) ---
+            yield return new WaitForSeconds(0.14f);
+            const float sink = 0.42f;
+            float sy0 = player.position.y;
+            t = 0f;
+            while (t < sink)
+            {
+                t += Time.deltaTime;
+                float k = t / sink;
+                player.position = new Vector3(pStart.x, sy0 - 46f * (k * k), pStart.z);
+                GrowVoidHole(voidHole, 0.6f + k * 0.4f);
+                yield return null;
+            }
+
+            if (voidHole != null) StartCoroutine(FadeVoidHole(voidHole, 0.5f));
+            RestorePuntedPlayer();
+        }
+
+        private GameObject MakeVoidHole(Vector3 groundPos)
+        {
+            var g = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            g.name = "YuanpeiVoidHole";
+            Destroy(g.GetComponent<Collider>());
+            g.transform.SetPositionAndRotation(groundPos + Vector3.up * 0.05f, Quaternion.Euler(90f, 0f, 0f));
+            g.transform.localScale = Vector3.one * 0.2f;
+            var r = g.GetComponent<Renderer>();
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            var mpb = new MaterialPropertyBlock();
+            mpb.SetColor(BaseColorId, new Color(0.02f, 0f, 0.05f, 1f));
+            mpb.SetColor(EmissionId, new Color(0.06f, 0.02f, 0.12f));   // faint violet edge glow
+            r.SetPropertyBlock(mpb);
+            _spawned.Add(g);
+            return g;
+        }
+        private void GrowVoidHole(GameObject h, float frac01)
+        {
+            if (h == null) return;
+            float d = Mathf.Lerp(0.2f, 5.5f, Mathf.Clamp01(frac01));
+            h.transform.localScale = new Vector3(d, d, 1f);
+        }
+        private IEnumerator FadeVoidHole(GameObject h, float seconds)
+        {
+            if (h == null) yield break;
+            var r = h.GetComponent<Renderer>();
+            float t = 0f;
+            while (t < seconds && h != null)
+            {
+                t += Time.deltaTime;
+                float d = Mathf.Lerp(5.5f, 0f, t / seconds);
+                h.transform.localScale = new Vector3(d, d, 1f);
+                yield return null;
+            }
+            if (h != null) Destroy(h);
         }
 
         public IEnumerator Run(YuanpeiAttackDef def, Transform player, YuanpeiBoss boss, Action<Phase> onPhase)
@@ -81,7 +192,6 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 case YuanpeiAttackId.ProjectileBurst: yield return ProjectileBurst(def, player); break;
                 case YuanpeiAttackId.FocusLaser:      yield return FocusLaser(def, player); break;
                 case YuanpeiAttackId.LightningMark:   yield return LightningMark(def, player); break;
-                case YuanpeiAttackId.MultiAoE:        yield return MultiAoE(def, player); break;
                 case YuanpeiAttackId.Shockwave:       yield return Shockwave(def, player); break;
                 case YuanpeiAttackId.BodyCharge:      yield return BodyCharge(def, player); break;
                 case YuanpeiAttackId.ChargeLine:      yield return BodyCharge(def, player); break;   // same logic, longer/faster via the def's numbers
@@ -125,16 +235,22 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         private IEnumerator ProjectileBurst(YuanpeiAttackDef def, Transform player)
         {
-            float speed = def.number1 > 0 ? def.number1 : 16f;
-            float radius = def.number2 > 0 ? def.number2 : 0.35f;
-            float homing = def.number3 > 0 ? def.number3 : 3f;
+            float speed = def.number1 > 0 ? def.number1 : 27f;
+            float radius = def.number2 > 0 ? def.number2 : 0.5f;
             int shots = Mathf.Max(1, def.count);
+            int half = Mathf.CeilToInt(shots * 0.5f);   // fired as two tight bursts with a short gap between
+
+            // 續 125 (user: "缺少 boss 要施放此招的專有辨識手段") - a charge-up unique to this move:
+            // `shots` light motes spiral inward and pack into a bright core at the muzzle before the
+            // volley. Reads as "projectiles are being formed", unlike any other attack's telegraph.
+            yield return MuzzleCharge(shots, radius, 0.55f);
+
             for (int i = 0; i < shots; i++)
             {
                 Vector3 origin = projectileOrigin.position;
-                Vector3 aim = i == shots - 1
-                    ? PredictedPlayerPoint(player, 0.3f)
-                    : player.position + Vector3.up * 1.0f;
+                // user: every shot locks the player's CURRENT centre-of-mass at fire time - no lead,
+                // no prediction. Re-read per shot (the loop already spaces them out over ~1s).
+                Vector3 aim = PlayerCenter(player);
                 Vector3 dir = (aim - origin).normalized;
 
                 var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -154,13 +270,65 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 trail.endColor = new Color(burstColor.r, burstColor.g, burstColor.b, 0f);
                 trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 var proj = go.AddComponent<YuanpeiProjectile>();
-                float homeTime = i == 0 ? 0.0f : 0.18f;
-                proj.Launch(dir, speed, radius, def.healthDamage, homeTime, homing, player, _boss.gameObject);
+                // locked aimed shot - no homing (the direction is already the player's current centre)
+                proj.Launch(dir, speed, radius, def.healthDamage, 0f, 0f, player, _boss.gameObject);
                 _spawned.Add(go);
 
-                yield return new WaitForSeconds(i == 0 ? 0f : (i == 1 ? 0.45f : 0.2f));
+                // Two tight bursts (3+3 for count 6) - a single Shift dodge (~0.5s i-frames) can
+                // clear one burst but not both, so you have to time each dodge (user: "很容易透過
+                // shift 躲避 沒有難度"). Each orb re-locks the player's centre at fire time.
+                bool lastOfBurst = (i + 1) == half || (i + 1) == shots;
+                yield return new WaitForSeconds(i == 0 ? 0f : (lastOfBurst ? 0.34f : 0.09f));
             }
             yield return null;
+        }
+
+        // ProjectileBurst's signature telegraph: `count` motes spiral inward to a bright core at
+        // the muzzle. Self-cleaning.
+        private IEnumerator MuzzleCharge(int count, float orbRadius, float seconds)
+        {
+            var root = new GameObject("YuanpeiMuzzleCharge");
+            root.transform.SetParent(projectileOrigin, true);
+            root.transform.position = projectileOrigin.position;
+            _spawned.Add(root);
+
+            var core = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            Destroy(core.GetComponent<Collider>());
+            core.transform.SetParent(root.transform, false);
+            var coreR = core.GetComponent<Renderer>();
+            coreR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            int n = Mathf.Clamp(count, 3, 10);
+            var motes = new Transform[n];
+            var ang0 = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                var m = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                Destroy(m.GetComponent<Collider>());
+                m.transform.SetParent(root.transform, false);
+                m.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                Tint(m.gameObject, castColor, 4f);
+                motes[i] = m.transform;
+                ang0[i] = (i / (float)n) * Mathf.PI * 2f;
+            }
+
+            float t = 0f;
+            while (t < seconds)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / seconds);
+                float r = Mathf.Lerp(2.4f, 0.05f, k * k);
+                for (int i = 0; i < n; i++)
+                {
+                    float a = ang0[i] + k * 9f;   // spiral in
+                    motes[i].localPosition = new Vector3(Mathf.Cos(a) * r, Mathf.Sin(a * 1.3f) * r * 0.4f, Mathf.Sin(a) * r);
+                    motes[i].localScale = Vector3.one * (orbRadius * 1.2f * (0.4f + 0.6f * (1f - k)));
+                }
+                core.transform.localScale = Vector3.one * (orbRadius * (0.3f + 3.2f * k));
+                Tint(core.gameObject, Color.Lerp(castColor, dangerColor, k), 3f + 8f * k);
+                yield return null;
+            }
+            Destroy(root);
         }
 
         // ---------------------------------------------------------------- 9.2 聚焦雷射
@@ -240,66 +408,29 @@ namespace Live2DAction.AI.Boss.Yuanpei
         // strictly serial, so they overlap into a "keep moving" pressure pattern.
         private IEnumerator LightningMark(YuanpeiAttackDef def, Transform player)
         {
-            float radius = def.number1 > 0 ? def.number1 : 2.0f;
-            float warn = def.number2 > 0 ? def.number2 : 1.4f;    // rune-circle wind-up = video warn phase
-            float between = def.number3 > 0 ? def.number3 : 0.55f;
+            float radius = def.number1 > 0 ? def.number1 : 2.4f;
+            float warn = def.number2 > 0 ? def.number2 : 1.1f;    // rune-circle wind-up = video warn phase
+            float between = def.number3 > 0 ? def.number3 : 0.4f;
             int strikes = Mathf.Max(1, def.count);
             for (int i = 0; i < strikes; i++)
             {
                 if (player == null) yield break;
                 Vector3 pos = ProjectToGround(player.position);
                 var go = SpawnHazard(YuanpeiHazard.Kind.StrikeCircle, pos, radius, warn, 0.25f, def.healthDamage, player);
-                if (strikeFlipbookMaterial != null)
-                {
-                    var hz = go.GetComponent<YuanpeiHazard>();
-                    if (hz != null) hz.SetFlipbook(strikeFlipbookMaterial, strikeFlipbookCols, strikeFlipbookRows,
+                var hz = go.GetComponent<YuanpeiHazard>();
+                // chase the player for the first ~55% of the warn, then lock (user: "太容易閃躲")
+                if (hz != null) hz.SetHoming(warn * 0.55f, 4f, groundMask);
+                if (strikeFlipbookMaterial != null && hz != null)
+                    hz.SetFlipbook(strikeFlipbookMaterial, strikeFlipbookCols, strikeFlipbookRows,
                         strikeFlipbookFrames, strikeFlipbookImpactFraction);
-                }
                 yield return new WaitForSeconds(between);
             }
             yield return new WaitForSeconds(warn + 0.35f);   // let the final mark resolve before Recovery
         }
 
-        // ---------------------------------------------------------------- 9.4 多重延遲範圍光爆
-
-        private IEnumerator MultiAoE(YuanpeiAttackDef def, Transform player)
-        {
-            float radius = def.number1 > 0 ? def.number1 : 1.45f;
-            float warn = def.number2 > 0 ? def.number2 : 1.2f;
-            int circles = Mathf.Clamp(def.count, 5, 8);
-
-            var picks = new List<Vector3>();
-            picks.Add(ProjectToGround(player.position + RandXZ(1.5f)));
-            picks.Add(ProjectToGround(player.position + RandXZ(2.5f)));
-            Vector3 predict = PredictedPlayerPoint(player, 0.6f);
-            picks.Add(ProjectToGround(predict + RandXZ(1.5f)));
-            picks.Add(ProjectToGround(predict + RandXZ(2.5f)));
-            Vector3 center = _cfg != null ? _cfg.arenaCenter : transform.position;
-            float ar = _cfg != null ? _cfg.arenaRadius : 10f;
-            for (int i = picks.Count; i < circles; i++)
-            {
-                float ang = (i / (float)circles) * Mathf.PI * 2f;
-                picks.Add(ProjectToGround(center + new Vector3(Mathf.Cos(ang), 0, Mathf.Sin(ang)) * ar * 0.7f));
-            }
-
-            // spec §9.4 - never cover every escape route. Drop circles until at least one "walk or
-            // one-dodge" spot around the player stays clear.
-            var candidates = new List<YuanpeiAoePlacement.Circle>();
-            foreach (var p in picks)
-                candidates.Add(new YuanpeiAoePlacement.Circle { center = new Vector2(p.x, p.z), radius = radius });
-            var safe = YuanpeiAoePlacement.EnsureSafeRoute(
-                candidates,
-                new Vector2(player.position.x, player.position.z),
-                new Vector2(center.x, center.z), ar);
-
-            foreach (var c in safe)
-            {
-                Vector3 gp = ProjectToGround(new Vector3(c.center.x, player.position.y, c.center.y));
-                SpawnHazard(YuanpeiHazard.Kind.DelayedAoE, gp, c.radius, warn, 0.3f, def.healthDamage, player);
-            }
-
-            yield return new WaitForSeconds(warn + 0.5f);
-        }
+        // 9.4 多重延遲範圍光爆 (MultiAoE) removed 追加94 續 119 - user: low player pressure, cut it
+        // from the pool. YuanpeiAoePlacement + its tests deleted with it. Enum value kept (harmless
+        // label); the switch above has no arm for it so a stray selection is a no-op.
 
         // ---------------------------------------------------------------- 9.5 近身震退
 
@@ -323,50 +454,97 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         private IEnumerator BodyCharge(YuanpeiAttackDef def, Transform player)
         {
-            float speed = def.number1 > 0 ? def.number1 : 26f;
+            float speed = def.number1 > 0 ? def.number1 : 18f;
             float maxDist = def.number2 > 0 ? def.number2 : 15f;
             float hitR = def.number3 > 0 ? def.number3 : 1.8f;
+            const float runway = 6.5f;          // guaranteed distance to cover so the dash always reads as travel
+            const float skimHeight = 1.1f;      // Y the charge levels out at once it has dived to the player
+
+            // This move owns its own Y from here until it finishes - otherwise HoldHover() drags
+            // the boss back up to hover height every frame and the "charge" is a flat twitch at
+            // altitude (user: "剛看到動畫玩家就受到攻擊", "感覺只有頭跟尾").
+            float windup = Mathf.Max(0.45f, def.windupSeconds);
+            float budget = def.telegraphSeconds + windup + 1.2f + (maxDist / Mathf.Max(1f, speed)) + 2f;
+            if (_boss != null) _boss.SuspendHover(budget);
 
             // 前搖：back off + tilt while a red DANGER LINE shows exactly where the charge will go
             // (spec §9.6.1-2 / §22.2 / user: "所有衝撞攻擊必須有前搖和預警範圍提示").
             Vector3 start = transform.position;
-            Vector3 dir = (player.position + Vector3.up * 0.5f - start); dir.y *= 0.3f; dir.Normalize();
-            transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
-            // wind-up back-off - eased over a few frames, NOT an instant `position -=` (that read as
-            // the boss teleporting back at point-blank range - user: "順移的感覺").
-            yield return EaseMove(transform.position - dir * 1.5f, 0.16f);
-            float windup = Mathf.Max(0.45f, def.windupSeconds);
-            yield return ChargePathTelegraph(transform.position, dir, maxDist, hitR, windup);
+            Vector3 flatDir = player.position - start; flatDir.y = 0f;
+            if (flatDir.sqrMagnitude < 1e-4f) flatDir = transform.forward;
+            flatDir.Normalize();
+            transform.rotation = Quaternion.LookRotation(flatDir, Vector3.up);
 
-            // re-aim once at the player's LAST position, then lock (spec §9.6.4 - no turning after)
+            // Ease back so there is always ~runway metres of clear track ahead, even if the player
+            // crept in during the telegraph. Eased (not an instant `position -=`) so the back-off
+            // itself doesn't read as a teleport (順移 fix, 追加94 續 116).
+            float gap = Vector3.Distance(new Vector3(start.x, 0f, start.z), new Vector3(player.position.x, 0f, player.position.z));
+            float backoff = Mathf.Clamp(runway - gap, 0f, 7f);
+            if (backoff > 0.05f)
+            {
+                Vector3 backTarget = start - flatDir * backoff;
+                Vector3 c = _cfg != null ? _cfg.arenaCenter : start;
+                float ar = _cfg != null ? _cfg.arenaRadius : 11f;
+                Vector3 fromC = backTarget - c; fromC.y = 0f;
+                if (fromC.magnitude > ar) backTarget = c + fromC.normalized * ar;
+                backTarget.y = start.y;
+                yield return EaseMove(backTarget, 0.32f);
+            }
+
+            // narrow lane - the straight charge now leads EDGE-first (硬幣最窄那面, user 續 130), so the
+            // dangerous strip is thin: player + a little fairness.
+            const float laneCheckR = 1.1f;
+            yield return ChargePathTelegraph(transform.position, flatDir, maxDist, laneCheckR, windup);
+
+            // re-aim once at the player's LAST position, then lock (spec §9.6.4 - no turning after).
+            // FULL vertical this time: the charge dives at the player, then skims the ground.
             start = transform.position;
-            dir = (player.position + Vector3.up * 0.5f - start); dir.y *= 0.3f; dir.Normalize();
-            transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
-            FaceDiscAlong(dir);   // 表面立直：the flat disc leads face-first for max frontal area (user request)
+            Vector3 aim = player.position + Vector3.up * 0.9f;
+            Vector3 dir = (aim - start).normalized;
+            flatDir = new Vector3(dir.x, 0f, dir.z);
+            if (flatDir.sqrMagnitude < 1e-4f) flatDir = transform.forward;
+            flatDir.Normalize();
+            transform.rotation = Quaternion.LookRotation(flatDir, Vector3.up);
+            float groundY = ProjectToGround(player.position).y;
+
+            // ease the disc into its EDGE-first attitude (rim leads, like a rolling coin), with a
+            // small wind-up recoil, so the launch reads as loading-then-firing not a 0→full pop.
+            yield return SlerpDiscInto(dir, 0.2f, edgeFirst: true);
+            yield return EaseMove(transform.position - flatDir * 0.7f, 0.12f);   // recoil back
+            StartCoroutine(FadeChargeLane(Mathf.Min(0.4f, maxDist / Mathf.Max(1f, speed))));
 
             bool hitPlayer = false, hitWall = false;
             float travelled = 0f;
+            float rampDist = Mathf.Min(3.5f, maxDist * 0.3f);   // accelerate over the first few metres
             while (travelled < maxDist && !hitPlayer && !hitWall)
             {
-                float step = speed * Mathf.Min(Time.deltaTime, 0.04f);   // clamp: a frame hitch must not teleport the boss across the arena
-                FaceDiscAlong(dir);   // hold the face-forward orientation for the whole dash
+                float ramp = Mathf.Lerp(0.35f, 1f, Mathf.Clamp01(travelled / rampDist));
+                float step = speed * ramp * Mathf.Min(Time.deltaTime, 0.04f);   // clamp: a frame hitch must not teleport the boss across the arena
+                FaceDiscSideAlong(dir);   // rim leads (硬幣最窄那面) for the whole dash
                 // wall check (spec §9.6 - only ChargeCrashSurface stuns)
-                if (Physics.SphereCast(transform.position, hitR * 0.8f, dir, out var wall, step + hitR, chargeCrashMask, QueryTriggerInteraction.Ignore))
+                if (Physics.SphereCast(transform.position, hitR * 0.8f, flatDir, out var wall, step + hitR, chargeCrashMask, QueryTriggerInteraction.Ignore))
                 {
                     hitWall = true;
-                    transform.position = wall.point - dir * hitR;
+                    transform.position = wall.point - flatDir * hitR;
                     break;
                 }
-                transform.position += dir * step;
+                Vector3 next = transform.position + dir * step;
+                // dive toward the player, then hug skimHeight above the ground - never plough under it
+                if (next.y < groundY + skimHeight)
+                {
+                    next.y = Mathf.MoveTowards(transform.position.y, groundY + skimHeight, Mathf.Max(step, 0.15f));
+                    dir = flatDir;   // levelled out - carry on flat
+                }
+                transform.position = next;
                 travelled += step;
 
-                // wide flat catch area - the disc face is much bigger than the charge "tube"
-                if (player != null && DiscFaceHitsPlayer(player, dir, hitR, hitR * 2.8f))
+                // hit only where the leading RIM actually is (a sphere at the disc's front edge)
+                if (player != null && DiscFaceHitsPlayer(player, flatDir, hitR * 0.9f, laneCheckR))
                 {
                     hitPlayer = true;
-                    DamagePlayer(player, def.healthDamage, dir);
+                    DamagePlayer(player, def.healthDamage, flatDir);
                     var kb = player.GetComponent<Live2DAction.Combat.Boss.IKnockbackReceiver>();
-                    kb?.ApplyKnockback(dir, 13f, false);   // bumped - the instant-pop fraction was cut (順移 fix), velocity carries the push now
+                    kb?.ApplyKnockback(flatDir, 6f, false);   // 續 128: a firm STAGGER only - just the 秒殺 (ChargeCrush) throws the player off the map (user)
                 }
             }
 
@@ -405,7 +583,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
             // --- slide to directly above the player (breaks the "never overhead" rule for this move) ---
             float slide = Mathf.Max(0.35f, def.telegraphSeconds + def.windupSeconds + 0.4f);
-            if (_boss != null) _boss.SuspendYClamp(slide + 2f);   // let it fly high for this move
+            if (_boss != null)
+            {
+                _boss.SuspendYClamp(slide + 3f);    // let it fly high for this move
+                _boss.SuspendHover(slide + 3f);     // and stop HoldHover dragging it back to hover height mid-climb
+            }
 
             float t = 0f;
             while (t < slide)
@@ -430,36 +612,131 @@ namespace Live2DAction.AI.Boss.Yuanpei
             PaintMarker(markerR, dangerColor, 5f);
             yield return new WaitForSeconds(0.25f);   // brief "it's coming" beat - dodge window
 
-            // --- vertical slam --- disc lies flat (face DOWN) to pancake the biggest area
+            // --- vertical slam --- disc lies flat (face DOWN), drives ALL the way to the ground so
+            // it "完全蓋地" - the crush check only happens once the disc is actually flat on the floor
+            // (user: "boss 真的壓到玩家且完全蓋地時" - not a mid-air proximity guess).
             FaceDiscAlong(Vector3.down);
             float floorY = lockGround.y;
-            bool crushed = false;
-            while (transform.position.y > floorY + 0.6f)
+            while (transform.position.y > floorY + 0.15f)
             {
                 FaceDiscAlong(Vector3.down);
                 transform.position += Vector3.down * slamSpeed * Time.deltaTime;
-                if (!crushed && player != null)
-                {
-                    Vector3 flat = new Vector3(player.position.x - transform.position.x, 0f, player.position.z - transform.position.z);
-                    if (flat.sqrMagnitude <= (hitR * 1.4f) * (hitR * 1.4f) && player.position.y < transform.position.y + 2f)
-                    {
-                        crushed = true;
-                        // 100% 秒殺 (user request) - route a lethal hit through the normal pipeline
-                        DamagePlayer(player, 999999f, Vector3.down);
-                    }
-                }
                 yield return null;
             }
-            transform.position = new Vector3(transform.position.x, floorY + 0.6f, transform.position.z);
+            transform.position = new Vector3(transform.position.x, floorY + 0.15f, transform.position.z);
+            FaceDiscAlong(Vector3.down);
 
-            // impact - ground shockwave visual + camera shake (no extra damage)
+            // disc is now pancaked on the ground - is the player caught inside its footprint?
+            bool crushed = player != null
+                && new Vector2(player.position.x - transform.position.x, player.position.z - transform.position.z).sqrMagnitude
+                   <= hitR * hitR
+                && player.position.y < floorY + 3f;
+
+            if (marker != null) Destroy(marker);
+
+            if (crushed)
+            {
+                // real contact under a fully-landed disc: camera pulls WIDE to show the disc press
+                // the player through the floor and off the map, then smoothly returns; meanwhile
+                // the disc presses them straight through into the void, then 秒殺.
+                StartCoroutine(CrushEjectCam(player, lockGround));
+                yield return VoidPunt(player, lockGround);
+                SpawnCrushImpact(lockGround, player);
+                DamagePlayer(player, 999999f, Vector3.down);
+            }
+            else
+            {
+                transform.position = new Vector3(transform.position.x, floorY + 0.6f, transform.position.z);
+                SpawnCrushImpact(lockGround, player);
+            }
+
+            yield return new WaitForSeconds(0.5f);   // grounded beat - the player can punish here
+        }
+
+        // 續 125 (user): pull to a WIDE far shot so the whole "disc pancakes the player through the
+        // floor and off the map" reads, then a smooth quick return toward the player's spot. Both
+        // moves are eased (SmoothStep) so nothing snaps. Leaves ThirdPersonCameraController OFF -
+        // the player is dead + 36 m down in the void by now; YuanpeiEncounter.Defeat() re-enables
+        // the controller after the death-screen hold + teleport (re-enabling here would yank the
+        // camera to the corpse).
+        private Behaviour _crushCamCtrl;
+        private bool _crushCamCtrlWas;
+
+        private IEnumerator CrushEjectCam(Transform player, Vector3 crushGround)
+        {
+            var cam = Camera.main;
+            if (cam == null) yield break;
+            _crushCamCtrl = cam.GetComponent(typeof(Live2DAction.CameraSystem.ThirdPersonCameraController)) as Behaviour;
+            _crushCamCtrlWas = _crushCamCtrl != null && _crushCamCtrl.enabled;
+            if (_crushCamCtrl != null) _crushCamCtrl.enabled = false;
+
+            // horizontal "player side" of the crush point (keeps both the wide and the return shot
+            // on the same side, so the return doesn't cross the line)
+            Vector3 backDir = cam.transform.position - crushGround; backDir.y = 0f;
+            if (backDir.sqrMagnitude < 0.04f) { backDir = -transform.forward; backDir.y = 0f; }
+            if (backDir.sqrMagnitude < 0.04f) backDir = Vector3.back;
+            backDir.Normalize();
+
+            Vector3 startPos = cam.transform.position;
+            Quaternion startRot = cam.transform.rotation;
+
+            // --- phase 1: WIDE + HIGH, framing the disc + the player driven into the void hole ---
+            const float wideDur = 1.0f;
+            Vector3 widePos = crushGround + backDir * 13f + Vector3.up * 10f;
+            // don't let the wide shot sit inside a building / behind a wall (續 130, "有時看不到")
+            for (int tries = 0; tries < 4; tries++)
+            {
+                Vector3 toFocus = (crushGround + Vector3.up * 0.5f) - widePos;
+                if (!Physics.Raycast(widePos, toFocus.normalized, toFocus.magnitude - 0.5f, ~0, QueryTriggerInteraction.Ignore))
+                    break;
+                widePos = crushGround + backDir * (10f - tries * 1.5f) + Vector3.up * (13f + tries * 2f);   // pull in + up
+            }
+            Quaternion wideRot = Quaternion.LookRotation((crushGround + Vector3.down * 1f - widePos).normalized, Vector3.up);
+            float t = 0f;
+            while (t < wideDur)
+            {
+                t += Time.deltaTime;
+                // front-load: reach the wide framing by ~40% of the phase, then hold on it so the
+                // press + plunge actually play on screen
+                float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / (wideDur * 0.4f)));
+                cam.transform.position = Vector3.Lerp(startPos, widePos, k);
+                cam.transform.rotation = Quaternion.Slerp(startRot, wideRot, k);
+                yield return null;
+            }
+
+            // --- phase 2: smooth quick return to a normal over-the-shoulder framing of the spot ---
+            const float returnDur = 0.5f;
+            Vector3 rFocus = crushGround + Vector3.up * 1.3f;
+            Vector3 rPos = rFocus + backDir * 4.5f + Vector3.up * 1.9f;
+            Quaternion rRot = Quaternion.LookRotation((rFocus - rPos).normalized, Vector3.up);
+            Vector3 w0 = cam.transform.position;
+            Quaternion q0 = cam.transform.rotation;
+            t = 0f;
+            while (t < returnDur)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / returnDur));
+                cam.transform.position = Vector3.Lerp(w0, rPos, k);
+                cam.transform.rotation = Quaternion.Slerp(q0, rRot, k);
+                yield return null;
+            }
+
+            // done - leave the controller off (see method comment); just clear the field so a later
+            // CancelAll() doesn't double-toggle it.
+            _crushCamCtrl = null;
+        }
+
+        private void RestoreCrushCam()
+        {
+            if (_crushCamCtrl != null) { _crushCamCtrl.enabled = _crushCamCtrlWas; _crushCamCtrl = null; }
+        }
+
+        private void SpawnCrushImpact(Vector3 lockGround, Transform player)
+        {
             Live2DAction.Combat.HitStopController.Request(0.06f, 0.15f);
             var ring = SpawnHazard(YuanpeiHazard.Kind.ExpandingRing, lockGround, 4f, 0f, 0.6f, 0f, player);
             ring.GetComponent<YuanpeiHazard>().Configure(YuanpeiHazard.Kind.ExpandingRing, lockGround, 4f, 0f, 0.6f,
                 0f, player, _boss.gameObject, warnColor, burstColor, 14f, 0.6f);
-            if (marker != null) Destroy(marker);
-
-            yield return new WaitForSeconds(0.5f);   // grounded beat - the player can punish here
         }
 
         // ------------------------------------------------- 肉身衝撞 3：繞圈後突然直衝
@@ -467,18 +744,24 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private IEnumerator OrbitDash(YuanpeiAttackDef def, Transform player)
         {
             float orbitRadius = def.number1 > 0 ? def.number1 : 8f;
-            float dashSpeed = def.number2 > 0 ? def.number2 : 34f;
+            float dashSpeed = def.number2 > 0 ? def.number2 : 24f;
             float hitR = def.number3 > 0 ? def.number3 : 1.9f;
+            const float skimHeight = 1.1f;
 
             float orbitDur = 1.0f + (float)UnityEngine.Random.value * 1.6f;   // random - "某一個瞬間"
             float dashAt = 0.45f + (float)UnityEngine.Random.value * (orbitDur - 0.45f);
             float angle = Mathf.Atan2(transform.position.z - player.position.z, transform.position.x - player.position.x);
             float angSpeed = (UnityEngine.Random.value < 0.5f ? -1f : 1f) * (2.2f + (float)UnityEngine.Random.value * 1.4f);
 
+            // own the boss's Y for the whole move so HoldHover doesn't fight the orbit height or the
+            // dive (user: "感覺只有頭跟尾"). Generous budget - orbit is up to ~2.6s + telegraph + dash.
+            if (_boss != null) _boss.SuspendHover(orbitDur + 1.0f + (16f / Mathf.Max(1f, dashSpeed)) + 2f);
+
             float floorY = ProjectToGround(player.position).y;
             float t = 0f;
             bool dashed = false;
             Vector3 dashDir = Vector3.forward;
+            Vector3 dashFlat = Vector3.forward;
             float travelled = 0f;
 
             while (t < orbitDur || (dashed && travelled < 16f))
@@ -498,34 +781,46 @@ namespace Live2DAction.AI.Boss.Yuanpei
                     if (t >= dashAt)   // GO - lock direction, no turning after (spec §9.6)
                     {
                         dashed = true;
-                        dashDir = (player.position + Vector3.up * 0.5f - transform.position); dashDir.y *= 0.25f; dashDir.Normalize();
-                        transform.rotation = Quaternion.LookRotation(dashDir, Vector3.up);
+                        dashDir = (player.position + Vector3.up * 0.9f - transform.position).normalized;   // full dive
+                        dashFlat = new Vector3(dashDir.x, 0f, dashDir.z);
+                        if (dashFlat.sqrMagnitude < 1e-4f) dashFlat = transform.forward;
+                        dashFlat.Normalize();
+                        transform.rotation = Quaternion.LookRotation(dashFlat, Vector3.up);
                         Live2DAction.Combat.HitStopController.Request(0.04f, 0.35f);   // "!" beat
                         // 前搖 + 預警：hold on the orbit ring while the danger line telegraphs the
                         // dash path, so the player gets real reaction time (user request).
-                        yield return ChargePathTelegraph(transform.position, dashDir, 16f, hitR, 0.5f);
+                        yield return ChargePathTelegraph(transform.position, dashFlat, 16f, 1.1f, 0.5f);
+                        yield return SlerpDiscInto(dashFlat, 0.14f, edgeFirst: true);
+                        StartCoroutine(FadeChargeLane(0.35f));
                         FaceDiscSideAlong(dashDir);   // 側身衝刺 - rim leads, not the flat face
                     }
                 }
                 else
                 {
-                    FaceDiscSideAlong(dashDir);
-                    float step = dashSpeed * Mathf.Min(Time.deltaTime, 0.04f);   // clamp so a frame hitch can't teleport the dash
-                    if (Physics.SphereCast(transform.position, hitR * 0.8f, dashDir, out var wall, step + hitR, chargeCrashMask, QueryTriggerInteraction.Ignore))
+                    FaceDiscSideAlong(dashFlat);
+                    float dashRamp = Mathf.Lerp(0.4f, 1f, Mathf.Clamp01(travelled / 3f));
+                    float step = dashSpeed * dashRamp * Mathf.Min(Time.deltaTime, 0.04f);   // clamp so a frame hitch can't teleport the dash
+                    if (Physics.SphereCast(transform.position, hitR * 0.8f, dashFlat, out var wall, step + hitR, chargeCrashMask, QueryTriggerInteraction.Ignore))
                     {
-                        transform.position = wall.point - dashDir * hitR;
+                        transform.position = wall.point - dashFlat * hitR;
                         if (_boss != null && _boss.Vitals != null && _cfg != null)
                             _boss.Vitals.AddPosture(_cfg.maxPosture * _cfg.chargeCrashPostureFraction);
                         yield return new WaitForSeconds(2.5f);
                         yield break;
                     }
-                    transform.position += dashDir * step;
-                    travelled += step;
-                    if (player != null && DiscFaceHitsPlayer(player, dashDir, hitR, hitR * 2.8f))
+                    Vector3 next = transform.position + dashDir * step;
+                    if (next.y < floorY + skimHeight)
                     {
-                        DamagePlayer(player, def.healthDamage, dashDir);
+                        next.y = Mathf.MoveTowards(transform.position.y, floorY + skimHeight, step);
+                        dashDir = dashFlat;   // levelled out
+                    }
+                    transform.position = next;
+                    travelled += step;
+                    if (player != null && DiscFaceHitsPlayer(player, dashFlat, hitR * 0.9f, 1.1f))
+                    {
+                        DamagePlayer(player, def.healthDamage, dashFlat);
                         var kb = player.GetComponent<Live2DAction.Combat.Boss.IKnockbackReceiver>();
-                        kb?.ApplyKnockback(dashDir, 15f, false);   // bumped - see BodyCharge note
+                        kb?.ApplyKnockback(dashFlat, 7f, false);   // 續 128: firm stagger only (see BodyCharge note)
                         break;
                     }
                 }
@@ -554,33 +849,98 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         // A ground danger LANE showing exactly where a charge will pass. warn -> danger colour +
         // width pulse over `seconds`, then auto-fades. Used by every charge move's 前搖 window.
+        private GameObject _chargeLane;
+
+        // Ground danger-lane telegraph for the charges. Bright ADDITIVE fill + two bright pulsing
+        // edge rails so it reads on the sunlit plaza (user: "沒有預警範圍"). Width = 2*halfWidth,
+        // matching the dash's actual hit `faceRadius`. Sets `_chargeLane` so the dash can fade it
+        // out as the disc passes instead of it vanishing the instant the dash starts.
         private IEnumerator ChargePathTelegraph(Vector3 origin, Vector3 dir, float length, float halfWidth, float seconds)
         {
             Vector3 flat = new Vector3(dir.x, 0f, dir.z);
             if (flat.sqrMagnitude < 1e-4f) flat = Vector3.forward;
             flat.Normalize();
 
-            Vector3 startG = ProjectToGround(origin);
-            var lane = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            lane.name = "YuanpeiChargeLane";
-            Destroy(lane.GetComponent<Collider>());
-            lane.transform.position = startG + flat * (length * 0.5f) + Vector3.up * 0.03f;
-            lane.transform.rotation = Quaternion.LookRotation(flat, Vector3.up);
-            var laneR = lane.GetComponent<Renderer>();
-            laneR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            _spawned.Add(lane);
+            Vector3 startG = ProjectToGround(origin) + Vector3.up * 0.06f;
+            var root = new GameObject("YuanpeiChargeLane");
+            root.transform.SetPositionAndRotation(startG + flat * (length * 0.5f), Quaternion.LookRotation(flat, Vector3.up));
+            _spawned.Add(root);
+            _chargeLane = root;
+
+            var fill = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            Destroy(fill.GetComponent<Collider>());
+            fill.transform.SetParent(root.transform, false);
+            fill.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);   // lie flat, face up
+            var fillR = fill.GetComponent<Renderer>();
+            fillR.sharedMaterial = LaneMat();
+            fillR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            Renderer[] rails = new Renderer[2];
+            for (int s = 0; s < 2; s++)
+            {
+                var rail = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Destroy(rail.GetComponent<Collider>());
+                rail.transform.SetParent(root.transform, false);
+                rails[s] = rail.GetComponent<Renderer>();
+                rails[s].sharedMaterial = LaneMat();
+                rails[s].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
 
             float t = 0f;
             while (t < seconds)
             {
                 t += Time.deltaTime;
-                float k = t / seconds;
-                float w = halfWidth * 2f * (0.35f + 0.65f * k) * (1f + Mathf.Sin(Time.time * 18f) * 0.12f);
-                lane.transform.localScale = new Vector3(w, 0.03f, length);
-                PaintMarker(laneR, Color.Lerp(warnColor, dangerColor, k), 0.6f + k * 3.5f);
+                float k = Mathf.Clamp01(t / seconds);
+                float pulse = 1f + Mathf.Sin(Time.time * 16f) * 0.18f;
+                float w = halfWidth * 2f * (0.55f + 0.45f * k);
+                fill.transform.localScale = new Vector3(w, length, 1f);
+                var fc = Color.Lerp(warnColor, dangerColor, k) * (0.55f + 1.4f * k) * pulse;
+                var mpb = new MaterialPropertyBlock();
+                fillR.GetPropertyBlock(mpb); mpb.SetColor(BaseColorId, fc); fillR.SetPropertyBlock(mpb);
+                for (int s = 0; s < 2; s++)
+                {
+                    float sign = s == 0 ? -1f : 1f;
+                    rails[s].transform.localPosition = new Vector3(sign * w * 0.5f, 0.09f, 0f);
+                    rails[s].transform.localScale = new Vector3(0.16f, 0.22f, length);
+                    var rc = Color.Lerp(warnColor, dangerColor, k) * (1.4f + 2.6f * k) * pulse;
+                    var rmpb = new MaterialPropertyBlock();
+                    rails[s].GetPropertyBlock(rmpb); rmpb.SetColor(BaseColorId, rc); rails[s].SetPropertyBlock(rmpb);
+                }
                 yield return null;
             }
-            Destroy(lane);
+            // NOT destroyed here - the dash fades _chargeLane out (FadeChargeLane).
+        }
+
+        // Fade + destroy the danger lane over `seconds` while the dash runs through it.
+        private IEnumerator FadeChargeLane(float seconds)
+        {
+            var lane = _chargeLane;
+            _chargeLane = null;
+            if (lane == null) yield break;
+            var rends = lane.GetComponentsInChildren<Renderer>();
+            var baseCols = new Color[rends.Length];
+            for (int i = 0; i < rends.Length; i++)
+            {
+                var m = new MaterialPropertyBlock();
+                rends[i].GetPropertyBlock(m);
+                baseCols[i] = m.GetColor(BaseColorId);
+            }
+            float t = 0f;
+            while (t < seconds && lane != null)
+            {
+                t += Time.deltaTime;
+                float f = 1f - Mathf.Clamp01(t / seconds);
+                for (int i = 0; i < rends.Length; i++)
+                {
+                    if (rends[i] == null) continue;
+                    var m = new MaterialPropertyBlock();
+                    rends[i].GetPropertyBlock(m);
+                    m.SetColor(BaseColorId, baseCols[i] * f);
+                    rends[i].SetPropertyBlock(m);
+                }
+                yield return null;
+            }
+            if (lane != null) Destroy(lane);
         }
 
         // Rotate the VisualRoot so the flat logo disc leads face-first along `dir`. The disc's
@@ -609,16 +969,54 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _boss.VisualRoot.rotation = Quaternion.LookRotation(d, side.normalized);
         }
 
-        // Wide flat "disc face" hit: player within `forwardReach` ahead of the boss along `dir`
-        // AND within `faceRadius` of the charge axis (the disc is much wider than the tube).
-        private bool DiscFaceHitsPlayer(Transform player, Vector3 dir, float forwardReach, float faceRadius)
+        // Ease the VisualRoot from its current orientation into the charge attitude over `seconds`
+        // (user: "沒平滑"). edgeFirst = rim leads (硬幣最窄那面); else the flat face leads.
+        private IEnumerator SlerpDiscInto(Vector3 dir, float seconds, bool edgeFirst = false)
+        {
+            if (_boss == null || _boss.VisualRoot == null) { yield break; }
+            Vector3 d = dir.sqrMagnitude > 1e-4f ? dir.normalized : Vector3.forward;
+            Quaternion to;
+            if (edgeFirst)
+            {
+                Vector3 side = Vector3.Cross(d, Vector3.up);
+                if (side.sqrMagnitude < 1e-4f) side = Vector3.right;
+                to = Quaternion.LookRotation(d, side.normalized);
+            }
+            else
+            {
+                Vector3 fwd = Vector3.Cross(d, Vector3.up);
+                if (fwd.sqrMagnitude < 1e-4f) fwd = Vector3.Cross(d, Vector3.right);
+                to = Quaternion.LookRotation(fwd.normalized, d);
+            }
+            Quaternion from = _boss.VisualRoot.rotation;
+            float t = 0f;
+            while (t < seconds)
+            {
+                t += Time.deltaTime;
+                if (_boss == null || _boss.VisualRoot == null) yield break;
+                _boss.VisualRoot.rotation = Quaternion.Slerp(from, to, Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / seconds)));
+                yield return null;
+            }
+            if (_boss != null && _boss.VisualRoot != null) _boss.VisualRoot.rotation = to;
+        }
+
+        private static readonly Collider[] _chargeBuf = new Collider[8];
+
+        // 續 128/130 (user: "要確定撞擊類技能只有在 boss 本體碰到玩家本體才有效果，不是站在預警範圍上
+        // boss 還沒碰到就受擊"). A sphere of `checkRadius` at the disc's LEADING RIM (`leadOffset`
+        // ahead of the root along `dir`) must genuinely overlap the player's collider - no geometric
+        // proximity guess, and the check point is where the edge visually is.
+        private bool DiscFaceHitsPlayer(Transform player, Vector3 dir, float leadOffset, float checkRadius)
         {
             if (player == null) return false;
-            Vector3 toP = (player.position + Vector3.up) - transform.position;
-            float along = Vector3.Dot(toP, dir);
-            if (along < -forwardReach || along > forwardReach * 1.6f) return false;
-            Vector3 perp = toP - dir * along;
-            return perp.sqrMagnitude <= faceRadius * faceRadius;
+            Vector3 c = transform.position + dir.normalized * leadOffset;
+            int n = Physics.OverlapSphereNonAlloc(c, checkRadius, _chargeBuf, ~0, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < n; i++)
+            {
+                var col = _chargeBuf[i];
+                if (col != null && col.transform.root == player.root) return true;   // real body contact
+            }
+            return false;
         }
 
         private GameObject MakeGroundMarker(Vector3 pos, float radius)
@@ -655,14 +1053,17 @@ namespace Live2DAction.AI.Boss.Yuanpei
             return go;
         }
 
-        private Vector3 PredictedPlayerPoint(Transform player, float lead)
+        // The player's current centre-of-mass in world space - the CharacterController's collider
+        // centre if there is one, else a torso-height fallback. Used by ProjectileBurst (user:
+        // "每一下都要先鎖定玩家當前位置(人物中心)才施放").
+        private static Vector3 PlayerCenter(Transform player)
         {
-            var cm = player.GetComponent<Rigidbody>();
-            Vector3 vel = cm != null ? cm.linearVelocity : (player.position - _lastPP) / Mathf.Max(1e-4f, Time.deltaTime);
-            _lastPP = player.position;
-            return player.position + Vector3.up * 1.0f + new Vector3(vel.x, 0, vel.z) * lead;
+            var cc = player.GetComponentInChildren<CharacterController>();
+            if (cc != null) return cc.transform.TransformPoint(cc.center);
+            var col = player.GetComponentInChildren<Collider>();
+            if (col != null) return col.bounds.center;
+            return player.position + Vector3.up * 0.9f;
         }
-        private Vector3 _lastPP;
 
         // Ground telegraphs must sit ON the floor. A plain downward Raycast from over the player's
         // XZ hits the PLAYER's own CharacterController (layer 0, same as the ground) first, ~1m up -
@@ -684,12 +1085,6 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 return new Vector3(p.x, hits[i].point.y + 0.02f, p.z);
             }
             return new Vector3(p.x, (_cfg != null ? _cfg.arenaCenter.y : 0f) + 0.02f, p.z);
-        }
-
-        private Vector3 RandXZ(float r)
-        {
-            var c = UnityEngine.Random.insideUnitCircle * r;
-            return new Vector3(c.x, 0f, c.y);
         }
 
         private bool RayHitsPlayer(Vector3 origin, Vector3 dir, float length, float radius, Transform player)
@@ -717,6 +1112,21 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 _unlit = new Material(sh);
             }
             return _unlit;
+        }
+
+        // Bright additive material for the charge danger-lane (URP/Lit primitives washed out on the
+        // sunlit plaza - user: "沒有預警範圍"). "Live2DAction/VFX/AdditiveUnlit" = Blend One One, no
+        // texture needed, driven by _BaseColor.
+        private static Material _laneMat;
+        private static Material LaneMat()
+        {
+            if (_laneMat == null)
+            {
+                var sh = Shader.Find("Live2DAction/VFX/AdditiveUnlit")
+                         ?? Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
+                _laneMat = new Material(sh);
+            }
+            return _laneMat;
         }
 
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");

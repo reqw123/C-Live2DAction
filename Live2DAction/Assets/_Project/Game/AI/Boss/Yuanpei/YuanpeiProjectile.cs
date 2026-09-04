@@ -18,6 +18,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private GameObject _source;
         private bool _spent;
 
+        private static readonly Collider[] _overlapBuf = new Collider[8];
+
         public void Launch(Vector3 dir, float speed, float hitRadius, float damage,
             float homingSeconds, float homingStrength, Transform player, GameObject source, float life = 6f)
         {
@@ -42,17 +44,29 @@ namespace Live2DAction.AI.Boss.Yuanpei
             transform.position += _dir * _speed * Time.deltaTime;
             transform.forward = _dir;
 
-            if (_player != null)
+            // Only damage when the orb's actual surface volume overlaps one of the player's
+            // colliders (user: "衡量表面體積是否有碰撞到玩家才造成傷害") - not a loose point-to-torso
+            // proximity check. `_hitRadius * 1.3` is the visible orb radius (scale = hitRadius*2.6).
+            if (_player != null && OrbSurfaceHitsPlayer())
             {
-                float r = _hitRadius + 0.35f;
-                if ((transform.position - (_player.position + Vector3.up * 1.0f)).sqrMagnitude <= r * r)
-                {
-                    var dmg = _player.GetComponentInChildren<IDamageable>() ?? _player.GetComponent<IDamageable>();
-                    dmg?.ApplyDamage(new DamageInfo(_damage, transform.position, _dir, _source));
-                    _spent = true;
-                    Destroy(gameObject);
-                }
+                var dmg = _player.GetComponentInChildren<IDamageable>() ?? _player.GetComponent<IDamageable>();
+                dmg?.ApplyDamage(new DamageInfo(_damage, transform.position, _dir, _source));
+                _spent = true;
+                Destroy(gameObject);
             }
+        }
+
+        private bool OrbSurfaceHitsPlayer()
+        {
+            float orbR = _hitRadius * 1.3f + 0.05f;   // visible radius + a hair of skin
+            int n = Physics.OverlapSphereNonAlloc(transform.position, orbR, _overlapBuf, ~0, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < n; i++)
+            {
+                var col = _overlapBuf[i];
+                if (col == null) continue;
+                if (col.transform.root == _player) return true;   // the orb sphere is touching the player's body
+            }
+            return false;
         }
 
         // player weapon hit -> pop

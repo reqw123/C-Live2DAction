@@ -21,6 +21,7 @@ MonoBehaviour:
   energyRechargeMaxSeconds: 3
   lowEnergyThreshold: 72
   postureGainPerDamage: 0.15
+  postureRegenPerSecond: 1.6
   perfectDodgeCounterPostureMultiplier: 1.5
   backCorePostureMultiplier: 1.6
   lowEnergyPostureMultiplier: 1.4
@@ -44,9 +45,9 @@ MonoBehaviour:
   globalAttackIntervalMin: 0.1
   globalAttackIntervalMax: 0.25
   phase3IntervalScale: 0.8
-  rotationRecoverySeconds: 6
-  rotationRecentWeightFactor: 0.35
-  onScreenGraceBeforeAttack: 0.15
+  rotationRecoverySeconds: 4
+  rotationRecentWeightFactor: 0.55
+  onScreenGraceBeforeAttack: 0.08
   phase2HealthFraction: 0.65
   phase3HealthFraction: 0.3
   fallSeconds: 1.1

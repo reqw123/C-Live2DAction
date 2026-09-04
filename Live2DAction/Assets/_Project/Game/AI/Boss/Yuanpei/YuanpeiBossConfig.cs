@@ -23,6 +23,10 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [Header("Posture (spec §5.3)")]
         [Tooltip("Posture from a player hit = health damage dealt * this. Heavy attacks deal more, so they give more.")]
         public float postureGainPerDamage = 0.55f;
+        [Tooltip("追加94 續 120 (user): posture also creeps up on its own while the boss is fighting, so a " +
+                 "patient player still eventually gets a fall + F-execution window even without landing many hits. " +
+                 "Units = posture/sec; 0 disables. Only ticks in air-combat / attack states, not while downed / recharging.")]
+        public float postureRegenPerSecond = 1.6f;
         public float perfectDodgeCounterPostureMultiplier = 1.5f;
         public float backCorePostureMultiplier = 1.6f;
         public float lowEnergyPostureMultiplier = 1.4f;
@@ -44,8 +48,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
         public float rechargeHeight = 1.7f;             // descends to a hittable height
         [Tooltip("Absolute world Y ceiling - the boss's root is clamped to this every frame it " +
                  "sets its own height, so a bad floor sample (e.g. a raycast hitting a building " +
-                 "roof) can't fling it into the sky. Plaza floor ≈ 0.5, hoverHeight 3 → normal " +
-                 "hover ≈ 3.5; 8 leaves headroom for the MultiAoE 'rise a little' beat.")]
+                 "roof) can't fling it into the sky. Plaza floor ≈ 0.5, hoverHeight 2.6 → normal " +
+                 "hover ≈ 3.1; 8 leaves headroom for ChargeCrush lining up over the player.")]
         public float maxWorldY = 8f;
         public Vector2 hoverBobAmplitudeSpeed = new Vector2(0.35f, 0.8f); // (metres, Hz)
         public float repositionSpeed = 6f;

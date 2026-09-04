@@ -4,6 +4,7 @@ using UnityEngine;
 using Live2DAction.Input;
 using Live2DAction.Combat;
 using Live2DAction.World;
+using Live2DAction.Vehicles;
 
 namespace Live2DAction.AI.Boss.Yuanpei
 {
@@ -18,6 +19,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [SerializeField] private YuanpeiBossHUD hud;
         [SerializeField] private Vector3 combatCenter = new Vector3(0f, 0f, -114f);
         [SerializeField] private bool startOnTrigger = true;
+        [Tooltip("續 131 (user): a LINE across the plaza, not a point. The fight arms the moment the " +
+                 "player (anywhere in the trigger volume, ANY X) crosses this world Z toward the boss. " +
+                 "'crossSouth' = arm when position.z <= this; uncheck if the boss is on +Z instead.")]
+        [SerializeField] private float activationLineZ = -109f;
+        [SerializeField] private bool activationCrossSouth = true;
 
         [Header("Victory sequence (spec §20)")]
         [SerializeField] private string victoryMessage = "戰鬥勝利";
@@ -50,14 +56,34 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (hud == null && boss != null) hud = boss.GetComponent<YuanpeiBossHUD>();
         }
 
+        private Transform _zonePlayer;   // the player character while it's inside the trigger volume
+
         private void OnTriggerEnter(Collider other)
         {
             if (!startOnTrigger || Started) return;
-            var pip = other.GetComponentInParent<PlayerInputProvider>();
-            if (pip == null) return;
-            // only the actual player character (not the cat, not the buggy)
-            if (pip.transform.root.name != "Player") return;
-            StartEncounter(pip.transform.root);
+            var p = ResolvePlayerFrom(other);
+            if (p != null) _zonePlayer = p;
+        }
+
+        private void OnTriggerExit(Collider other)
+        {
+            if (Started) return;
+            if (ResolvePlayerFrom(other) != null) _zonePlayer = null;
+        }
+
+        // The player character, whether they walked in OR drove in (VehicleEntrySystem re-parents
+        // the seated character under the vehicle, so the "Player" GameObject rides in as a child
+        // of whatever collider enters the trigger). Cat-only vehicles resolve to null.
+        private Transform ResolvePlayerFrom(Collider other)
+        {
+            if (other == null) return null;
+            var root = other.transform.root;
+            foreach (var pip in root.GetComponentsInChildren<PlayerInputProvider>(true))
+            {
+                for (var t = pip.transform; t != null; t = t.parent)
+                    if (t.name == "Player") return t;
+            }
+            return null;
         }
 
         public void StartEncounter() => StartEncounter(null);
@@ -66,6 +92,13 @@ namespace Live2DAction.AI.Boss.Yuanpei
         {
             if (Started || boss == null) return;
             Started = true;
+            // 續 124 (user "boss 不該把車輛當成目標物件"): if the player drove in, get everyone out of
+            // the vehicle first - the fight is on foot, and while seated the Player GameObject is
+            // re-parented under the car so `.root` (what the boss targets) would be the car.
+            foreach (var ves in FindObjectsByType<VehicleEntrySystem>(FindObjectsSortMode.None))
+                if (ves.PlayerSeat != VehicleEntrySystem.Seat.None)   // only if the PLAYER drove in - don't yank a cat out of a car it's driving elsewhere
+                    ves.ForceDismountAll();
+
             hud?.SetVisible(true);
             ApplyNoDefenceRule(triggeringPlayer);
             boss.BeginEncounter(combatCenter, triggeringPlayer);
@@ -104,6 +137,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
         // component listens on the same object if it's placed there, otherwise poll.
         private void Update()
         {
+            // arm the fight only once the player (on foot OR in a vehicle) is at the plaza's
+            // innermost centre - not merely inside the trigger volume (續 123, user).
+            if (startOnTrigger && !Started && _zonePlayer != null)
+            {
+                float pz = _zonePlayer.position.z;
+                if (activationCrossSouth ? pz <= activationLineZ : pz >= activationLineZ)
+                    StartEncounter(_zonePlayer);
+            }
+
             if (!Started || _ended || boss == null) return;
 
             if (boss.BattleOver && boss.Vitals != null && boss.Vitals.IsDead)
@@ -138,6 +180,14 @@ namespace Live2DAction.AI.Boss.Yuanpei
             Started = false;
             _ended = false;
             _playerHealth = null;
+
+            // A ChargeCrush death runs a wide-shot cinematic that deliberately leaves the camera
+            // controller OFF (the player is dead in the void). Re-enable it now so the returned
+            // player has a live follow cam (SceneTransitionRunner only snaps yaw, doesn't re-enable).
+            var tpc = Camera.main != null
+                ? Camera.main.GetComponent(typeof(Live2DAction.CameraSystem.ThirdPersonCameraController)) as Behaviour
+                : null;
+            if (tpc != null) tpc.enabled = true;
 
             if (SceneTransitionRunner.Instance != null)
                 SceneTransitionRunner.Instance.Begin("", returnUnloadScene, player,
@@ -197,12 +247,11 @@ namespace Live2DAction.AI.Boss.Yuanpei
             Vector3 baseScale = vis != null ? vis.localScale : Vector3.one;
             var mpb = new MaterialPropertyBlock();
 
-            // --- take the camera (store + restore) ---
+            // --- take the camera (always handed back to the player at the end) ---
             Camera cam = Camera.main;
             Behaviour camCtrl = cam != null
                 ? cam.GetComponent(typeof(Live2DAction.CameraSystem.ThirdPersonCameraController)) as Behaviour
                 : null;
-            bool camCtrlWas = camCtrl != null && camCtrl.enabled;
             if (camCtrl != null) camCtrl.enabled = false;
 
             // --- 1. rise back to the plaza centre, up in the air ---
@@ -291,10 +340,14 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (vis != null) vis.gameObject.SetActive(false);
             foreach (var s in shards) if (s.tr != null) Destroy(s.tr.gameObject);
 
-            // hand the camera back (the scene transition's SnapYawToTarget + the player standing
-            // where they were will settle it) - do it now so the victory-banner hold shows a
-            // normal follow cam, not a frozen death angle.
-            if (camCtrl != null) camCtrl.enabled = camCtrlWas;
+            // Hand the camera back to the player unconditionally (續 123, user: "戰鬥勝利後 攝影機
+            // 視角沒有回到玩家身上"). `camCtrlWas` could be false if an F-execution left the controller
+            // disabled - restoring to that would freeze the camera on the death angle forever.
+            if (camCtrl != null)
+            {
+                camCtrl.enabled = true;
+                (camCtrl as Live2DAction.CameraSystem.ThirdPersonCameraController)?.SnapYawToTarget();
+            }
         }
 
         // Frames the boss during the death演出. phase 0 = rise (ease from behind the player up to a

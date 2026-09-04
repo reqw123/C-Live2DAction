@@ -16,7 +16,7 @@ MonoBehaviour:
   displayName: "\u8089\u8EAB\u885D\u649E\uFF1A\u982D\u9802\u5782\u76F4\u4E0B\u58D3\uFF08\u547D\u4E2D\uFF1D\u79D2\u6BBA\uFF09"
   requiredPhase: 1
   energyCost: 25
-  cooldownSeconds: 12
+  cooldownSeconds: 9
   minRange: 0
   maxRange: 16
   isMajorHazard: 0

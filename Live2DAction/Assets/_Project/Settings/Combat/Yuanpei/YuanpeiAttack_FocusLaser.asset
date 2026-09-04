@@ -16,7 +16,7 @@ MonoBehaviour:
   displayName: "\u805A\u7126\u96F7\u5C04"
   requiredPhase: 1
   energyCost: 35
-  cooldownSeconds: 5.6
+  cooldownSeconds: 4.2
   minRange: 9
   maxRange: 18
   isMajorHazard: 1

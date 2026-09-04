@@ -346,6 +346,8 @@ MonoBehaviour:
   hud: {fileID: 607562221226281421}
   combatCenter: {x: -2, y: 0.5, z: -105}
   startOnTrigger: 1
+  activationLineZ: -109
+  activationCrossSouth: 1
   victoryMessage: "\u6230\u9B25\u52DD\u5229"
   dissolveSeconds: 1.6
   victoryHoldSeconds: 5
@@ -371,8 +373,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 20, y: 5, z: 12}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Size: {x: 34, y: 5, z: 18}
+  m_Center: {x: 0, y: 0, z: -3}
 --- !u!4 &230221645
 Transform:
   m_ObjectHideFlags: 0
@@ -452,7 +454,7 @@ SphereCollider:
     serializedVersion: 2
     m_Bits: 0
   m_LayerOverridePriority: 0
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
@@ -2028,7 +2030,7 @@ SphereCollider:
     serializedVersion: 2
     m_Bits: 0
   m_LayerOverridePriority: 0
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
@@ -2317,7 +2319,6 @@ MonoBehaviour:
   - {fileID: 11400000, guid: e574466398b89dd498ab1445a15064ab, type: 2}
   - {fileID: 11400000, guid: a100f5f24ea6a0f409d4aee9e1e548d1, type: 2}
   - {fileID: 11400000, guid: 08356d4d4ad1a84478b80cdbf3360222, type: 2}
-  - {fileID: 11400000, guid: 1f05af0dc3966114ab3ad95aaa024aea, type: 2}
   - {fileID: 11400000, guid: f26d181231366104188fbb7306801bb9, type: 2}
   - {fileID: 11400000, guid: d1723fcffddf37e4ebd1ee21e57aafeb, type: 2}
   - {fileID: 11400000, guid: 3ad6f8e337791b646b955e79d3de757e, type: 2}

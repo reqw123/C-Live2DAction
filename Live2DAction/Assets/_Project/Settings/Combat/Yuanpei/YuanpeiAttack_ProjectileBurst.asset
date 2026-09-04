@@ -13,23 +13,23 @@ MonoBehaviour:
   m_Name: YuanpeiAttack_ProjectileBurst
   m_EditorClassIdentifier: 
   attackId: 0
-  displayName: "\u5149\u7C92\u5B50\u4E09\u9023\u5C04"
+  displayName: "\u5149\u7C92\u5B50\u516D\u9023\u5C04"
   requiredPhase: 1
   energyCost: 15
-  cooldownSeconds: 2
+  cooldownSeconds: 1.5
   minRange: 7
   maxRange: 15
-  isMajorHazard: 1
+  isMajorHazard: 0
   telegraphSeconds: 0.35
   windupSeconds: 0.1
-  activeSeconds: 0.9
+  activeSeconds: 1.1
   recoverySeconds: 0.35
   healthDamage: 16
   playerPostureDamage: 0
   maxHitsPerTarget: 1
-  baseWeight: 1.2
+  baseWeight: 2.5
   situationalWeightBonus: 2.5
-  number1: 16
-  number2: 0.35
+  number1: 27
+  number2: 0.5
   number3: 3
-  count: 3
+  count: 6

@@ -170,6 +170,15 @@ namespace Live2DAction.Vehicles
             // Engine + camera applied by LateUpdate this same frame.
         }
 
+        // Force everyone out of the vehicle right now, no F press (續 124: YuanpeiEncounter uses
+        // this so a player who drove into the boss arena fights on foot and the boss never targets
+        // the car). No-op for empty seats.
+        public void ForceDismountAll()
+        {
+            if (PlayerSeat != Seat.None) Dismount(Occupant.Player);
+            if (CatSeat != Seat.None) Dismount(Occupant.Cat);
+        }
+
         private void Dismount(Occupant o)
         {
             bool wasDriver = SeatOf(o) == Seat.Driver;

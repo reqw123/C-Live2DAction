@@ -21,6 +21,12 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private bool _hitPlayer;
         private bool _burstDone;
 
+        // StrikeCircle homing (續 128, user: "紅圈攻擊太容易閃躲") - the circle chases the player for
+        // the first part of the warn, then locks, so you can't just stroll out of it.
+        private float _trackUntil;
+        private float _trackEase;
+        private LayerMask _groundMask = ~0;
+
         // ring
         private float _ringSpeed;
         private float _ringThickness;
@@ -86,6 +92,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _flipR.sharedMaterial = _flipMat;
         }
 
+        // Call AFTER Configure (StrikeCircle only). The circle eases toward the player's ground
+        // position until `trackSeconds` of the warn have elapsed, then it locks.
+        public void SetHoming(float trackSeconds, float easeRate, LayerMask groundMask)
+        {
+            _trackUntil = Mathf.Max(0f, trackSeconds);
+            _trackEase = Mathf.Max(0.1f, easeRate);
+            _groundMask = groundMask;
+        }
+
         public void Configure(Kind kind, Vector3 pos, float radius, float warnSeconds, float activeSeconds,
             float damage, Transform player, GameObject source, Color warnColor, Color burstColor,
             float ringSpeed = 0f, float ringThickness = 0f)
@@ -95,6 +110,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _player = player; _source = source;
             _ringSpeed = ringSpeed; _ringThickness = ringThickness;
             _warnColor = warnColor; _burstColor = burstColor;
+            _trackUntil = 0f;
 
             _fill = GameObject.CreatePrimitive(PrimitiveType.Cylinder).transform;
             _fill.SetParent(transform, false);
@@ -151,6 +167,17 @@ namespace Live2DAction.AI.Boss.Yuanpei
             {
                 TickRing();
                 return;
+            }
+
+            // StrikeCircle homing: chase the player's ground position until the track window closes.
+            if (_trackUntil > 0f && _t < _trackUntil && _player != null && !_burstDone)
+            {
+                Vector3 want = new Vector3(_player.position.x, transform.position.y, _player.position.z);
+                var o = new Vector3(want.x, want.y + 25f, want.z);
+                if (Physics.Raycast(o, Vector3.down, out var hit, 120f, _groundMask, QueryTriggerInteraction.Ignore)
+                    && hit.collider.GetComponentInParent<CharacterController>() == null)
+                    want.y = hit.point.y + 0.02f;
+                transform.position = Vector3.Lerp(transform.position, want, _trackEase * Time.deltaTime);
             }
 
             // flipbook: play the warn-up frames over _warnSeconds so the pillar frame lands exactly
