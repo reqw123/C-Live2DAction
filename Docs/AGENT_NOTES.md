@@ -318,6 +318,51 @@ System.Type.GetType("MCPForUnity.Editor.Services.EditorStateCache, MCPForUnity.E
   （`幽冥星環傳送門`，改名避開 gitignore、`useFileScale=false`、擺放繞 X −90° 立起）框住漩渦影片。
   二次元的門這次一起轉了 Y=90（原本 portal 面朝 +Z ＝ 對西路側面看不見）。
   Editor 失焦時 Play 會凍結 → 轉場 coroutine MCP 測不了，要對焦 Play。
+  **續 185 / 185b：`SchoolGate_Enter`（且只有它）加了「動態互動提示 UI」** —— 靠近顯示 `PortalDialogueFrameVideo.mp4`
+  對話框 + 置中「按下 F 進入 Boss 地圖」。`PortalInteractionUIController.cs`（狀態機）+ `Live2DAction/UI/PortalDialogueFrame`
+  去黑底 UI shader（標準 alpha blend）+ `PortalInteractionUISetup` 選單建置。**續 185b**：拿掉深色底板（`DarkBackdrop`）；
+  `RawImage.uvRect` 裁到只剩對話框（原片下半部那條寬扁框），`VideoContainer` = 框本身、置中，文字置中 → 文字在框裡。
+  `SceneGate` 加 `portalUI` + 序列化 `Key interactKey`（可空/預設 `Key.F`），其他門不受影響（續 85 不變）；傳送呼叫一字未改。
+  **續 185b：所有傳送門互動鍵 E→F**（`SceneGate.interactKey` 預設 `Key.F`、`Portal.cs` 改 `fKey`；`Map_*` 內 `*_Exit`
+  門靠初始值自動吃 F、不用改場景）。**F 也是上車/駕駛 + 處決鍵**。專案沒有 `.inputactions`（全 `Keyboard.current` 輪詢）、
+  沒匯入 TMP（所有中文 UI = legacy `Text` + `LegacyRuntime.ttf` OS fallback）。
+  **續 185c 三修**：(1) 文字等 `frameRiseSeconds`(1.4s) 框立起動畫跑完才淡入;(2) **駕駛時用門會掉虛空** —— 因為上車時
+  `Player` 被 reparent 到車底下,解析成車,`Begin()` 傳的是 950kg Rigidbody buggy → 穿地。修:`SceneGate` 只拿「Player」
+  transform、`OccupantSeated`→`Blocked`(坐車 F=下車,下車再按 F 傳)、`ForceDismountAll` 保底、`SceneTransitionRunner.Teleport`
+  加 Rigidbody 分支;(3) 三座 `*_Enter` 門 `Blocker` 放大成 `16×22×1.5` 整面牆擋住門後。
+  **續 185d 三修**：(1) **UI 生命週期改「距離驅動」** —— 不再靠 `OnTriggerExit`(關 CC 的傳送不觸發它 → UI 曾卡在畫面上、離門很遠還顯示)。
+  `SceneGate.Update` 用實際水平距離 + `RangeHysteresis`(1.5m):`uiShowRange`(4.5) 顯示 / `interactRange`(3.2) 才能按 F。
+  玩家用 `OnTriggerEnter` 快取 + `ScanForPlayer` 每秒補償(比照 `PortalVideoSurface`);(2) **重複顯示** = 同一根因的 `_near` flicker,
+  遲滯後消失;(3) **入口出口都要 UI** —— `PortalInteractionUIController` 改**單例** `Instance`(Canvas 在常駐 `GreyboxTest`),
+  `SceneGate` 拿掉 `portalUI` 序列化欄位改 `Instance`,加 per-gate `showInteractionUI`(預設 true) + `promptMessage`。
+  `PortalInteractionUISetup` 現在配置**全部 6 座門**(開 `Map_School`/`Map_Nijigen`/`Map_Xianshi` additive 設 exit 門)。
+  **這次改到 4 個場景**(GreyboxTest + 3 個 Map_*)。
+  **續 185e:車輛 vs UI 互動 → 互動優先** —— `SceneGate.Blocked` 拿掉坐車判定(傳送前 `ForceDismountAll`);
+  `SceneGate.PlayerHasPortalInteraction(Transform)` 靜態方法讓 `VehicleEntrySystem` 坐著按 F 時先問、為真就讓位不下車。
+  **續 185f 兩修**:(a) **對話框仍立起兩次** —— 原片只有一次立起,是遊戲端 `ShowRoutine` 跑第二次。三層防護:
+  `SceneGate.hideGraceSeconds`(0.6s,`wantUI` 轉 false 不立刻 Hide)+ `PortalInteractionUIController.ResumeRoutine`
+  (淡出中被 `Show()` → 淡回、**不 rewind 影片**)+ 距離遲滯。MCP 驗:靜置 12s 與狂彈 6 次都 0 次狀態變化。
+  (b) **互動範圍太廣、開車頂到門就被搶控制權** —— 收緊。**續 185g 又再砍半**:`interactRange` **1.0**、`uiShowRange` **1.8**、
+  `RangeHysteresis` const 0.7、**Blocker 牆改薄 0.6 厚**(1.5 厚會把徒步玩家擋在門外 1.23m,構不到 1.0 的 interactRange;
+  薄成 0.6 後能貼到 0.78m,牆 16 寬 × 22 高擋牆功能不變 —— raycast 驗各高度都擋)。UI 只在 1.8m 內出現、F 只在貼門 ~0.8m 吃。
+  車體讓駕駛座 ~2.8m 遠 → 完全不會被門搶 F。185e 讓位機制保留但實務上車輛觸發不到。
+  **續 186:Boss 地圖正式影片載入畫面** —— `SchoolGate_Enter` 進 `Map_School` 全螢幕播 `BossLoadingVideo_{Seal,Blood}.mp4`(輪流)
+  + TMP「正在進入元培禁域……」/「載入中 XX%」。**擴充 `ScreenFader`+`SceneTransitionRunner`,不建新 manager**:`BossLoadingScreen`
+  單例(自建 canvas sortingOrder 32100)疊在 `ScreenFader` 上,`ScreenFader` 照樣 covered = 黑底 + 既有 `PlayerInputProvider`
+  輸入鎖(不 disable 腳本)。`SceneTransitionRunner.Begin(..., useLoadingScreen)` 用 `allowSceneActivation=false` 把
+  `op.progress/0.9` 顯示成真實 0~100%,`minLoadingScreenSeconds` 1.2s 防閃一幀,`FadeOverlay` 黑到 `prepareCompleted` 才淡出防閃白。
+  `SceneGate.useLoadingScreen` 只 `SchoolGate_Enter` 開,其他門/回程維持「載入中…」黑幕。
+  **專案第一個 TMP**:`NotoSansTC-Regular.otf`(OFL,登記 ASSET_LICENSES)→ dynamic `NotoSansTC SDF.asset`;`Live2DAction.Runtime.asmdef`
+  加了 `Unity.TextMeshPro`;`Assets/TextMesh Pro/` essentials 進版控。`BossLoadingScreenSetup` **首次要跑兩次**(第一次匯入 TMP
+  essentials,第二次建字型)。未對焦時 VideoPlayer 不 prepare(6s timeout 淡出)—— 影片實際播放要對焦 Play。
+  **續 185h：橫向擴大** —— 續 185g 砍成「只有貼正中心才能互動」。判定從圓形改成**門 local 空間的長方形**
+  (`transform.InverseTransformPoint(player)` → `.z`=深度、`.x`=橫向)。`uiShowRange`/`interactRange` 只管**深度**(1.8/1.0),
+  新增 `lateralHalfWidth`(**6**)管**橫向** → 站門前 ±6m 內都算「在門前面」(蓋滿傳送門 quad 寬 + 車道寬)。
+  rot-Y90 的門靠 `InverseTransformPoint` 自動吃到旋轉。`CanInteractNow`/`PlayerHasPortalInteraction`/scan/drop 全換成
+  `InFront(local, depthRange)`。**續 185i**:`uiShowRange`=`interactRange`=**1.5**(深度),UI 一出現 F 就能按、無空檔。
+  目前全 6 門:深度 UI/interact = 1.5、`lateralHalfWidth` = 6、`hideGraceSeconds` = 0.6、Blocker 牆 16×22×**0.6**。
+  **未對焦時 VideoPlayer 媒體管線不跑、RT 全黑;合成鍵盤 edge 不觸發;MCP 無法模擬駕駛** —— 影片 + 去黑底 + 按鍵傳送 +
+  車輛進門要對焦 Play 才驗得到。
 - **判斷「X 是否在 Y 上/內」時，不要用斜角透視截圖** — 前縮法會讓不同距離的物件在畫面上疊在一起。
   用正交（orthographic）俯視 RenderTexture，或直接拿世界座標比對區域邊界 /
   `Camera.WorldToScreenPoint` 對照實際位置。

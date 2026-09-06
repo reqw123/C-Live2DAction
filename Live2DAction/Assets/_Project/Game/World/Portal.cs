@@ -17,7 +17,7 @@ namespace Live2DAction.World
     // (both default false, matching the original ground portal unchanged) let a specific instance
     // (the sky-island/"鳥居" portal) react to ANY character standing on it - idle green, red while
     // occupied - and skip the key-press gate for anyone who isn't the player (an AI-driven
-    // character has no way to press E).
+    // character has no way to press the interact key).
     //
     // Teleports by disabling/re-enabling the CharacterController around the position set, same
     // pattern this codebase already needs for any other direct-position-set on a
@@ -194,7 +194,8 @@ namespace Live2DAction.World
                 return;
             }
 
-            if (Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame)
+            // 2026-09-06, user request ("所有傳送門互動改為 f 按鍵") - was eKey.
+            if (Keyboard.current != null && Keyboard.current.fKey.wasPressedThisFrame)
             {
                 TeleportOccupant(null, isPlayer: true);
             }

@@ -1255,6 +1255,14 @@ MonoBehaviour:
   loadingLabel: "\u8F09\u5165\u4E2D\u2026"
   curtainFadeSeconds: 0.4
   settleFrames: 3
+  interactKey: 20
+  interactKeyLabel: F
+  uiShowRange: 1.5
+  interactRange: 1.5
+  lateralHalfWidth: 6
+  hideGraceSeconds: 0.6
+  showInteractionUI: 1
+  promptMessage: "\u6309\u4E0B {KEY} \u96E2\u958B\u5143\u57F9\u5927\u5B78"
 --- !u!65 &671840270
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -2002,7 +2010,7 @@ Transform:
   m_GameObject: {fileID: 1496319355}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 4, z: 0}
+  m_LocalPosition: {x: 0, y: 10, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -2027,7 +2035,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 12, y: 8, z: 0.4}
+  m_Size: {x: 16, y: 22, z: 0.6}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1540038993
 GameObject:

@@ -431,9 +431,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 636ba0b94fed0304c84b50832ac695f2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  proximityActivated: 1
+  activateRange: 32
+  deactivateRange: 40
+  appearFadeSeconds: 0.45
   billboard: 0
   pulseAmount: 0.03
   pulseSpeed: 0.4
+  verbose: 1
 --- !u!23 &1756954741
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -547,7 +552,7 @@ Transform:
   m_GameObject: {fileID: 1815391693}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 4, z: 0}
+  m_LocalPosition: {x: 0, y: 10, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -572,7 +577,7 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 12, y: 8, z: 0.4}
+  m_Size: {x: 16, y: 22, z: 0.6}
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1958948773
 GameObject:
@@ -611,6 +616,14 @@ MonoBehaviour:
   loadingLabel: "\u8F09\u5165\u4E2D\u2026"
   curtainFadeSeconds: 0.4
   settleFrames: 3
+  interactKey: 20
+  interactKeyLabel: F
+  uiShowRange: 1.5
+  interactRange: 1.5
+  lateralHalfWidth: 6
+  hideGraceSeconds: 0.6
+  showInteractionUI: 1
+  promptMessage: "\u6309\u4E0B {KEY} \u96E2\u958B\u4E8C\u6B21\u5143"
 --- !u!65 &1958948775
 BoxCollider:
   m_ObjectHideFlags: 0

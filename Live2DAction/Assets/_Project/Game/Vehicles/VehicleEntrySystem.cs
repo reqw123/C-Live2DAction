@@ -3,6 +3,7 @@ using UnityEngine.InputSystem;
 using Live2DAction.Characters;
 using Live2DAction.CameraSystem;
 using Live2DAction.Combat;
+using Live2DAction.World;
 
 namespace Live2DAction.Vehicles
 {
@@ -118,6 +119,11 @@ namespace Live2DAction.Vehicles
 
             if (SeatOf(me) != Seat.None)
             {
+                // 2026-09-06, user request ("當車輛與ui互動系統同時存在時，優先考慮互動系統") - if
+                // the PLAYER is driving right at a portal, F belongs to the portal (SceneGate
+                // dismounts + teleports on foot), not to a plain dismount. Yield this press.
+                // (Portals are player-only, so a cat-driven car is unaffected.)
+                if (me == Occupant.Player && SceneGate.PlayerHasPortalInteraction(player)) return;
                 Dismount(me);
                 return;
             }

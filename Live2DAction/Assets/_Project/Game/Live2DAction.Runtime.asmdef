@@ -6,7 +6,8 @@
         "Unity.RenderPipelines.Universal.Runtime",
         "Unity.RenderPipelines.Core.Runtime",
         "Unity.Cinemachine",
-        "Unity.Timeline"
+        "Unity.Timeline",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -5709,3 +5709,137 @@ barrage 現在有觸發了。使用者:①每種攻擊軌跡直線對其,不要�
 ### 追加94 續 184e（2026-09-06）— 使用者 Play 確認修好
 
 進 Play 走進學校 → 被下馬威打死 → 回到入口**可正常移動**;勝利路徑也正常。續184d 的 `_teardown` 是真正的修正,其餘(`HandControlBackToPlayer` 全套還原 / `SceneTransitionRunner` 相機保底 / `Defeat` 輪詢等復活 / `TargetLockController.ForceRelease`)保留為防禦層。`HandControlBackToPlayer` 的無條件 dump warning 收成「只有真的 force-restore 了才印」。EditMode 338/338 綠。
+
+### 追加94 續 185（2026-09-06）— Boss 地圖外傳送門「動態互動提示 UI」
+
+使用者要求:`SchoolGate_Enter`(本地車道南端、通往 Boss 地圖 `Map_School` 的門)玩家靠近時顯示一個對話框演出 + 置中文字「按下 E 進入 Boss 地圖」,離開範圍收起,按 E 只傳送一次。**傳送/場景切換/座標/資料保存邏輯完全沿用既有 `SceneGate` + `SceneTransitionRunner`**,新程式只負責畫 UI。
+
+- **按鍵**:沿用既有 `SceneGate` 的 `Keyboard.current.eKey`(E,整個專案的世界互動慣例;F 已被上車/處決佔用)。文字顯示 E。`SceneGate.interactKeyLabel` 欄位讓日後改鍵是一行事。
+- **文字算繪**:legacy uGUI `Text` + `LegacyRuntime.ttf` + OS 中文 fallback —— 跟 `YuanpeiVictoryBanner` / `PlayerDeathScreen` / `ScreenFader` 完全同款(專案沒匯入 TMP、也沒有中文字型資產)。
+
+**新檔**:
+- `Assets/_Project/Game/World/PortalInteractionUIController.cs` —— 狀態機 `Hidden→Showing→WaitingForInput→Confirmed→Hiding`。只做:顯示/隱藏、影片 Play/Stop/rewind-to-0、`CanvasGroup` 淡入淡出、文字延遲淡入、單一 owner 鎖(只有 `SceneGate` 能開)。不讀鍵盤、不傳送、不知場景名。`unscaledDeltaTime` 驅動。
+- `Assets/_Project/VFX/Gate/PortalDialogueFrameUI.shader`(`Live2DAction/UI/PortalDialogueFrame`)—— UI RawImage 去黑底 shader,改寫自 `PortalVideoURP` 的 key 數學。`_BlackThreshold`(0.055)+`_Softness`(0.14) 把近黑轉透明(門檻壓低保留銀灰框);`_CropInset` 裁掉框外星塵;`_GlowBoost` 只對「藍色明顯壓過紅綠且夠亮」的能量邊緣加一點加法提亮。**標準 alpha blend**(非純 additive)→ `DarkBackdrop` 透得過來。深色底板不由影片層負責(spec 三)。
+- `Assets/Editor/Bootstrap/PortalInteractionUISetup.cs` —— 選單 `Tools/Live2DAction/Setup Portal Interaction UI (地圖外傳送門互動提示)`。可重跑:重建 UI root、重造 RT + Material、重接 `SchoolGate_Enter.portalUI`。
+- `Assets/_Project/VFX/Gate/PortalDialogueFrameVideo.mp4` —— 使用者的 `對話系統ui框.mp4`,ffmpeg 轉 H.264 **Constrained Baseline** / yuv420p / 去音軌(原檔 High profile + AAC → Unity 報「Unexpected timestamp values」,轉 baseline 後消失,比照 `PortalVortexVideo.mp4`)。1280×720 / 24fps / 10s / 850KB。
+- `Assets/_Project/VFX/Gate/RT_PortalDialogueFrame.renderTexture`(1280×720)、`Mat_PortalDialogueFrame.mat`。
+
+**改檔**:
+- `SceneGate.cs` —— 加 `[SerializeField] PortalInteractionUIController portalUI` + `string interactKeyLabel`(都可空,只有 `SchoolGate_Enter` 有接;其他門不受影響,續 85 不變)。`Update()` 依「在範圍內且未 `Blocked`」開關 UI;`Blocked` = `_confirmed`(按過一次)‖ `SceneTransitionRunner.IsRunning` ‖ `ScreenFader.IsCovered` ‖ 玩家 `Health.IsDead`(spec 9)。按 E → 設 `_confirmed` → `portalUI.Confirm()` → 既有 `SceneTransitionRunner.Instance.Begin(...)`(**一字未改**)。`OnTriggerEnter` 快取 `_occupantHealth`、重置 `_confirmed`;`OnTriggerExit`/`OnDisable`/`OnDestroy` 收 UI。
+- `GreyboxTest.unity` —— 新增 `PortalInteractionUI`(Canvas ScreenSpaceOverlay / CanvasScaler 1920×1080 Match 0.5 / sortingOrder 700 / CanvasGroup α0)。子物件 `VideoContainer`>`AnimatedFrameVideo`(RawImage+VideoPlayer,playOnAwake=false / waitForFirstFrame / skipOnDrop / loop=false / audio=None)、`DarkBackdrop`(760×188 深藍黑 α0.72 + 極淡冷藍 Outline,只蓋文字帶)、`PromptText`(自帶 CanvasGroup 延遲淡入)、`OptionalKeyHint`(小「E」框,預設停用)。`SchoolGate_Enter.portalUI` 已接。
+
+**驗證**(MCP,Editor 未對焦 → Play 逐幀 `EditorApplication.Step()`):
+- 編譯無錯、shader supported、選單建置成功、所有序列化引用已接。
+- 進 trigger → `Show` → 狀態機到 `WaitingForInput`、`CanvasGroup` α→1、文字「按下 E 進入 Boss 地圖」置中單行 —— 截圖確認。
+- 截圖確認 **框外沒有全螢幕黑矩形**(黑 RT 經 keyed shader 貢獻 α≈0,只剩 `DarkBackdrop` + 文字)。
+- 走出 trigger → `OnTriggerExit` → `Hide` → `Hidden`、α→0。`Confirm()` → 快速 `Hidden`。
+- Console 無 NullReference / MissingReference;僅殘留 `Color primaries 0`(所有 gate 影片共通、無害)。
+- **待使用者對焦 Editor Play 確認**:(1) 影片實際播放 + 去黑底 shader 呈現銀框/藍白邊(未對焦時 VideoPlayer 媒體管線不跑,RT 全黑無法目視);(2) 實體按 E → 傳送一次、連按不重複載入;(3) 影片播完定格最後一幀、不整段重播;(4) 不同解析度下文字都在框內。
+
+### 追加94 續 185b（2026-09-06）— 使用者三點修正:文字去背景 + UI 框位置 + 全傳送門改 F
+
+1. **互動文字不要有背景** —— 移除 `DarkBackdrop`(深藍黑半透明面板)。對話框影片自己的深色玻璃內裝就是文字襯底。
+2. **UI 框位置不對 / 文字沒放在框裡** —— `對話系統ui框.mp4` 的對話框是一條寬扁框、位在 1280×720 畫面的**下半部**,其餘全黑。改用 `RawImage.uvRect` 裁到只剩那條框(量測 `x 55..1225 / y(左上) 400..715` → `uvRect (0.043, 0.007, 0.914, 0.4375)`),`VideoContainer` 尺寸改成框的比例(~3.71:1,1150×310)、置中 (0,0);`PromptText` 也置中 (0,0) → 文字就落在框正中。shader `_CropInset` 設 0(裁切交給 uvRect;shader 的 0..1 邊緣數學會把緊裁的框邊切掉),shader 加 `_CropInset <= 0 → 完全停用裁切` 的 guard。**uvRect / `VideoContainer` size / `PromptText` anchoredPosition.y 都是目視估值,對焦 Play 看到影片後再微調。**
+3. **所有傳送門互動改為 F** —— `SceneGate` 加序列化 `Key interactKey`(預設 `Key.F`),`Update()` 改 `Keyboard.current[interactKey].wasPressedThisFrame`;`Portal.cs`(空島鳥居)`eKey`→`fKey`。GreyboxTest 三座 `*_Enter` 門 + `PortalInteractionUI` 由 setup 選單一起改成 F/label"F";`Map_*` 內的 `*_Exit` 門沒有序列化這欄位 → 直接吃 `Key.F` 初始值(已開 `Map_School` 加載確認 `SchoolGate_Exit` = F)。**F 也是上車/駕駛(`VehicleEntrySystem`)+ 處決(`ExecutionAbility`)鍵** —— 實務上站在門口時旁邊不會有車輛或硬直敵人,真撞到再把該門 `interactKey` 改開。`CheckpointGate`(飛行試煉光圈,穿越即觸發、無按鍵)不受影響。
+
+`SceneGate.cs` / `Portal.cs` / `PortalInteractionUIController.cs`(fallbackKeyLabel "F")/ `PortalDialogueFrameUI.shader` / `PortalInteractionUISetup.cs` 全部改過;`GreyboxTest.unity` 重跑 setup 存檔。編譯無錯、shader supported、選單建置成功。MCP 逐幀 Step 驗證:無 `DarkBackdrop`、`uvRect` 已裁、文字「按下 F 進入 Boss 地圖」、所有門 `interactKey=F`、狀態機正常、Console 無錯。**F 按鍵實際觸發傳送無法用 MCP 驗**(逐幀 Step 下合成鍵盤事件的 `wasPressedThisFrame` edge 不會在 game Update 觸發,`isPressed` 正常;跟原本 E 版一樣要對焦 Play)。
+
+### 追加94 續 185c（2026-09-06）— 使用者三點修正:文字等框立起 + 車輛傳送掉虛空 + 傳送門另一面擋牆
+
+1. **文字等對話框立起來才顯示** —— `對話系統ui框.mp4` 的框有 ~1.3s 的「立起來」動畫(抽幀量測:frame 0 空、frame 12 只有外框、frame 24 已成形)。`PortalInteractionUIController` 移除 `textFadeDelay`(0.12),改 `frameRiseSeconds`(1.4):影片層照舊 0.18s 淡入,文字則等 `frameRiseSeconds` 後才淡入(從 `Show()` 起算,所以重進場 rewind 到 frame 0 會重新等)。MCP 驗:t≈0.3~1.1s 文字 α=0(框在、無字),t≈1.6s 文字 α=1。
+
+2. **駕駛車輛用傳送門 → 傳送後掉入虛空** —— 根因:玩家上車時 `VehicleEntrySystem` 把 `Player` 物件 reparent 到座位下,`PlayerHurtbox` trigger 仍活著、以「車的子物件」身分進 gate trigger,`pip.transform.root` 解析成**車**。`Begin()` 就把 950kg 的 Rigidbody buggy(無 CharacterController → 裸 `transform` set、保留速度)傳到剛載入的地圖 → 穿過還沒 cook 的 collider 掉進虛空。修 `SceneGate.cs`:
+   - `ResolvePlayerRoot(Collider)` —— 從 PIP 往上找名為「Player」的 transform(比照 `YuanpeiEncounter.ResolvePlayerFrom`),**永遠拿玩家、不拿車**。
+   - `_playerColliders` 改 `HashSet<Collider>`(車有 body+4 輪+hurtbox 多顆 collider,一顆離開不該清掉整個 `_playerInside`)。
+   - `OccupantSeated`(`_occupant.parent != null`,Player 平常是 scene root)納入 `Blocked` —— 坐在車上時 gate 停手,F 是下車鍵,下車後再按一次 F 才傳送。
+   - `_seatedLastFrame` → `justDismounted` 一幀 guard:在 gate 前下車的那一幀,`VehicleEntrySystem`(order −50)已吃掉這次 F 做下車,SceneGate(order 0)不要同一次 F 又傳送。
+   - `Begin()` 前 `ForceDismountAll()` + 重解析 Player(防禦層,比照 `YuanpeiEncounter`)。
+   - `SceneTransitionRunner.Teleport` 加 Rigidbody 分支(暫 kinematic → 移動 → `SyncTransforms` → 還原 → 清 `linearVelocity`/`angularVelocity`)當任何其他呼叫端的保底。
+   MCP 驗:徒步偵測正常(`_occupant`=Player、`OccupantSeated`=False、狀態機到 `WaitingForInput`)。**車輛端要對焦 Play 開車實測**(MCP 無法模擬駕駛)。
+
+3. **傳送門另一面直接擋住** —— 三座 `*_Enter` 門的 `Blocker`(原 12~18 寬 × 8 高 × 0.4 厚,可跳/飛/快車溜過去到門後那截路 → 虛空)由 `PortalInteractionUISetup` 一起放大成整面牆:`localPos (0,10,0)`、size `(16, 22, 1.5)`(16 橫跨 ≫ 路寬 ~8、22 高、1.5 厚、置中門面)。無 renderer,傳送門特效照樣透得出來。rot-0(學校)和 rot-Y90(二次元/現世)三座門 local 軸一致。MCP raycast 驗:y 3~18 都打到 `Blocker`;y 23 以上仍能飛過(greybox 階段可接受,要更高再調 `size.y`);門後那截路現在到不了。玩家停在 z≈−81(門面 −81.25),trigger 北緣 −79.5,站位有 1.4m 餘裕。
+
+`PortalInteractionUIController.cs` / `SceneGate.cs` / `SceneTransitionRunner.cs` / `PortalInteractionUISetup.cs` 改過;`GreyboxTest.unity` 重跑 setup 存檔(只有這個場景;`Map_*` 的 `*_Exit` 門靠 `Key.F` 初始值不用改)。編譯無錯、Console 無錯。
+
+### 追加94 續 185d（2026-09-06）— 使用者三點修正:靠近才顯示 + 重複顯示 + 入口出口都要 UI
+
+1. **靠近時才顯示 / 不再殘留** —— 根因:`SceneGate` 只靠 `OnTriggerEnter/Exit` 管 UI 生命週期,但**關 `CharacterController` 的傳送不會觸發 `OnTriggerExit`** → 玩家被傳走後 UI 卡在畫面上、離門很遠還在顯示。改成:UI 生命週期由 `Update()` 裡的**實際距離判定**驅動(`uiShowRange` 4.5m 顯示 / `interactRange` 3.2m 才能按 F,`RangeHysteresis` 1.5m 遲滯)。玩家用 `OnTriggerEnter` 快速取得 + 每秒 `ScanForPlayer()`(掃 `PlayerInputProvider` 找名為「Player」的 transform,比照 `PortalVideoSurface`)當傳送補償。MCP 驗:出生點(82m 遠)`_player=null` 不顯示;走近 z≈−78 才 `Showing`;走遠 21m → `Hidden`;**瞬移到 z=50(不觸發 OnTriggerExit)→ 距離 reconcile 照樣把 UI 收掉**。
+
+2. **互動框重複顯示(第二次打斷第一次)** —— 同一根因:`_playerInside` flicker(trigger 邊界抖動或殘留 state)→ `wantUI` false→true → `Hide` 打斷 rise 中的 `Show` → 影片從 frame 0 重播。距離 + 遲滯後 `_near` 不會抖,`Show/Hide/Show` 消失。MCP 驗:走近只有一次 `Hidden→Showing` 轉換,無 `Showing→Hiding→Showing`。
+
+3. **入口出口都要互動 UI** —— `PortalInteractionUIController` 改成**單例**(`Instance`,Canvas 在常駐 `GreyboxTest`),`SceneGate` 不再需要跨場景序列化引用,改 `PortalInteractionUIController.Instance` + per-gate `showInteractionUI`(預設 true) + per-gate `promptMessage`({KEY} 執行期替換)。`Show(owner, keyLabel, message)` 帶訊息。`PortalInteractionUISetup` 現在配置**全部 6 座門**(3 座 `*_Enter` 在 GreyboxTest + 3 座 `*_Exit`:開 `Map_School`/`Map_Nijigen`/`Map_Xianshi` additive → 設定 → 存 → 關):`interactKey=F`、`showInteractionUI=true`、blocker 牆、訊息(`SchoolGate_Enter`「進入 Boss 地圖」/ `SchoolGate_Exit`「離開元培大學」/ 二次元 / 現世 各自進入·離開)。MCP 驗:6 座門全部 `key=F showUI=True` + 對應訊息;`Instance` 非空;`Show(gate,"F","按下 F 離開元培大學")` → 文字正確更新。
+
+改 `PortalInteractionUIController.cs`(單例 + `Show` 帶 message + `frameRiseSeconds` 保留)/ `SceneGate.cs`(距離驅動、移除 `portalUI` 欄位改單例、`showInteractionUI`+`promptMessage`+`uiShowRange`+`interactRange` 欄位、`ScanForPlayer` 補償)/ `PortalInteractionUISetup.cs`(配置全 6 門 + 開 3 個 Map 場景)。**改到 4 個場景**:`GreyboxTest` + `Map_School` + `Map_Nijigen` + `Map_Xianshi`。編譯無錯、Console 無錯。**待對焦 Play**:走近門(不同距離)UI 才出現、走遠/瞬移後消失、進校園走到 `SchoolGate_Exit` 前看到「按下 F 離開元培大學」。
+
+### 追加94 續 185e（2026-09-06）— 車輛與 UI 互動系統同時存在時，優先互動系統
+
+使用者:開車到傳送門前按 F,應該是「用傳送門」,不是「下車」。(續 185c 當時做的是坐車 F=下車、下車後再按 F=傳送,兩步。)
+
+- **`SceneGate`**:`Blocked` 拿掉 `OccupantSeated` —— 坐車也能觸發傳送門(傳送前 `ForceDismountAll()` 把玩家弄下車,交給 runner 的一定是徒步角色,續 185c 的防穿地邏輯不變)。移除 `_seatedLastFrame`/`justDismounted`。按鍵路徑改吃 `dist <= interactRange`(不再要求 `_near`,`_near` 有 UI 遲滯會慢一幀 → F 可能被吞)。新增 `public bool CanInteractNow(Transform)` + `public static bool PlayerHasPortalInteraction(Transform)`(掃所有 `SceneGate`,任一 `CanInteractNow` 為真就回 true)。`interactRange` 3.2→**4**(坐車時車體讓駕駛離門更遠,4m 讓 F 穩定讀成「用門」)。
+- **`VehicleEntrySystem`**:`Update` 的 F 處理,坐著時先問 `me == Occupant.Player && SceneGate.PlayerHasPortalInteraction(player)` —— 為真就 `return`(把 F 讓給傳送門,不 `Dismount`)。`VehicleEntrySystem` order −50 先跑讓位,`SceneGate` order 0 接手 `ForceDismountAll()` + 傳送。貓開車不受影響(傳送門只認 Player)。
+- setup 的 `ConfigureGatesIn` 一併寫入 `uiShowRange`(4.5)/`interactRange`(4) 到 6 座門(舊存檔是 4.5/3.2)。
+
+改 `SceneGate.cs` / `VehicleEntrySystem.cs`(+`using Live2DAction.World`) / `PortalInteractionUISetup.cs`;重跑 setup 存 4 個場景。編譯無錯、Console 無錯。MCP 驗:徒步走近單次 `Hidden→Showing`、文字延遲、`PlayerHasPortalInteraction` 距離對(門口 True、4.5m 遠 False)。**待對焦 Play 開車實測**:開到門口按一次 F → 直接進場(不是先下車)。
+
+### 追加94 續 185f（2026-09-06）— 修:互動框仍立起兩次 + 互動範圍太廣搶了車輛控制權
+
+1. **對話框仍「立起來兩次」** —— 抽幀確認原片只有一次立起(frame 0→~40)、之後是邊緣能量 idle loop,所以是遊戲端 `ShowRoutine` 被跑第二次(中間夾了一次 `Hide`)。續 185d 的距離遲滯還不夠。三層防護:
+   - `SceneGate`:**hide 緩衝** `hideGraceSeconds`(0.6s) —— `wantUI` 轉 false 後不立刻 `Hide`,0.6s 內又變 true 就取消(吸收任何瞬間距離抖動)。
+   - `PortalInteractionUIController`:**`ResumeRoutine`** —— `Show()` 在 `State == Hiding`(淡出中)被呼叫時,直接淡回滿、**不 rewind 影片、不重播立起、不重跑文字延遲**。
+   - 距離遲滯 `uiShowRange` 3.5 開 / `+RangeHysteresis` 1.5 = 5.0 關,不變。
+   MCP 驗:門口靜置 12s **0 次狀態變化**;在 4.5m↔1.2m 之間狂彈 6 次 **0 次狀態變化**、影片不重播。
+2. **互動範圍太廣、開車撞到門就被搶控制權** —— `interactRange` 4→**2.0**(`uiShowRange` 4.5→3.5)。傳送門只在玩家「貼著門」(≤2m)時才吃 F。車體長度讓駕駛座離門 ~3.5m → `PlayerHasPortalInteraction` 為 false → **F 正常下車、不被搶**;下車後走最後 ~1.5m 再按 F 進場。徒步時 Blocker 牆把玩家擋在 ~1m,穩在 2m 內。續 185e 的讓位機制保留,只是範圍收緊到實務上車輛難觸發。`hideGraceSeconds` 也一併寫進 6 座門。
+   MCP 驗:dist 1.2/2.0m → `PlayerHasPortalInteraction` True;2.7m 以上 → False。
+
+改 `SceneGate.cs`(+`hideGraceSeconds`/`_hideAt` 緩衝、range 收緊)/ `PortalInteractionUIController.cs`(+`ResumeRoutine`)/ `PortalInteractionUISetup.cs`(寫新 range)。重跑 setup 存 4 個場景。編譯無錯、Console 無錯。**待對焦 Play**:(a) 走近門、站門口、來回踱步,對話框都只立起一次;(b) 開車頂到門按 F = 下車(不是被傳走),走兩步再 F 進場。
+
+### 追加94 續 185g（2026-09-06）— 傳送門互動範圍再砍半
+
+使用者:範圍還是太廣,再砍半。
+
+- **`interactRange` 2.0 → 1.0**、**`uiShowRange` 3.5 → 1.8**、`RangeHysteresis` const 1.5 → 0.7。
+- Blocker 牆本來 1.5 厚會把徒步玩家擋在門外 1.23m,`interactRange` 1.0 就構不到。**牆改薄成 0.6 厚**(仍 16 寬 × 22 高,擋牆功能不變 —— MCP raycast 驗 y 1~20 都擋),徒步玩家現在能貼到**離門 0.78m**,1.0 的 `interactRange` 有 0.22m 餘裕。
+- 效果:UI 只在 **1.8m 內**出現(續 185f 是 3.5m),F 只在**貼著門 ~0.8m** 時吃。車體讓駕駛座 ~2.8m 遠 → 完全不會被門搶 F。
+- MCP 驗:徒步走近 UI 在 dist 1.76m 出現、單次 `Hidden→Showing`;貼牆 dist 0.78m `PlayerHasPortalInteraction=True`;1.5m 遠 False;靜置 8s + 狂彈 8 次 **0 次狀態變化**(不重立起);薄牆 raycast 各高度都擋得住。
+
+改 `SceneGate.cs`(range 預設 + `RangeHysteresis`)/ `PortalInteractionUISetup.cs`(range + 牆 0.6 厚)。重跑 setup 存 4 個場景。編譯無錯、Console 無錯。
+
+### 追加94 續 185h（2026-09-06）— 傳送門互動改成「寬扁」判定:橫向擴大
+
+使用者:續 185g 砍太多變成「只有貼傳送門正中心才能互動」,傳送門很寬,站偏一點就按不動。要橫向擴大。
+
+- `SceneGate` 的距離判定從**放射狀(圓)**改成**門的 local 空間長方形**:`transform.InverseTransformPoint(player)` → `.z` 是**深度**(對門面的遠近)、`.x` 是**橫向**(沿門寬)。
+  - `uiShowRange` / `interactRange` 現在只管**深度**(1.8 / 1.0 不變)。
+  - 新增 `lateralHalfWidth`(**6**)管橫向 —— 站在門前 ±6m 內都算「在門前面」(蓋滿 13 寬的傳送門 quad 和 ~7.4 寬的車道)。
+  - `_near` 遲滯只加在深度邊緣;橫向出界直接關。
+  - rot-0(學校)和 rot-Y90(二次元/現世)的門用 `InverseTransformPoint` 自動吃到旋轉,local 軸一致。
+- `CanInteractNow` / `PlayerHasPortalInteraction` / scan / drop 判定全部換成 `InFront(local, depthRange)` = `|z|<=depth && |x|<=lateralHalfWidth`。
+- MCP 驗:貼牆(深度 0.78m)在 x=0 **和 x=3** 都 `PlayerHasPortalInteraction=True`(續 185g 只有 x=0);x=7(超過 lateralHalfWidth)關;深度 2.5m 不管橫向都關;偏心走進(x=3)UI 在深度 1.76m 出現、單次 `Hidden→Showing`;偏心靜置 6s 不重立起。
+
+改 `SceneGate.cs`(`LocalPlayerOffset`/`InFront`、`lateralHalfWidth` 欄位、Update/CanInteractNow 換算)/ `PortalInteractionUISetup.cs`(寫 `lateralHalfWidth=6`)。重跑 setup 存 4 個場景。編譯無錯、Console 無錯。
+
+### 追加94 續 185i（2026-09-06）— UI 出現時就要在可互動範圍內
+
+使用者:UI 框出來時「還不到可以互動的範圍」(深度 `uiShowRange` 1.8 顯示、`interactRange` 1.0 才能按 F,中間有 0.8m 空檔提示了卻按不動)。
+
+- **`uiShowRange` 與 `interactRange` 都設 1.5(深度)** —— UI 一出現、F 就已經能按,沒有空檔。橫向 `lateralHalfWidth` 6 不變。
+- MCP 驗:走近時 UI 在深度 **1.44m 出現** → 同一刻 `PlayerHasPortalInteraction=True`;貼牆 State `WaitingForInput`;靜置 7s + 邊界偏心狂彈 8 次 **0 次狀態變化**(不重立起)。
+- 改 `SceneGate.cs`(range 預設)/ `PortalInteractionUISetup.cs`(range)。重跑 setup 存 4 個場景。編譯無錯、Console 無錯。
+- 附記:setup 期間若在 Play 模式會觸發 domain reload,`PortalVideoSurface._mpb` / `PlayerGuardAnimatorLink.OnDisable` 會噴既知的 recompile-during-Play 錯誤(非本次改動,退出 Play 重跑即乾淨)。
+
+### 追加94 續 186（2026-09-06）— Boss 地圖正式影片載入畫面
+
+使用者提供 `Boss_場景加載畫面.mp4`（藍色封印圓環）+ `場景加載畫面_血痕.mp4`（紅色血刃），做成 `SchoolGate_Enter` 進 `Map_School` 的全螢幕載入畫面。**擴充既有 `ScreenFader` + `SceneTransitionRunner`,不建新 manager。**
+
+**新檔**:
+- `Assets/_Project/Game/World/BossLoadingScreen.cs` —— 單例,自建 `LoadingScreenCanvas`(Overlay, sortingOrder **32100** = 高於 `ScreenFader` 32000 + 所有 HUD/對話框)。`VideoRawImage`(RawImage + `AspectRatioFitter.EnvelopeParent` 16:9 aspect-fill 不變形 + `VideoPlayer` RenderTexture / playOnAwake off / audio None / **isLooping**)、`LoadingInfo`>`LoadingText`(TMP「正在進入元培禁域……」)+`ProgressText`(TMP「載入中 XX%」)、`FadeOverlay`(黑,遮到影片 `prepareCompleted` 才淡出 → **不閃白**)。`Show()`/`Hide()`/`SetProgress(0..1)`/`AbortImmediate()`。每次 `Show()` **輪流**換一支 clip。
+- `Assets/Editor/Bootstrap/BossLoadingScreenSetup.cs` —— 選單。匯入 TMP Essential Resources(專案首次)→ 用 Noto Sans TC 建 dynamic `TMP_FontAsset` → 匯入 2 支影片 + 建 `RT_BossLoading.renderTexture`(1280×720)→ GreyboxTest 放 `BossLoadingScreen` GO 接線 → `SchoolGate_Enter.useLoadingScreen=true`。**TMP 首匯入需跑兩次**(第一次觸發匯入 essentials,第二次建字型 + 接線)。
+- 影片:ffmpeg 裁掉開頭 AI 生成假對話框 ~0.35s、去音軌、烤 **0.65s 交叉淡化無縫循環**(首尾圓環大小不連續)、轉 H.264 Constrained Baseline。`BossLoadingVideo_{Seal,Blood}.mp4`。
+- 字型:`Assets/_Project/Fonts/NotoSansTC-Regular.otf`(SIL OFL 1.1,可商用,登記進 `ASSET_LICENSES.md`)+ `NotoSansTC-OFL.txt` + dynamic `NotoSansTC SDF.asset`。**專案第一個 TMP 中文字型**;連帶把 `Assets/TextMesh Pro/`(TMP Essentials)進版控。
+
+**改檔**:
+- `SceneTransitionRunner.cs` —— `Begin(...)` 加 `bool useLoadingScreen = false`(既有呼叫端不受影響)。`useLoadingScreen` 時 `ScreenFader` **照樣蓋在底下**(黑底 + 既有 `PlayerInputProvider` 輸入鎖 —— `ScreenFader.IsCovered` 時移動/攻擊/翻滾全歸零,**不 disable 任何腳本**)+ `BossLoadingScreen.Show()` 疊在上面;`LoadSceneAsync` 用 **`allowSceneActivation=false`**,`op.progress/0.9` remap 成 0~100%(處理 Unity 卡 0.9 機制),`progress>=0.9` 才放行 activation;傳送/settle 後保證顯示滿 `minLoadingScreenSeconds`(1.2s,不閃一幀)再 `Hide()`,最後 `ScreenFader` 淡回。**載入失敗**(`op==null`):`Debug.LogError` + `AbortImmediate()` + `ScreenFader` 淡回 + `IsRunning=false`(玩家不卡黑)。
+- `SceneGate.cs` —— 加 `[SerializeField] bool useLoadingScreen`,傳給 `Begin`;setup 只在 `SchoolGate_Enter` 設 true。
+- `Live2DAction.Runtime.asmdef` —— 加 `Unity.TextMeshPro` 引用。
+
+**MCP 驗證**(逐幀 Step,Editor 未對焦):`Begin(..., useLoadingScreen:true)` → `ScreenFader` covered 全程 → canvas 啟用、`FadeOverlay` 黑不透明(不閃白)→ (未對焦時 VideoPlayer 不 prepare,6s timeout 後照樣淡出黑幕)→ `Map_School` 載入、`ProgressText` 0%→99%→**100%**、`sceneCount` 2 → 傳送、玩家到 (0,1.1,-92) spawn → canvas 淡出、`ScreenFader` uncovered、`IsRunning` false → **TMP「正在進入元培禁域……」10 字全 render**(dynamic Noto TC 生效,截圖確認右下角、不遮中央圓環)。Console 無 NullReference / VideoPlayer / 場景載入錯誤(僅殘留 `Color primaries 0`,所有影片共通)。**待對焦 Play**:影片實際播放 + 無縫循環 + prepare 快、按 F 一次觸發、不同解析度文字都在框內。
