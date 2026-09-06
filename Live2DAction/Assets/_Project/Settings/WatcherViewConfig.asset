@@ -14,6 +14,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   hasSavedView: 1
   rootPosition: {x: 1.0937533, y: 29.915684, z: -21.443735}
-  rootYaw: 1073.3992
-  cameraPitch: 1.720004
+  rootYaw: 890.51996
+  cameraPitch: 26.439995
   fieldOfView: 43

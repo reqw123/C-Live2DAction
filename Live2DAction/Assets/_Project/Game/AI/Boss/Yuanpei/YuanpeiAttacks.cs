@@ -33,6 +33,12 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [SerializeField] private Color burstColor = new Color(1f, 0.35f, 0.15f);
         [SerializeField] private Color dangerColor = new Color(1f, 0.15f, 0.1f);
 
+        [Header("長矛型光彈 SpearVolley (續 136, Crimson Void Spear model)")]
+        [Tooltip("CrimsonVoidSpearProjectile.prefab - has its own YuanpeiProjectile/collider/trail baked in. Falls back to a stretched capsule if unset.")]
+        [SerializeField] private GameObject spearProjectilePrefab;
+        [SerializeField] private Color spearGlowColor = new Color(0.85f, 0.12f, 0.32f);    // crimson
+        [SerializeField] private Color spearCoreColor = new Color(0.62f, 0.28f, 0.95f);    // void purple
+
         private YuanpeiBoss _boss;
         private YuanpeiBossConfig _cfg;
         private readonly List<GameObject> _spawned = new List<GameObject>();
@@ -46,6 +52,13 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private bool _puntCCWas, _puntMoveWas;
 
         public bool MajorHazardActive => _majorHazardActive;
+
+        // 續 152 (YuanpeiAttackDebugMode's VFX inspect mode, user: "長矛型光彈、六連彈、雷擊標記...全螢幕
+        // 單一物件動畫展示的視覺檢查") - read-only peek into every VFX GameObject an attack has spawned
+        // so far, so the debug tool can isolate just-created ones (by index, taken before/after firing)
+        // into their own camera view without this class needing to know anything about that tool.
+        public int SpawnedCount => _spawned.Count;
+        public GameObject GetSpawnedAt(int index) => (index >= 0 && index < _spawned.Count) ? _spawned[index] : null;
 
         private void Awake()
         {
@@ -197,6 +210,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 case YuanpeiAttackId.ChargeLine:      yield return BodyCharge(def, player); break;   // same logic, longer/faster via the def's numbers
                 case YuanpeiAttackId.ChargeCrush:     yield return ChargeCrush(def, player); break;
                 case YuanpeiAttackId.OrbitDash:       yield return OrbitDash(def, player); break;
+                case YuanpeiAttackId.SpearVolley:     yield return SpearVolley(def, player); break;
             }
 
             onPhase?.Invoke(Phase.Recovery);
@@ -331,6 +345,101 @@ namespace Live2DAction.AI.Boss.Yuanpei
             Destroy(root);
         }
 
+        // ---------------------------------------------------------------- 長矛型光彈 SpearVolley（續 136）
+        // 遠距離連續發射：boss 原地朝玩家持續發射一連串「深淵緋紅長矛」（Crimson Void Spear），每發都
+        // 各自瞄準發射當下的玩家位置＋短暫追蹤，逼玩家持續走位閃避——跟 ProjectileBurst「兩波齊射、
+        // 完全鎖定不追蹤」的短促節奏是不同的遠程壓力型態，故意用不同的色系（緋紅／虛空紫）和不同的
+        // 前搖手段（單顆核心脈動點亮，不是 MuzzleCharge 的螺旋聚粒）跟其他招式區隔開來。
+        private IEnumerator SpearVolley(YuanpeiAttackDef def, Transform player)
+        {
+            float speed = def.number1 > 0 ? def.number1 : 20f;
+            float interval = def.number2 > 0 ? def.number2 : 0.22f;
+            float homingStrength = def.number3 > 0 ? def.number3 : 1.1f;
+            float homingSeconds = def.number4 > 0 ? def.number4 : 0.4f;
+            float hitRadius = def.number5 > 0 ? def.number5 : 0.28f;
+            int shots = Mathf.Max(1, def.count);
+            const float tipOffset = 0.6f;   // matches CrimsonVoidSpearProjectile.prefab's baked half-length (geometry constant, not a balance number)
+
+            yield return SpearMuzzleGlow(0.4f);
+
+            for (int i = 0; i < shots; i++)
+            {
+                Vector3 origin = projectileOrigin.position;
+                // re-read per shot - the loop already spaces shots out, so a moving player pulls each
+                // one to a slightly different line (unlike ProjectileBurst's fully locked volley).
+                Vector3 aim = PlayerCenter(player);
+                Vector3 dir = (aim - origin).normalized;
+
+                GameObject go;
+                if (spearProjectilePrefab != null)
+                {
+                    go = Instantiate(spearProjectilePrefab, origin, Quaternion.LookRotation(dir, Vector3.up));
+                }
+                else
+                {
+                    // fallback greybox shape if the prefab reference isn't wired yet
+                    go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                    Destroy(go.GetComponent<Collider>());
+                    var cc = go.AddComponent<CapsuleCollider>();
+                    cc.direction = 2; cc.radius = 0.16f; cc.height = 1.25f; cc.isTrigger = true;
+                    go.transform.SetPositionAndRotation(origin, Quaternion.LookRotation(dir, Vector3.up));
+                    go.transform.localScale = new Vector3(0.22f, 0.65f, 0.22f);
+                    Tint(go, spearGlowColor, 3.5f);
+                }
+                go.name = "YuanpeiSpearProjectile";
+
+                var trail = go.AddComponent<TrailRenderer>();
+                trail.material = SimpleUnlit();
+                trail.time = 0.18f;
+                trail.startWidth = 0.22f;
+                trail.endWidth = 0f;
+                trail.startColor = new Color(spearGlowColor.r, spearGlowColor.g, spearGlowColor.b, 0.9f);
+                trail.endColor = new Color(spearCoreColor.r, spearCoreColor.g, spearCoreColor.b, 0f);
+                trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+                var glowGo = new GameObject("Glow");
+                glowGo.transform.SetParent(go.transform, false);
+                var lt = glowGo.AddComponent<Light>();
+                lt.type = LightType.Point;
+                lt.color = spearGlowColor;
+                lt.intensity = 2.2f;
+                lt.range = 3.5f;
+                lt.shadows = LightShadows.None;
+
+                var proj = go.GetComponent<YuanpeiProjectile>();
+                if (proj == null) proj = go.AddComponent<YuanpeiProjectile>();
+                proj.Launch(dir, speed, hitRadius, def.healthDamage, homingSeconds, homingStrength,
+                    player, _boss.gameObject, 6f, tipOffset);
+                _spawned.Add(go);
+
+                yield return new WaitForSeconds(interval);
+            }
+        }
+
+        // SpearVolley's own telegraph - a crimson-to-void-purple core pulses awake at the muzzle
+        // before the stream starts. Deliberately NOT MuzzleCharge (that's ProjectileBurst's signature).
+        private IEnumerator SpearMuzzleGlow(float seconds)
+        {
+            var core = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            core.name = "YuanpeiSpearMuzzleGlow";
+            Destroy(core.GetComponent<Collider>());
+            core.transform.SetParent(projectileOrigin, false);
+            core.transform.localPosition = Vector3.zero;
+            core.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _spawned.Add(core);
+
+            float t = 0f;
+            while (t < seconds)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / seconds);
+                core.transform.localScale = Vector3.one * Mathf.Lerp(0.05f, 0.45f, k * k);
+                Tint(core.gameObject, Color.Lerp(spearGlowColor, spearCoreColor, k), 3f + 9f * k);
+                yield return null;
+            }
+            Destroy(core);
+        }
+
         // ---------------------------------------------------------------- 9.2 聚焦雷射
 
         private IEnumerator FocusLaser(YuanpeiAttackDef def, Transform player)
@@ -415,7 +524,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             for (int i = 0; i < strikes; i++)
             {
                 if (player == null) yield break;
-                Vector3 pos = ProjectToGround(player.position);
+                Vector3 pos = ProjectToGround(player.position, player);
                 var go = SpawnHazard(YuanpeiHazard.Kind.StrikeCircle, pos, radius, warn, 0.25f, def.healthDamage, player);
                 var hz = go.GetComponent<YuanpeiHazard>();
                 // chase the player for the first ~55% of the warn, then lock (user: "太容易閃躲")
@@ -434,11 +543,68 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         // ---------------------------------------------------------------- 9.5 近身震退
 
+        // 續 150 (user: "boss超近距離的近身擊退技能，讓牠攻擊前做一個後仰且後退，然後往前擠壓的動作
+        // (這個是等同正式boss的版本)") - this point-blank knockback used to just pop an expanding ring
+        // with no windup at all (the only attack in the pool without one). Added a proper lean-back +
+        // step-back telegraph, then a fast forward lunge that shoves past the boss's original spot
+        // ("擠壓" - squeeze into the target's space) right before the ring actually bursts, matching
+        // the 前搖/預警 language every charge move already uses (spec §22.2). This IS the production
+        // boss's move (not a debug-only variant) - fired via F8 it plays exactly the same way.
         private IEnumerator Shockwave(YuanpeiAttackDef def, Transform player)
         {
             float maxR = def.number1 > 0 ? def.number1 : 5f;
             float speed = def.number2 > 0 ? def.number2 : 7f;
             float thick = def.number3 > 0 ? def.number3 : 0.8f;
+            float stepBack = def.number4 > 0 ? def.number4 : 1.4f;
+            float lungePast = def.number5 > 0 ? def.number5 : 0.6f;
+
+            Vector3 start = transform.position;
+            Vector3 flatDir = player.position - start; flatDir.y = 0f;
+            if (flatDir.sqrMagnitude < 1e-4f) flatDir = transform.forward;
+            flatDir.Normalize();
+            transform.rotation = Quaternion.LookRotation(flatDir, Vector3.up);
+
+            // owns its own Y/position for the whole windup+lunge so HoldHover doesn't fight it
+            // (same reasoning as every other charge move in this file).
+            if (_boss != null) _boss.SuspendHover(def.telegraphSeconds + def.windupSeconds + 0.8f);
+
+            // --- 後仰＋後退：lean the disc back and ease it backward, a small distance since this is
+            // a point-blank move (range 0-4.5) - the boss must never back itself out of its own hit
+            // radius during its own windup.
+            Quaternion visBase = _boss != null && _boss.VisualRoot != null ? _boss.VisualRoot.localRotation : Quaternion.identity;
+            Quaternion leanBack = visBase * Quaternion.Euler(-18f, 0f, 0f);   // tilt away from the target
+            Vector3 backTarget = start - flatDir * stepBack;
+            float windup = Mathf.Max(0.3f, def.windupSeconds);
+            float wt = 0f;
+            while (wt < windup)
+            {
+                wt += Time.deltaTime;
+                float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(wt / windup));
+                transform.position = Vector3.Lerp(start, backTarget, k);
+                if (_boss != null && _boss.VisualRoot != null)
+                    _boss.VisualRoot.localRotation = Quaternion.Slerp(visBase, leanBack, k);
+                yield return null;
+            }
+
+            // --- 往前擠壓：a fast, ease-IN lunge past the original spot straight at the target - the
+            // sudden release after the wind-up is the actual "hit" beat, not a smooth glide.
+            const float lungeDur = 0.14f;
+            Vector3 lungeFrom = transform.position;
+            Vector3 lungeTarget = start + flatDir * lungePast;
+            Quaternion lungeVisFrom = _boss != null && _boss.VisualRoot != null ? _boss.VisualRoot.localRotation : leanBack;
+            float lt = 0f;
+            while (lt < lungeDur)
+            {
+                lt += Time.deltaTime;
+                float ek = Mathf.Clamp01(lt / lungeDur); ek *= ek;
+                transform.position = Vector3.Lerp(lungeFrom, lungeTarget, ek);
+                if (_boss != null && _boss.VisualRoot != null)
+                    _boss.VisualRoot.localRotation = Quaternion.Slerp(lungeVisFrom, visBase, ek);
+                yield return null;
+            }
+            transform.position = lungeTarget;
+            if (_boss != null && _boss.VisualRoot != null) _boss.VisualRoot.localRotation = visBase;
+
             // the ring lives on the floor under the boss, not at hover height
             Vector3 ringPos = ProjectToGround(transform.position);
             var h = SpawnHazard(YuanpeiHazard.Kind.ExpandingRing, ringPos, maxR, 0f, maxR / speed + 0.5f,
@@ -447,6 +613,10 @@ namespace Live2DAction.AI.Boss.Yuanpei
             hz.Configure(YuanpeiHazard.Kind.ExpandingRing, ringPos, maxR, 0f, maxR / speed + 0.5f,
                 def.healthDamage, player, _boss.gameObject, warnColor, burstColor, speed, thick);
             // knockback on hit is handled by the hazard's damage; add a shove via KnockbackReceiver if present
+
+            // ease back to the original spot after the shove - the boss doesn't just stay lunged in
+            yield return EaseMove(start, 0.35f);
+
             yield return new WaitForSeconds(maxR / speed + 0.3f);
         }
 
@@ -458,7 +628,6 @@ namespace Live2DAction.AI.Boss.Yuanpei
             float maxDist = def.number2 > 0 ? def.number2 : 15f;
             float hitR = def.number3 > 0 ? def.number3 : 1.8f;
             const float runway = 6.5f;          // guaranteed distance to cover so the dash always reads as travel
-            const float skimHeight = 1.1f;      // Y the charge levels out at once it has dived to the player
 
             // This move owns its own Y from here until it finishes - otherwise HoldHover() drags
             // the boss back up to hover height every frame and the "charge" is a flat twitch at
@@ -505,11 +674,21 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (flatDir.sqrMagnitude < 1e-4f) flatDir = transform.forward;
             flatDir.Normalize();
             transform.rotation = Quaternion.LookRotation(flatDir, Vector3.up);
-            float groundY = ProjectToGround(player.position).y;
+            float groundY = ProjectToGround(player.position, player).y;
+
+            // 續 134 (user: "boss有機會因為直線衝刺衝出圍牆之外") - the dash distance itself must never
+            // reach past the arena's own bounds, independent of whatever wall colliders happen to be
+            // standing in the way (map geometry can have gaps/doors that chargeCrashMask never covered).
+            maxDist = ClampToArena(start, flatDir, maxDist);
 
             // ease the disc into its EDGE-first attitude (rim leads, like a rolling coin), with a
             // small wind-up recoil, so the launch reads as loading-then-firing not a 0→full pop.
             yield return SlerpDiscInto(dir, 0.2f, edgeFirst: true);
+            // 續 139 (user: "使用衝撞攻擊時就讓圓的外弧切線地板") - the old hardcoded skimHeight (1.1)
+            // had no relation to the disc's actual rendered radius once edge-first, so it either
+            // buried the rim or floated it. Read the CURRENT rendered silhouette's true lowest point
+            // (now that it's edge-first) so the rim is tangent to the ground, not guessed.
+            float skimHeight = _boss != null ? _boss.VisualBottomOffset() : 1.1f;
             yield return EaseMove(transform.position - flatDir * 0.7f, 0.12f);   // recoil back
             StartCoroutine(FadeChargeLane(Mathf.Min(0.4f, maxDist / Mathf.Max(1f, speed))));
 
@@ -569,6 +748,25 @@ namespace Live2DAction.AI.Boss.Yuanpei
             }
         }
 
+        // 續 134 - ray-vs-arena-circle clamp so BodyCharge/OrbitDash can never travel further than the
+        // fight ring allows, regardless of physical wall colliders (chargeCrashMask only covers the 3
+        // dedicated crash proxies, not the map's ordinary perimeter walls - those can have gaps/doors).
+        private float ClampToArena(Vector3 start, Vector3 flatDir, float requestedDist)
+        {
+            if (_cfg == null) return requestedDist;
+            Vector2 o = new Vector2(start.x - _cfg.arenaCenter.x, start.z - _cfg.arenaCenter.z);
+            Vector2 d = new Vector2(flatDir.x, flatDir.z);
+            if (d.sqrMagnitude < 1e-4f) return requestedDist;
+            d.Normalize();
+            float b = 2f * Vector2.Dot(o, d);
+            float c = Vector2.Dot(o, o) - _cfg.arenaRadius * _cfg.arenaRadius;
+            float disc = b * b - 4f * c;
+            if (disc < 0f) return Mathf.Min(requestedDist, 3f);   // already outside the ring somehow - keep it short
+            float t = (-b + Mathf.Sqrt(disc)) * 0.5f;
+            const float margin = 1.2f;   // stop a little short of the true edge, not skim it
+            return Mathf.Clamp(Mathf.Min(requestedDist, t - margin), 3f, requestedDist);
+        }
+
         // ------------------------------------------------- 肉身衝撞 2：頭頂垂直下壓（命中＝秒殺）
 
         private IEnumerator ChargeCrush(YuanpeiAttackDef def, Transform player)
@@ -578,7 +776,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             float hitR = def.number3 > 0 ? def.number3 : 2.4f;
 
             // ground shadow marker - it TRACKS the player while the boss slides overhead, then LOCKS.
-            var marker = MakeGroundMarker(ProjectToGround(player.position), hitR);
+            var marker = MakeGroundMarker(ProjectToGround(player.position, player), hitR);
             var markerR = marker.GetComponentInChildren<Renderer>();
 
             // --- slide to directly above the player (breaks the "never overhead" rule for this move) ---
@@ -596,7 +794,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 float k = t / slide;
                 Vector3 above = player.position + Vector3.up * overhead;
                 transform.position = Vector3.Lerp(transform.position, above, 6f * Time.deltaTime);
-                Vector3 g = ProjectToGround(player.position);
+                Vector3 g = ProjectToGround(player.position, player);
                 marker.transform.position = g;
                 float pulse = 1f + Mathf.Sin(Time.time * 14f) * 0.15f;
                 marker.transform.localScale = new Vector3(hitR * 2f * pulse, 0.02f, hitR * 2f * pulse);
@@ -606,7 +804,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
             // --- LOCK the target under the boss (spec §9.6.4 - lock last position) ---
             Vector3 targetXZ = new Vector3(transform.position.x, 0f, transform.position.z);
-            Vector3 lockGround = ProjectToGround(new Vector3(targetXZ.x, player.position.y, targetXZ.z));
+            Vector3 lockGround = ProjectToGround(new Vector3(targetXZ.x, player.position.y, targetXZ.z), player);
             marker.transform.position = lockGround;
             marker.transform.localScale = new Vector3(hitR * 2f, 0.02f, hitR * 2f);
             PaintMarker(markerR, dangerColor, 5f);
@@ -746,7 +944,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             float orbitRadius = def.number1 > 0 ? def.number1 : 8f;
             float dashSpeed = def.number2 > 0 ? def.number2 : 24f;
             float hitR = def.number3 > 0 ? def.number3 : 1.9f;
-            const float skimHeight = 1.1f;
+            float skimHeight = 1.1f;   // 續 139: replaced with the disc's true rendered radius once edge-first (see below)
 
             float orbitDur = 1.0f + (float)UnityEngine.Random.value * 1.6f;   // random - "某一個瞬間"
             float dashAt = 0.45f + (float)UnityEngine.Random.value * (orbitDur - 0.45f);
@@ -757,14 +955,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // dive (user: "感覺只有頭跟尾"). Generous budget - orbit is up to ~2.6s + telegraph + dash.
             if (_boss != null) _boss.SuspendHover(orbitDur + 1.0f + (16f / Mathf.Max(1f, dashSpeed)) + 2f);
 
-            float floorY = ProjectToGround(player.position).y;
+            float floorY = ProjectToGround(player.position, player).y;
             float t = 0f;
             bool dashed = false;
             Vector3 dashDir = Vector3.forward;
             Vector3 dashFlat = Vector3.forward;
             float travelled = 0f;
+            float dashMaxDist = 16f;   // 續 134 - clamped to the arena ring once the dash direction locks
 
-            while (t < orbitDur || (dashed && travelled < 16f))
+            while (t < orbitDur || (dashed && travelled < dashMaxDist))
             {
                 t += Time.deltaTime;
 
@@ -786,13 +985,17 @@ namespace Live2DAction.AI.Boss.Yuanpei
                         if (dashFlat.sqrMagnitude < 1e-4f) dashFlat = transform.forward;
                         dashFlat.Normalize();
                         transform.rotation = Quaternion.LookRotation(dashFlat, Vector3.up);
+                        dashMaxDist = ClampToArena(transform.position, dashFlat, 16f);
                         Live2DAction.Combat.HitStopController.Request(0.04f, 0.35f);   // "!" beat
                         // 前搖 + 預警：hold on the orbit ring while the danger line telegraphs the
                         // dash path, so the player gets real reaction time (user request).
-                        yield return ChargePathTelegraph(transform.position, dashFlat, 16f, 1.1f, 0.5f);
+                        yield return ChargePathTelegraph(transform.position, dashFlat, dashMaxDist, 1.1f, 0.5f);
                         yield return SlerpDiscInto(dashFlat, 0.14f, edgeFirst: true);
                         StartCoroutine(FadeChargeLane(0.35f));
                         FaceDiscSideAlong(dashDir);   // 側身衝刺 - rim leads, not the flat face
+                        // 續 139 (user: "使用衝撞攻擊時就讓圓的外弧切線地板") - read the disc's actual
+                        // rendered radius now that it's edge-first, so the rim is tangent to the ground.
+                        if (_boss != null) skimHeight = _boss.VisualBottomOffset();
                     }
                 }
                 else
@@ -1069,7 +1272,16 @@ namespace Live2DAction.AI.Boss.Yuanpei
         // XZ hits the PLAYER's own CharacterController (layer 0, same as the ground) first, ~1m up -
         // that was the "提示區塊懸浮在半空" bug. RaycastAll + skip the player / the boss / other
         // runtime hazards, take the first real surface.
-        private Vector3 ProjectToGround(Vector3 p)
+        // 續 142 (user: 衝撞類攻擊對著除錯用的稻草人「位移、紅圈預警」都出不來) - real cause: this only
+        // ever excluded the REAL player (PlayerInputProvider / CharacterController), never whatever
+        // Transform was actually passed in as `player`. YuanpeiAttackDebugMode's 稻草人 target dummy
+        // has a real CapsuleCollider (needed so hit-checks work) but neither of those two components,
+        // so a raycast aimed at its own XZ position hit the TOP of its own collider (~1.8m up) instead
+        // of the floor - ChargeCrush's red warning marker and BodyCharge/OrbitDash's skim-height both
+        // sample the ground AT the target's position, so both landed on the dummy's head, not the
+        // ground. `ignoreRoot` lets every caller that samples ground at a specific character's
+        // position exclude that character's OWN colliders explicitly, real player or debug dummy alike.
+        private Vector3 ProjectToGround(Vector3 p, Transform ignoreRoot = null)
         {
             Vector3 origin = new Vector3(p.x, p.y + 30f, p.z);
             var hits = Physics.RaycastAll(origin, Vector3.down, 220f, groundMask, QueryTriggerInteraction.Ignore);
@@ -1080,8 +1292,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 if (col == null) continue;
                 if (col.GetComponentInParent<Live2DAction.Input.PlayerInputProvider>() != null) continue;
                 if (col.GetComponentInParent<CharacterController>() != null) continue;
+                if (ignoreRoot != null && col.transform.root == ignoreRoot) continue;
                 if (_boss != null && col.transform.root == _boss.transform.root) continue;
                 if (col.GetComponentInParent<YuanpeiHazard>() != null || col.GetComponentInParent<YuanpeiProjectile>() != null) continue;
+                // 續 146 - YuanpeiEncounter's arena-lockdown ceiling/floor panels (續 134/135, solid
+                // BoxColliders sealing the whole 學校 footprint while a real encounter is live) are
+                // never "the ground" for any of these callers - skip them the same way the debug
+                // tool's own SnapToGround does, or a raycast that starts above the ceiling reads it
+                // as the floor.
+                if (col.GetComponentInParent<Live2DAction.AI.Boss.Yuanpei.YuanpeiEncounter>() != null) continue;
                 return new Vector3(p.x, hits[i].point.y + 0.02f, p.z);
             }
             return new Vector3(p.x, (_cfg != null ? _cfg.arenaCenter.y : 0f) + 0.02f, p.z);

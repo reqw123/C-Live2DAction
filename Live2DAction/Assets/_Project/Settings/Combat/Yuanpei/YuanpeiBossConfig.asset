@@ -34,7 +34,7 @@ MonoBehaviour:
   idealCombatDistanceMax: 14
   maxAttackDistance: 18
   meleeRange: 4.5
-  hoverHeight: 2.6
+  hoverHeight: 4.7
   rechargeHeight: 1.7
   maxWorldY: 8
   hoverBobAmplitudeSpeed: {x: 0.35, y: 0.8}

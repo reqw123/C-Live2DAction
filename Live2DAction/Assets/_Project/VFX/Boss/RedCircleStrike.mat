@@ -24,26 +24,26 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _BaseMap:
-        m_Texture: {fileID: 2800000, guid: 8327788297f605946a8d9461a9d884dd, type: 3}
+        m_Texture: {fileID: 2800000, guid: 0ca9f43b3ad55d84b9137df287756956, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _AddBright: 0.78
-    - _Cols: 6
+    - _Cols: 8
     - _EdgeFade: 0.05
     - _Fade: 1
     - _FloorCut: 0.24
     - _Frame: 0
     - _Intensity: 1.5
     - _KeyWidth: 0.3
-    - _MaskAspectY: 1
-    - _MaskCenterY: 0.5
-    - _MaskRadius: 0.5
-    - _MaskSoft: 0.09
+    - _MaskAspectY: 1.37
+    - _MaskCenterY: 0.47
+    - _MaskRadius: 0.41
+    - _MaskSoft: 0.1
     - _Opacity: 1.45
     - _RedBoost: 2
-    - _Rows: 6
+    - _Rows: 8
     m_Colors:
     - _Tint: {r: 1, g: 0.28, b: 0.14, a: 1}
   m_BuildTextureStacks: []

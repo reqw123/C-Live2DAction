@@ -17,15 +17,19 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private Transform _player;
         private GameObject _source;
         private bool _spent;
+        // 續 136 (Crimson Void Spear) - an elongated projectile's dangerous point is its TIP, not its
+        // pivot/centre. 0 = orb behaviour unchanged (check centred on transform.position).
+        private float _tipForwardOffset;
 
         private static readonly Collider[] _overlapBuf = new Collider[8];
 
         public void Launch(Vector3 dir, float speed, float hitRadius, float damage,
-            float homingSeconds, float homingStrength, Transform player, GameObject source, float life = 6f)
+            float homingSeconds, float homingStrength, Transform player, GameObject source, float life = 6f,
+            float tipForwardOffset = 0f)
         {
             _dir = dir.normalized; _speed = speed; _hitRadius = hitRadius; _damage = damage;
             _homingSeconds = homingSeconds; _homingStrength = homingStrength;
-            _player = player; _source = source; _life = life;
+            _player = player; _source = source; _life = life; _tipForwardOffset = tipForwardOffset;
         }
 
         private void Update()
@@ -59,7 +63,10 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private bool OrbSurfaceHitsPlayer()
         {
             float orbR = _hitRadius * 1.3f + 0.05f;   // visible radius + a hair of skin
-            int n = Physics.OverlapSphereNonAlloc(transform.position, orbR, _overlapBuf, ~0, QueryTriggerInteraction.Ignore);
+            Vector3 checkPoint = _tipForwardOffset > 0f
+                ? transform.position + transform.forward * _tipForwardOffset
+                : transform.position;
+            int n = Physics.OverlapSphereNonAlloc(checkPoint, orbR, _overlapBuf, ~0, QueryTriggerInteraction.Ignore);
             for (int i = 0; i < n; i++)
             {
                 var col = _overlapBuf[i];

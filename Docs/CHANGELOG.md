@@ -4860,3 +4860,680 @@ Play 回報三修：
 其他審過認為可接受（非 bug）：boss 秒殺後 ~1.5s 內若玩家還沒 deactivate 可能再出一招（既有行為）；`YuanpeiProjectile` 極低幀率下理論可穿透（greybox 容忍）；`Situation.arenaHasGoodFloor` 死欄位（無害）。
 
 改 `YuanpeiBoss.cs` + `YuanpeiEncounter.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。
+
+### 追加94 續 133（2026-09-04）— 雷擊標記紅圈換成新的「仿3D」版本
+
+使用者提供 `C:\Users\homec\Downloads\紅圈特效.mp4`，要求把元培 boss 地板攻擊（雷擊標記）的紅圈特效換成這個。
+
+**素材內容**：1920×1080/30fps/3.23s，純黑底，右下角生成工具浮水印。以低角度透視畫成橢圓（不是正圓）的符文法陣——稀疏線圈成形 → 圓心紅點長大成實心盤 → 邊緣起火 → 中心爆出白熱火柱＋石地裂開＋碎石＋粉塵。這個「橢圓透視」本身就是「仿3D」的來源：從第三人稱斜角看下去會讀成貼在地上的立體法陣，不是平面貼圖。
+
+**沿用既有管線**：`Live2DAction/GroundStrikeURP` shader（追加94 續 114 建的）本來就是為「矩形貼圖裡有一顆用 luma/紅色飽和度 key 出來的橢圓法陣＋要裁掉貼圖角落的深色地板」設計的，新素材完全符合這個假設，**shader 本身不用改**，只要換新的 flipbook atlas + 重新量測橢圓的位置/扁率參數：
+
+1. **ffmpeg 離線烘圖**：`drawbox` 蓋掉浮水印 → `crop=1500:1080:210:0` 去黑邊 → `fps=19.7938,scale=288:208,tile=8x8` → `RedCircleStrike2_Atlas.png`（2304×1664，8×8＝64 幀）。burst 落在第 44 幀（≈68%），對應 `strikeFlipbookImpactFraction` 0.68。
+2. **踩坑**：texture importer 沒設 `npotScale=None` 時，Unity 預設會把非 2 的冪次邊長「各自」四捨五入到最近的 2 的冪次——2304×1664 被誤壓成 2048×2048，整張圖被拉伸變形。改回 `npotScale: None` 後才正確保留原生 2304×1664。Import 設定比照舊版：Uncompressed／No Mipmap／Clamp。
+3. **材質**（`RedCircleStrike.mat`，沿用同一份，`YuanpeiAttacks.strikeFlipbookMaterial` 的參照不用動）：`_Cols`/`_Rows` 6→8，橢圓遮罩參數依新素材的螢幕座標重新量測：`_MaskCenterY` 0.5→0.47、`_MaskRadius` 0.5→0.41、`_MaskAspectY` 1→1.37、`_MaskSoft` 0.09→0.10。
+4. **`YuanpeiAttacks`**（`yuanpei_LogoSky`，Map_School.unity）：`strikeFlipbookCols/Rows` 6→8、`strikeFlipbookFrames` 36→64、`strikeFlipbookImpactFraction` 0.55→0.68。
+5. 來源影片歸檔 `Assets/_Project/VFX/Boss/Source/RedCircleStrike2Source.mp4`（僅留底、執行期不播）；舊版 `RedCircleStrike_Flip.png`（6×6）留在磁碟未刪，材質已切到新貼圖不再引用它。
+
+**驗證**：Edit-Mode 建暫時 Quad + Camera 套用新材質，分別截圖 charge 幀（30）與 burst 幀（45）——橢圓遮罩乾淨、沒有矩形地板破邊、火柱與裂地細節清楚，截完即刪除暫時物件，沒有動到任何場景。Console 無錯。這次只動了美術資產＋材質參數＋場景欄位值，沒有改任何 C# 腳本，不需要重跑 EditMode 測試。改 `RedCircleStrike.mat` + `RedCircleStrike2_Atlas.png`（新）+ `Source/RedCircleStrike2Source.mp4`（新）+ `Map_School.unity`（YuanpeiAttacks 欄位）+ `Docs/ASSET_LICENSES.md`。
+
+### 追加94 續 134（2026-09-04）— 直線衝刺頂穿圍牆 + boss 戰觸發後封閉競技場
+
+使用者兩點：1. 發現 boss 有機會因為直線衝刺衝出圍牆之外。2. boss 戰觸發時，把地圖變成封閉的立方體，玩家和 boss 不可用非正常手段離開此地圖（玩家與傳送門對話、玩家被下壓秒殺除外）。
+
+**1. 衝刺頂穿圍牆真因**：`BodyCharge`/`OrbitDash` 的牆壁檢查只用 `Physics.SphereCast(..., chargeCrashMask, ...)`——`chargeCrashMask` 只覆蓋 3 個專用的 `yuanpei_*_Collision` 代理（給 boss 自己撞牆暈眩用），**不含地圖一般的圍牆**。只要衝刺方向剛好對著沒鋪代理碰撞體的圍牆縫隙，`maxDist`（BodyCharge 預設 15m）/ 硬編碼 `16f`（OrbitDash）就會讓 boss 直接衝穿出去。
+
+- `YuanpeiAttacks.cs` 新增 `ClampToArena(start, flatDir, requestedDist)`：射線 vs 競技場圓（`_cfg.arenaCenter`/`arenaRadius`）求交點，扣掉 1.2m margin，回傳 `[3, requestedDist]` 內的安全距離——跟實際牆壁碰撞體完全無關，直接用戰鬥自己定義的圓形邊界卡死，地圖圍牆有沒有縫都不受影響。
+- `BodyCharge`：方向鎖定後 `maxDist = ClampToArena(start, flatDir, maxDist)`，餘下的 while 迴圈距離判斷自動吃到裁切後的值。
+- `OrbitDash`：新增 `dashMaxDist` 區域變數（預設 16f 只當上限），衝刺方向鎖定的當下 `dashMaxDist = ClampToArena(transform.position, dashFlat, 16f)`，取代原本迴圈條件與 `ChargePathTelegraph` 呼叫裡的硬編碼 `16f`。
+
+**2. boss 戰觸發後封閉競技場**：`YuanpeiEncounter.StartEncounter()` 末端呼叫新的 `SpawnArenaLockdown()`——以 `combatCenter` 為中心、`boss.Config.arenaRadius + lockdownMargin`（預設 2.5m）為半徑，蓋出 4 面牆 + 天花板 + 地板共 6 片純 collider 面板（`YuanpeiArenaLockdown` 底下的 `ArenaWall_North/South/East/West/Ceiling/Floor`），Y span 從 -8 到 45（涵蓋飛行系統可能的高度）。每片沿用「本地」圍牆既有的雙 collider 慣例：一顆實心 `BoxCollider`（擋 CharacterController / 載具）+ 一顆外擴 0.6m 的 trigger `BoxCollider` + 掛既有的 `BoundaryBlockEffect`（runtime 元件，不用透過 Editor-only 的 `BoundaryWallBlockEffectSetup`；`ripple` 欄位留空，null-safe）——碰到牆一樣會有既有的 `BoundaryBlockHud`（已常駐在 `GreyboxTest.unity`）畫面震動回饋，沒有另外做新的 VFX/UI 資產。牆掛在 `YuanpeiArenaLockdown`（`YuanpeiEncounter` 自己的子物件）底下，`Victory()`（銀幕 hold 結束、傳送前）與 `Defeat()`（`ResetForRematch` 之後）都呼叫 `DestroyArenaLockdown()` 拆除；場景意外卸載時子物件也會被 Unity 自動清掉，不用額外掛 `OnDestroy`。
+
+兩個排除項天生滿足、不用特別處理：`SceneTransitionRunner` 的返回傳送與 `VoidPunt` 的秒殺下壓都是直接 `player.position` 賦值（`VoidPunt` 全程關閉 `CharacterController`），Unity 不會對停用中的 CharacterController 或非物理移動做 collider 阻擋，所以兩者原本就會直接穿過這些牆——不需要對牆加白名單，也不用在傳送/秒殺前手動先拆牆。傳送門對話走的是既有 `SceneGate` 流程（不同場景/不同觸發），跟這個鎖定 box 完全不相交。
+
+改 `YuanpeiAttacks.cs` + `YuanpeiEncounter.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。牆的手感（會不會擋到既有戰鬥運鏡、有沒有卡到 boss 自己的移動)待焦點 Play 確認。
+
+### 追加94 續 135（2026-09-04）— 封閉範圍太小：改框整個學校 60×60
+
+使用者：「你檔的地方太小了 應該是整個學校領地60*60往上框起來」——續 134 的鎖定範圍是繞著 `combatCenter`＋`arenaRadius+2.5m`（約 13.5m 半徑）的一個小圈，不是整個「學校」場地。
+
+**量測真實場地**（開 Map_School.unity 讀場景物件）：`學校` ground X[-30,30] Z[-145,-85]（60×60，中心 (0,-115)）；既有永久圍牆 `SchoolWall_South/East/West` 完全封死三邊，`SchoolWall_NorthLeft/Right` 只留北面一個缺口（實測邊界 X∈[-4.31,4.31]），高度只有 6m；`SchoolGate_Exit`（傳送門互動點）就坐落在這個缺口正中央 (0,0,-86)。
+
+**改法**：`SpawnArenaLockdown()` 改成以整個學校地皮為準（新欄位 `lockdownCenterXZ` (0,-115)、`lockdownHalfX`/`lockdownHalfZ` 各 31.5、`lockdownGateGapHalfWidth` 4.31，取代舊的 `lockdownMargin`）：
+
+- 南／東／西三面各蓋一片整跨度的高牆（Y span 仍是 -8 到 45，遠高於永久牆的 6m —— boss 衝刺/下壓飛得比 6m 高，永久牆本來就擋不住，這次連牆帶頂一起補上）。
+- 北面比照永久牆缺口，切成 `NorthLeft`/`NorthRight` 兩段，缺口寬度精確對齊實測的 `SchoolGate_Exit` 位置——缺口全高度（-8 到 45）都保持開放，玩家可以正常走到 `SchoolGate_Exit` 前互動離開（符合使用者的「玩家與傳送門對話除外」），只有缺口以外的部分被封死。
+- 天花板／地板一樣蓋滿整個 65×65（含牆厚 overlap）的範圍。
+
+改 `YuanpeiEncounter.cs`。編譯無錯、Console 無錯、**EditMode 303/303 綠**。實際框住範圍、缺口是否精準對齊 `SchoolGate_Exit` 待焦點 Play 確認（走到門口試按 E）。
+
+### 追加94 續 136（2026-09-04）— 新招式：長矛型光彈 SpearVolley（Crimson Void Spear，遠距離連續發射）
+
+使用者提供 `長矛型光彈.zip`（Meshy AI 生成的 3D 長矛模型：銀色矛身＋紫水晶簇握把＋十字護手，98 MB FBX＋4 張貼圖）＋ `長矛型光彈-3d.mp4`（緋紅能量絲＋白色閃電核心的抽象特效參考影片，定調配色氛圍），要求設計一個「遠距離連續性發射型」的新 boss 攻擊手段。
+
+**素材處理**：FBX 匯入 `Assets/_Project/Environment/Meshy/CrimsonVoidSpear/`。**踩坑**：原始檔名 `Meshy_AI_Crimson_Void_Spear_..._texture.fbx` 會命中 `.gitignore` 的 `Meshy_AI_*_texture.fbx` 規則（那條規則是給 >100MB 檔案排除版控用的名稱萬用字元，不看實際大小）——這顆模型只有 98MB，本來不需要排除，用 `AssetDatabase.MoveAsset` 改名成 `CrimsonVoidSpear.fbx`（同 `VoidmoonGate.fbx` 先例）逃出規則、順便保留 GUID 不斷參照。手建 URP/Lit `CrimsonVoidSpear.mat`（base+normal+metallic 貼圖，沿用 `YuanpeiLogo.mat` 同一套接法，略過 roughness）。量測模型：單一 mesh、1,347,363 頂點、世界尺寸 1.87×0.72×0.79m、長軸沿 local +X（用隔離預覽場景＋截圖確認，尖端在 +X、握把水晶簇在 -X）。
+
+**投射物 prefab**（`Assets/_Project/VFX/Boss/CrimsonVoidSpearProjectile.prefab`）：Model 子物件套用材質、`localRotation = euler(0,-90,0)`（把 local +X 尖端轉到 root 的 +Z/forward，配合 `YuanpeiProjectile.Update()` 的 `transform.forward = _dir`）、`localScale = 64`（世界半長 ≈0.6m）。Root 掛 `CapsuleCollider`（isTrigger，沿 Z 軸）＋已烤好的 `YuanpeiProjectile` 元件。以隔離預覽場景驗證：對著世界 +X 方向「發射」後，尖端確實朝 +X（截圖確認）。
+
+**`YuanpeiProjectile.cs` 小改**：`Launch()` 新增可選參數 `tipForwardOffset`（預設 0，orb 行為不變）——命中檢查改成在 `transform.position + transform.forward * tipForwardOffset` 做 OverlapSphere，讓細長的長矛判定發生在「矛尖」而不是幾何中心（跟 `DiscFaceHitsPlayer` 系列「命中點＝視覺前緣」的既有原則一致）。
+
+**`YuanpeiAttacks.SpearVolley` 新攻擊**：跟既有 `ProjectileBurst`（兩波齊射、完全鎖定不追蹤）刻意做出不同的遠程節奏——原地連續發射 9 發，每發都各自重新瞄準發射當下的玩家位置＋0.4s 短暫追蹤（`homingStrength` 1.1），逼玩家持續走位而不是抓兩個時間點閃避。前搖用新的 `SpearMuzzleGlow`（單顆核心緋紅→虛空紫脈動點亮，刻意不用 `MuzzleCharge`——那是 ProjectileBurst 的招牌螺旋聚粒視覺，用同一招會分不清是哪個攻擊要來了）。每發都動態加 `TrailRenderer`（緋紅→虛空紫漸層）＋一顆小 `Point Light`。新增專屬色系欄位 `spearGlowColor`（緋紅）/`spearCoreColor`（虛空紫），不動用既有 `castColor`/`burstColor`（那組是其他招式共用的暖金/橘色系）。`spearProjectilePrefab` 欄位留空時會退回一個灰盒 Capsule，攻擊仍可運作。
+
+**資料/排程**：`YuanpeiAttackId` 新增 `SpearVolley`（enum 索引 9，接在 `OrbitDash` 後面，不影響既有索引）。`YuanpeiScheduler.Matches()` 新增情境：玩家距離 ≥13m 時加權（跟 `ChargeLine` 的「≥9m 加權」區隔開，SpearVolley 專屬「更遠」的距離帶）。新建 `YuanpeiAttack_SpearVolley.asset`（`minRange`12／`maxRange`20／`isMajorHazard`=true／`cooldownSeconds`4.0／`healthDamage`11／`count`9／`number1`(速度)20／`number2`(發射間隔)0.22／`number3`(追蹤強度)1.1），加進 `yuanpei_LogoSky`（Map_School.unity）的 `attackPool`（8→9 個招式），`YuanpeiAttacks.spearProjectilePrefab` 欄位接上新 prefab。
+
+**測試**：`YuanpeiBossLogicTests` 新增 2 個（遠距離時選中 SpearVolley／太近時被 minRange 排除）。
+
+改 `YuanpeiAttackDef.cs` + `YuanpeiAttacks.cs` + `YuanpeiProjectile.cs` + `YuanpeiScheduler.cs` + `YuanpeiBossLogicTests.cs` + `Map_School.unity`（attackPool + spearProjectilePrefab 欄位）+ 新增 `CrimsonVoidSpear.mat`/`CrimsonVoidSpearProjectile.prefab`/`YuanpeiAttack_SpearVolley.asset` + `Docs/ASSET_LICENSES.md`。編譯無錯、Console 無錯、**EditMode 305/305 綠**（+2 新測試）。實際發射手感、追蹤強度、傷害量待焦點 Play 確認。
+
+### 追加94 續 137（2026-09-04）— SpearVolley 調校：觸發距離 13→8m、權重稍微提高
+
+使用者 Play 回饋：「13m 太長了 8m，並且權重稍微提高」。
+
+- `YuanpeiScheduler.Matches()` 的 SpearVolley 情境加權門檻 13→8m。
+- `YuanpeiAttack_SpearVolley.asset`：`minRange` 12→8（跟情境門檻對齊，否則 8m 那個門檻永遠碰不到——原本 12 的硬性下限會先把 8-12m 這段距離擋在候選名單外）、`baseWeight` 1.5→2.0（稍微提高，介於 ProjectileBurst 的 2.5 跟 FocusLaser 的 1 之間，往上調一階）。
+- `YuanpeiBossLogicTests.cs`：2 個 SpearVolley 測試的 `Def()` minRange 參數同步 12→8（測試本身的距離判斷邏輯不受影響，只是讓測試資料跟正式數值對齊）。
+
+改 `YuanpeiScheduler.cs` + `YuanpeiAttack_SpearVolley.asset` + `YuanpeiBossLogicTests.cs`。編譯無錯、Console 無錯、**EditMode 305/305 綠**。
+
+### 追加94 續 138（2026-09-04）— SpearVolley 太好躲 + boss 圓盤滲入地板
+
+使用者：「這招太容易被玩家躲開，然後boss很長有一部份身體滲入地板」。兩個獨立問題。
+
+**1. SpearVolley 太好躲**：順便把 `SpearVolley()` 裡違反專案規則 7（平衡數值不得寫死在腳本）的兩個 `const`（`homingSeconds`/`hitRadius`）扶正成 `YuanpeiAttackDef` 欄位——`YuanpeiAttackDef` 新增 `number4`/`number5`（沿用 `number1-3` 的命名慣例，給以後其他招式也能用）。`YuanpeiAttack_SpearVolley.asset` 調校：`number1`(速度) 20→23、`number2`(發射間隔) 0.22→0.15（齊發更密，走位間隔變小）、`number3`(追蹤強度) 1.1→1.9、`number4`(追蹤秒數，新) 0.7（原本硬編碼 0.4）、`number5`(命中半徑，新) 0.36（原本硬編碼 0.28）。
+
+**2. boss 圓盤滲入地板**：查證後發現問題比字面描述更具體——boss 視覺（`VisualRoot`）借用元培校徽天空地標模型（idle 時 scale 1700、世界直徑 ~32m），`YuanpeiBoss.IntroRoutine()` 早就有把它縮小成戰鬥尺寸的機制（`combatVisualScaleFraction`，code 預設 0.28，場景也是 0.28）——縮小後直徑 ~9m，但戰鬥懸浮高度 `hoverHeight` 只有 2.6（圓心離地僅 3.1m），縮小後的圓盤半高（~4.43m）比懸浮高度還高，底部穩定滲入地板約 1.7-2.2m（含 bob 擺動的低點）。問過使用者「戰鬥時縮小圓盤 vs 大幅拉高懸浮高度」，選了縮小圓盤——但單靠縮小圓盤到能完全塞進現有 2.6m 懸浮高度以內（需要 F≤0.14，直徑僅 ~4.6m）會比現有 `BodyCollider` 判定球（直徑 7.2m）還小，視覺會比判定範圍還小、打擊感很怪，所以額外小幅拉高懸浮高度配合（沒有完全照原本回答「懸浮高度不用重調」，這裡誠實記一筆）：
+
+- `YuanpeiBoss.combatVisualScaleFraction`（Map_School.unity 場景欄位）0.28→**0.24**（縮小後直徑 ~7.76m，仍比 7.2m 判定球大一點，比例正常）
+- `YuanpeiBossConfig.hoverHeight`（`YuanpeiBossConfig.asset`）2.6→**4.7**（含 0.35 bob 低點後，圓盤底部離地約 +0.56m 安全距離）
+
+這是與眾多攻擊共用的全域欄位，但衝撞類招式（BodyCharge/ChargeLine/OrbitDash/ChargeCrush）都會 `SuspendHover`/`SuspendYClamp` 自行接管 Y 軸，遠程類（ProjectileBurst/FocusLaser/SpearVolley）只是瞄準玩家發射、不依賴固定的懸浮高度數字，理論上都不受影響，但這是全域數值，**其他招式的手感、F 處決運鏡、鎖定視角待使用者焦點 Play 逐一確認沒有被這次拉高的懸浮高度意外牽動**。
+
+改 `YuanpeiAttackDef.cs` + `YuanpeiAttacks.cs`（SpearVolley 讀 number4/5）+ `YuanpeiAttack_SpearVolley.asset` + `Map_School.unity`（combatVisualScaleFraction）+ `YuanpeiBossConfig.asset`（hoverHeight）。編譯無錯、Console 無錯（Console 出現的 2 個 `CubismRenderController.UpdateBlendColors` IndexOutOfRangeException 跟本次改動無關——是 Live2D 範例模型既有的、與 Yuanpei boss 系統毫無關聯的例外，未追查）、**EditMode 305/305 綠**。
+
+### 追加94 續 139（2026-09-04）— 續138 調完還是滲地板：改用即時量測取代手調常數
+
+使用者：「調整之後仍然有一部份是陷入地板，請讓他稍微浮在空中；使用衝撞攻擊時就讓圓的外弧切線地板」。
+
+續138 靠手算 AABB 尺寸調 `hoverHeight`/`combatVisualScaleFraction`，估出來的圓盤半高（~3.79m）跟懸浮高度（4.7m）搭配 bob 擺動後理論上只有 0.4-0.05m 安全距離——太緊，稍有誤差就穿模，而且衝撞攻擊（BodyCharge/ChargeLine/OrbitDash）側身時用的 `skimHeight` 完全是另一個獨立的舊手動常數（1.1），跟圓盤縮小後的實際半徑毫無關係，同樣會滲地板或懸空過高。這次不再猜數字，改成**即時量測實際渲染範圍**：
+
+- `YuanpeiBoss.VisualBottomOffset()`（新公開方法）：取 `visualRoot` 目前所有 Renderer 的合併世界座標 bounds，回傳「pivot 到 bounds.min.y 的距離」——這個值會自動反映**當下**的縮放與旋轉（懸浮的扁平姿態、衝撞的側身姿態都各自量到正確答案），不用每次改模型/縮放比例就要重算一次常數。
+- `HoldHover()`：新增地板安全下限 `minY = floor + VisualBottomOffset() + groundClearanceMargin`，`targetY` 低於這條線時夾回來——不管 `hoverHeight`/bob 怎麼擺動，圓盤最低點永遠保證至少有 `groundClearanceMargin`（新欄位，`YuanpeiBossConfig.asset`，預設 0.5m）的浮空間隙，滿足「稍微浮在空中」。
+- `BodyCharge`/`OrbitDash`：原本寫死的 `skimHeight`（1.1）改成側身姿態鎖定後（`SlerpDiscInto(...edgeFirst:true)` / `FaceDiscSideAlong` 之後）當場呼叫 `_boss.VisualBottomOffset()`，**不加安全間隙**（使用者明確要求「外弧切線地板」＝剛好碰到，不是浮空也不是插入）。`ChargeCrush` 沒有動——它的下壓是整個圓盤平躺貼地（`FaceDiscAlong(Vector3.down)`），扁平姿態下 pivot 到地面本來就只差半個厚度（近乎 0），跟這次「側身圓弧」的情境是不同的幾何問題，原本的 0.15/0.6 手動值沒有這個 bug。
+
+Console 驗證：暫時把 boss 縮到戰鬥比例（scale ×0.24）＋懸浮座標 (floor+hoverHeight)，呼叫 `VisualBottomOffset()` 量到 3.80m（跟續138手算的 3.79m 幾乎一致，證實手算沒錯——問題是安全間隙太薄，不是估算錯誤），套新公式後穩定狀態安全間隙 0.40m、bob 最低點靠新的 `HoldHover` 夾線強制頂到 0.5m——不會再看誤差吃掉間隙。
+
+改 `YuanpeiBoss.cs`（`VisualBottomOffset()` + `HoldHover()` 夾線）+ `YuanpeiBossConfig.cs`（`groundClearanceMargin` 欄位）+ `YuanpeiAttacks.cs`（`BodyCharge`/`OrbitDash` 的 `skimHeight` 改即時量測）+ `YuanpeiBossConfig.asset`。編譯無錯、Console 無錯、**EditMode 305/305 綠**。實際懸浮/衝撞貼地效果待使用者焦點 Play 確認。
+
+### 追加94 續 140（2026-09-05）— 新開發者工具：Yuanpei Attack Debug Mode（F8）
+
+使用者：「有沒有一種開發者模式 可讓我讓清楚看到boss的每一種攻擊手段的機制 外觀 ui 範圍等等 專門用來優化美術系統的」。
+
+`yuanpei_LogoSky` 沒有 Animator 驅動的攻擊（跟武士/屁孩王不同，全部走 `YuanpeiAttacks` 裡的程序化 coroutine），所以既有的 `BossAnimationDebugMode`（F7，播 Animator state）架構不能直接套用。新建一套同精神、但機制不同的獨立工具：
+
+**`YuanpeiAttackDebugMode.cs`**（`_Project/Game/Debug/`，跟其他 dev overlay 一樣包 `#if UNITY_EDITOR || DEVELOPMENT_BUILD`）：
+- **F8** 切換：進入時 `boss.enabled = false`（直接停掉 `YuanpeiBoss.Update()`——boss 自己的排程/懸浮/選招全部停止，改成完全手動控制），玩家保留完整操控（不像武士工具需要借守望者鏡頭——這裡的重點就是要能自己走位到不同距離觀察，玩家自己的攝影機本來就夠用，沒有另外做鏡頭）、玩家短暫無敵（`Health.SetInvulnerable`，測試時不會真的被打死）。
+- **數字鍵 1-9** 直接對應 boss `attackPool` 裡的 9 個招式，跳過 scheduler 的冷卻/距離/能量/連續判定，直接呼叫 `YuanpeiAttacks.Run(def, player, boss, ...)`——同一招可以無限重複觸發，方便逐幀觀察。**R** 重放上一招、**P** 暫停（`Time.timeScale=0`）、**-/=** 調慢/調快（`Time.timeScale`，coroutine 的 `WaitForSeconds`/`Time.deltaTime` 都會跟著變speed，等於全域慢動作）。
+- **G** 切換範圍圈：白圈＝競技場邊界（`arenaCenter`/`arenaRadius`），綠圈＝目前選定招式的 `minRange`，紅圈＝`maxRange`（`LineRenderer` 即時畫在 boss 位置周圍）——這是「範圍」需求的具體回應，讓使用者不用看數值就知道要站多遠測試。
+- 左上角 `OnGUI` 面板列出全部 9 招（id／顯示名稱／範圍／是否 major hazard），目前選中的標星號。
+- **安全網**：`ChargeCrush` 的下壓秒殺（`VoidPunt`）正常只有靠 `YuanpeiEncounter.Defeat()`（死亡→傳送回起點）才會把掉進虛空的玩家撿回來——這個工具完全繞過 `YuanpeiEncounter`，不會走那條路。加了保險：每招放完後檢查玩家 Y 是否掉到地板以下太多（預設 8m），有的話自動把玩家傳送回 boss 旁邊、順便修正可能還沒復原的 `CharacterController`。
+- Exit 時全部還原：boss 恢復 `enabled=true`（FSM 正常接手）、玩家無敵解除、HUD 顯示狀態還原、範圍圈清除。
+
+**`YuanpeiAttackDebugSetup.cs`**（Editor 選單 `Tools/Live2DAction/[Debug] Setup Yuanpei Attack Debug Mode`，比照 `BossAnimationDebugSetup.cs` 的慣例）：在目前已載入的場景裡找 `YuanpeiBoss`，把新的 `YuanpeiAttackDebugMode` GameObject 建在 boss 所在的**同一個場景**（Map_School，不是 GreyboxTest，讓它跟著地圖串流一起載入/卸載）並接好 `boss`/`attacks`/`hud` 三個欄位。已在 Map_School.unity 跑過一次，`pool size=9` 全部接上。
+
+`YuanpeiBoss.cs` 額外加一個小的公開存取器 `AttackPool`（原本 `attackPool` 是純 private serialized list，debug 工具需要在執行期讀取才知道有哪些招式可以按數字鍵觸發）。
+
+改 `YuanpeiBoss.cs`（`AttackPool` 存取器）+ 新增 `YuanpeiAttackDebugMode.cs` + `YuanpeiAttackDebugSetup.cs` + `Map_School.unity`（新 GameObject）。編譯無錯、Console 無錯、**EditMode 305/305 綠**（純新增工具，沒動任何戰鬥邏輯，不需要新測試）。工具本身待使用者實際進 Play 用 F8 試按確認。
+
+### 追加94 續 141（2026-09-05）— 續140 工具的 3 點回饋：稻草人目標 + 可移動 + 暫停自由視角
+
+使用者：「1. 如果boss都站著不動的話 衝撞類攻擊其實無法觀察 2. boss現在瞄準玩家位置進行攻擊也很難觀察，請製作一個稻草人當目標對象，並且要有手段可以移動稻草人位置 3. 使用p按鍵暫停時，請讓玩家視角不受限制 這樣才能多角度觀察」。
+
+**1+2. 稻草人目標**：新增 `YuanpeiDebugTargetDummy`——純原生幾何拼出來的稻草人剪影（木樁＋稻草色 Capsule 身體＋Sphere 頭＋交叉 Arms，全部用 `MaterialPropertyBlock` 上色，沒有另外做/匯入美術資產，反正只是除錯用的靶）＋一顆真的 `CapsuleCollider`（跟玩家本體同尺寸，讓攻擊原本「檢查 `col.transform.root == 目標`」的命中判定邏輯照樣能用）＋一顆 `Health` 元件（承受傷害不會報錯，順便能看到扣血）。所有攻擊現在瞄準**稻草人**（`attacks.Run(def, _dummy.transform, boss, ...)`），不再瞄準真玩家——真玩家完全不會被除錯攻擊打到，稻草人可以固定站在你想要的位置，不會因為玩家自己在動而讓攻擊軌跡難以觀察。
+
+- **方向鍵**：移動稻草人（世界座標 XZ，`Time.unscaledDeltaTime` 驅動，暫停時也能移動）。
+- **Shift+方向鍵**：改成移動 boss 本體——這樣就能自己拉開 boss 與稻草人的距離，衝撞類攻擊（BodyCharge/ChargeLine/OrbitDash）才有真正的助跑空間可以觀察到完整衝刺過程（回應第 1 點）。
+- **T**：稻草人瞬移到玩家目前所在位置（快速把靶放到你站的地方）。
+- 稻草人第一次建立時預設放在 boss 前方 10m（地面貼齊，`Physics.Raycast` 找地板），之後移到哪就留在哪，不會每次開關 F8 就重置。
+- `ChargeCrush` 的秒殺下壓安全網（掉出地板自動撿回）改成檢查**稻草人**的 Y 座標（原本檢查玩家，現在攻擊已經不打玩家了）。
+
+**3. 暫停時自由視角**：真因是暫停用 `Time.timeScale = 0` 會讓 `ThirdPersonCameraController` 的視角平滑轉向也一起停格（它的旋轉內插讀 `Time.deltaTime`，timescale 0 時這個值等於 0，滑鼠怎麼動視角都不會轉）。**沒有動 `ThirdPersonCameraController` 本身**（CLAUDE.md 手動調校值权威原則，這條路線風險較高）——改成在除錯工具自己內部做一個獨立、暫停時才啟用的自由視角/飛行鏡頭：暫停瞬間停用 `ThirdPersonCameraController`、之後用滑鼠原始位移（不受 timescale 影響）直接轉 `Camera.main` 的角度、`WASD`＋`Space`/`Ctrl` 用 unscaled time 飛行移動；取消暫停時把控制權還給 `ThirdPersonCameraController`。`WASD` 平常是玩家移動鍵，但暫停時角色本來就因為 `Time.deltaTime=0` 動不了，借來當飛行鏡頭按鍵沒有衝突。
+
+改 `YuanpeiAttackDebugMode.cs`（稻草人建置/移動/瞄準改向、`SetFreeLook`/`DriveFreeLook` 自由鏡頭）。編譯無錯、Console 無錯、**EditMode 305/305 綠**（純工具改動不影響戰鬥邏輯）。三點回饋的實際手感待使用者用 F8 重新測試。
+
+### 追加94 續 142（2026-09-05）— 續141 沒修好：稻草人自身碰撞體污染了地板偵測
+
+使用者：「1. 必須讓稻草人可以移動位置 2. 必須可以讓衝撞類攻擊可以完整對稻草人演示 位移 紅圈預警等等」——回去查程式碼，抓到兩個具體、確定的真因（不是猜測）：
+
+**1. 稻草人「移不動」的真因**：`SnapToGround(t)` 每次移動後都會從稻草人自己目前的位置往上 40m、往下打一條 Raycast 找地板——但這條射線會先打到**稻草人自己的 `CapsuleCollider`**（續141 特地加上去、讓攻擊命中判定能用的那顆），`Physics.Raycast` 只回傳第一個命中，所以每次移動後 Y 座標都會立刻被吸回稻草人自己的身高（~1.8m），而不是真正的地板——等於稻草人的水平位移雖然有生效，但垂直高度每幀都被自己的碰撞體「拉回原地」，看起來就像卡住/移不動。改成 `Physics.RaycastAll` 排除 `collider.transform.root == t`（正在被貼地的那個物件自己）後取第一個命中。
+
+**2. 衝撞類攻擊「紅圈預警、位移都出不來」的真因**：`YuanpeiAttacks.ProjectToGround(Vector3 p)` 原本只排除**真玩家**的碰撞體（`PlayerInputProvider`／`CharacterController`）跟 boss 自己，完全不知道「稻草人」這種東西存在。稻草人有真的 `CapsuleCollider`（同上，命中判定需要），所以任何「在目標角色所在 XZ 位置往下找地板」的呼叫（`ChargeCrush` 的紅色警示標記 `MakeGroundMarker`／鎖定下壓點 `lockGround`、`BodyCharge`/`OrbitDash` 的貼地高度 `groundY`/`floorY`、`LightningMark` 的紅圈落點）全部打到稻草人自己的身體頂端，不是地板——警示標記位置跟衝撞的貼地高度全部算錯，衝撞類攻擊自然「沒有位移、紅圈預警出不來」（游到錯誤高度、標記位置飄在稻草人頭上等等）。改法：`ProjectToGround` 新增可選參數 `Transform ignoreRoot`，呼叫端在對著 `player`（現在是稻草人）取地板高度時一律多傳 `player` 進去排除；boss 自己位置的呼叫（`ChargePathTelegraph` 的地板起點）不受影響，本來就有排除 boss 自己。
+
+**順便**：方向鍵移動稻草人／Shift+方向鍵移動 boss 改成**跟隨攝影機方向**（原本是死板的世界座標軸，「上」不一定是螢幕上的「前方」，容易讓人誤以為沒有在動）；稻草人頭頂加一根高 3m 的亮綠色柱狀 beacon，遠遠的、任何角度都看得到它現在站在哪。
+
+改 `YuanpeiAttacks.cs`（`ProjectToGround` 加 `ignoreRoot` 參數＋ 6 個呼叫點）+ `YuanpeiAttackDebugMode.cs`（`SnapToGround` 改用 RaycastAll 排除自己、移動改跟攝影機方向、稻草人加 beacon）。編譯無錯、Console 無錯、**EditMode 305/305 綠**。這次是真因層級的修正（不是又一輪猜測），但仍待使用者用 F8 實測確認。
+
+### 追加94 續 143（2026-09-05）— 稻草人在高空：真因是 boss 從沒被放到戰鬥位置過
+
+使用者：「你需要提供一種方法移動稻草人 並且現在稻草人在非常高的高空 請移動到地面」。
+
+**真因**：`yuanpei_LogoSky` 在場景裡的**預設／閒置狀態就是掛在天空的巨大校徽地標**（`(0, 42, -132)`、scale 1700，見追加94 續86）——平常要靠正式觸發 boss 戰、跑 `YuanpeiBoss.IntroRoutine()`（2.6 秒降落＋縮小演出）才會落到地面戰鬥尺寸。這個除錯工具原本只有「凍結 boss 現在的 FSM」，**從沒讓 boss 真的進入戰鬥姿態**——如果使用者是直接走進 Map_School 就按 F8（沒有先正常觸發一次 boss 戰），boss 當下還停在天空巨大地標的位置／尺寸，稻草人預設又是「boss 前方 10m」，於是也跟著生在天上。
+
+**修法**：`YuanpeiBoss.cs` 新增公開方法 `SnapToCombatPose(Vector3 center)`——瞬間（不跑 2.6 秒演出、不動 FSM 狀態）把 boss 放到戰鬥位置＋縮小到戰鬥尺寸，本質上是 `IntroRoutine()` 的無動畫版本，`YuanpeiAttackDebugMode.Enter()` 進入時一律先呼叫這個，boss 不會再卡在天空巨大地標狀態。稻草人預設出生點改成相對 `arenaCenter`（固定、已知的地面座標），不再依賴 boss 當下的任意朝向。
+
+**另外加了兩層保險**（不只是「應該不會再發生」，而是就算又有類似狀況也有辦法自救）：
+- **Home 鍵**：新增「無條件重置稻草人到 boss 旁邊地面」——完全不靠 Raycast（不會有任何物理判定失敗的可能），永遠可用的逃生手段。
+- `SnapToGround`（貼地用的 Raycast）現在如果真的找不到地板（或打到 boss 自己的碰撞體），會 fallback 回 `arenaCenter.y`（關卡設計時就定好的、可信賴的地面高度），不會放著錯誤高度不管。
+
+改 `YuanpeiBoss.cs`（`SnapToCombatPose`）+ `YuanpeiAttackDebugMode.cs`（Enter() 呼叫、稻草人預設出生點、`ResetDummyPosition()`／Home 鍵、`SnapToGround` fallback）。編譯無錯、Console 無錯、**EditMode 305/305 綠**。
+
+（本次未 commit，2026-09-05 新對話透過 MCP 連上 Unity 直接進 Play 用反射呼叫 `Enter()`/`SnapToGround()` 驗證：boss 從天空的 `(0,42,-132)` 正確落到戰鬥位置 `(-2,5.2,-105)`，稻草人生在地面 `(-2,0.5,-100)`，水平移動後 Y 仍穩定在地面高度——續 143 的修法確認有效。）
+
+### 追加94 續 144（2026-09-05）— 稻草人加上垂直移動
+
+使用者：「稻草人只能水平移動不能上下移動」——續 141-143 的方向鍵只驅動 XZ，從沒給過 Y 軸控制。
+
+**修法**：新增 `verticalUpKey`/`verticalDownKey`（預設 PageUp/PageDown）：不按 Shift 時上下移動稻草人，按 Shift 時上下移動 boss（跟既有「不按 Shift＝稻草人、Shift＝boss」的方向鍵慣例一致）。
+
+垂直位移獨立於既有的「水平移動後自動貼地」邏輯之外——新增 `_dummyHeightOffset` 累積玩家手動加的垂直位移，`SnapToGround(t, heightOffset)` 新增可選參數，水平移動後重新貼地時把這個 offset 疊加在算出來的地板高度上，而不是每次都蓋掉。否則水平＋垂直交替使用時，下一次按方向鍵水平移動就會把手動抬高的稻草人立刻拉回貼地高度，等於垂直調整形同虛設。`T`（稻草人瞬移到玩家）跟 Home（無條件重置）這兩個「已知安全位置」的重置點會把 offset 歸零，避免殘留的垂直偏移污染這些原本該是「乾淨已知位置」的操作。
+
+**驗證**：Play 模式下用反射直接呼叫 `SnapToGround` 確認：手動疊加 3.5m 高度後，水平移動＋重新貼地（offset=3.5）維持在抬高的 Y；同一位置用 offset=0 重新貼地則正確掉回地板高度——證實 offset 疊加邏輯正確,不會被水平移動的貼地覆寫掉。
+
+改 `YuanpeiAttackDebugMode.cs`（`verticalUpKey`/`verticalDownKey` 欄位、`_dummyHeightOffset`、`HandleReposition` 垂直分支、`SnapToGround` 加 `heightOffset` 參數、`T`／`ResetDummyPosition` 歸零 offset、log／`OnGUI` 說明文字更新）。編譯無錯、Console 無錯（`refresh_unity` 後只有既有無關警告）。純工具改動不影響戰鬥邏輯，不需要新測試。
+
+### 追加94 續 145（2026-09-05）— 稻草人預設重生點改成錨定元培廣場
+
+使用者：「可不可以直接稻草人座標拉下來 目前他位於高空 讓他在元培廣場就行 參照物件做逼近」。
+
+`ResetDummyPosition()`（F8 首次建立稻草人／Home 鍵）原本的參考點是 `boss.Config.arenaCenter`——一個 ScriptableObject 欄位，數值上跟真正的地面位置一致（Play 模式驗證過落點都在 Y=0.5 的「學校」地面），但不是使用者能直接在場景裡指認的東西。改成 `GameObject.Find("yuanpei_QuietCampusPlaza")`：找得到就用這個實際場景物件的 XZ 當基準（+ 5m forward，Y 一樣交給既有的 `SnapToGround` 貼地判定，跟物件本身的 pivot Y 無關），找不到才退回舊的 `arenaCenter` 當備援。
+
+**Play 驗證**：反射呼叫 `Enter()` → 稻草人生在 `(0.08, 0.50, -109.44)`，X/Z 對齊元培廣場中心 `(0.08, ?, -114.44)` + 5m forward，Y 落在真實地面 0.5——不是高空。
+
+改 `YuanpeiAttackDebugMode.cs`（`ResetDummyPosition` 改用 plaza 物件當參考點，找不到時 log 提示走 fallback）。編譯無錯、Console 無錯。純工具改動，不需要新測試。
+
+### 追加94 續 146（2026-09-05）— 稻草人真正卡在天空的真因：撞到「已觸發過的真實戰鬥」留下的競技場封閉天花板
+
+使用者在真正的 Play session 裡回報「我停在play mode 你幫我看看稻草人還在天空是怎麼回事 我在boss旁邊」——這次直接連上正在跑的 Play session 現場診斷（不是重新猜），從 `SnapToGround` 實際跑的那條 raycast 抓到真因：
+
+**真因**：使用者在按 F8 之前，顯然先正常觸發過一次真的 boss 戰（走進 `BossRoomTrigger`），`YuanpeiEncounter.StartEncounter()` 因此蓋出了續 134/135 的「競技場封閉」——6 片實心 `BoxCollider`（南/東/西/南北缺口/天花板/地板），天花板 `ArenaWall_Ceiling` 在 Y≈45-46。這個戰鬥沒有正常跑完 `Victory()`/`Defeat()`（沒被拆除），使用者接著按 F8 進入這個除錯工具——**這個工具完全繞過 `YuanpeiEncounter`**，不知道場上還立著這片天花板。`SnapToGround`/`ProjectToGround` 的 raycast 排除清單只排除了「自己」跟「boss」，從沒排除過 `YuanpeiEncounter` 這片封閉牆——於是從稻草人位置往上打的 raycast，往下打到的第一個東西就是這片天花板（Y=46），稻草人就被「貼地」貼到天花板上，讀起來像是莫名其妙卡在高空。
+
+實測現場抓到的 raycast 結果印證：`hit[1]: ArenaWall_Ceiling (root=YuanpeiEncounter) y=46`（真正的地面 `學校` 在 `hit[2]`，y=0.5，天花板排在地板前面先被打到）。
+
+**修法**：`YuanpeiAttackDebugMode.SnapToGround` 與 `YuanpeiAttacks.ProjectToGround` 都新增一條排除規則——`col.GetComponentInParent<YuanpeiEncounter>() != null` 就跳過，不當作地板。兩處都改（不只除錯工具那邊）：`ProjectToGround` 是真實 boss 戰攻擊（ChargeCrush 警示標記、BodyCharge/OrbitDash 貼地高度）也在用的共用方法，同一個「天花板被誤判成地板」的 bug 理論上也能在真實戰鬥中發生（例如戰鬥途中 boss 飛得比封閉天花板還低時），一併修掉。
+
+**現場收尾**：改完後 Console 出現的一批 `NullReferenceException`/`ArgumentNullException("dest")`（`YuanpeiBossHUD`/`PortalVideoSurface`/`PlayerGuardAnimatorLink`）是 Unity 編輯期間重新編譯觸發的 domain reload 造成的過渡期雜訊，跟這次改動的檔案無關（棧軌跡對不上）。這次的 domain reload 也让 Unity 自動重啟了那個 Play session（`isPlaying` 全程維持 `true`，但執行期建立的稻草人物件被清掉、F8 狀態被重置回 `Active=false`），順便造成使用者原本卡在天空的那個稻草人實例本身已經不在了——不是修好了舊的那個，是舊的那個連同整個 Play session 一起被 domain reload 重置掉了。已確認場上目前沒有殘留的 `YuanpeiArenaLockdown`（域重載時剛好沒有真實戰鬥在進行）。使用者接下來直接重新按 F8 即可用到新邏輯，理論上不會再卡天花板。
+
+改 `YuanpeiAttackDebugMode.cs`（`SnapToGround` 排除 `YuanpeiEncounter`）+ `YuanpeiAttacks.cs`（`ProjectToGround` 排除 `YuanpeiEncounter`）。編譯無錯、Console 無新增與本次改動相關的錯誤。
+
+### 追加94 續 147-149（2026-09-05）— 稻草人無限血量／記住上次位置、boss 動作卡玩家鏡頭
+
+使用者一次提 4 點：1. 稻草人必須無限血量 2. boss 第5/6項技能沒有完整展示 3. 記住上次稻草人設定位置 4. 有時使用 boss 動作時玩家視角會改變且無法再控制。逐項處理：
+
+**1. 稻草人無限血量（續 147）**：`BuildDummy()` 幫稻草人掛的 `Health` 元件原本沒設無敵，改成掛上後立刻 `SetInvulnerable(this, true)`——它是重複測試用的靶，不該真的死亡（死亡可能觸發攻擊的死亡反應邏輯，或單純扣血歸零後失去當靶的意義）。
+
+**3. 記住上次稻草人位置（續 149）**：新增 `PlayerPrefs` 存讀（`YuanpeiDebugDummy.X/Y/Z/HeightOffset`）——方向鍵、PageUp/PageDown、T、Home 這些會移動稻草人的操作都順便存一次；`Enter()` 建立全新稻草人時（`freshDummy`）先試著讀存檔位置，讀不到才照舊退回元培廣場預設點。這樣不只同一個 Play session 內的 F8 開關會記得，連續開新的 Play session 也會記得上次放在哪。
+
+**4. boss 動作卡玩家鏡頭（續 148）**：真因——`ChargeCrush` 命中判定為真時會跑 `CrushEjectCam`，這個 coroutine 會關掉 `ThirdPersonCameraController` 給運鏡用，設計上是靠 `YuanpeiEncounter.Defeat()`（死亡畫面＋傳送完之後）才重新打開。這個除錯工具完全繞過 `YuanpeiEncounter`，所以只要 F8 底下對著稻草人開出一次「命中」的 ChargeCrush，玩家攝影機就會被關掉且永遠沒人把它打開——完全對應使用者說的「有時使用boss動作時 玩家視角會改變且無法再控制」。修法：不去逐招堵（以後可能還有別的招式會關攝影機），改成在 `Update()` 加一條自我修復——只要目前不是工具自己的暫停自由視角（`_paused`）在佔用鏡頭，每一幀都強制確保 `ThirdPersonCameraController.enabled = true`。
+
+**2. boss 第5/6項技能沒有完整展示（調查中，需要使用者現場確認）**：查證 attackPool 順序，數字鍵 5＝index 4＝`BodyCharge`（肉身衝撞，range 5-12，n1速度18/n2距離15）、數字鍵 6＝index 5＝`ChargeLine`（長距離高速直線衝，range 8-20，n1速度28/n2距離24）——兩者都是共用同一段衝撞邏輯的長距離招式，實際能跑多遠受兩件事同時限制：(a) `YuanpeiBossConfig.arenaRadius` 目前是 **11**（競技場只有 22m 直徑），`ClampToArena` 一定會把任何衝刺距離砍到頂多這個範圍內，`ChargeLine` 設計上「24m」的最大值本來就不可能在這個競技場完整跑滿；(b) F8 預設的稻草人／boss 距離只有 ~4.9m，比 `ChargeLine` 自己的 `minRange`(8) 還近，衝撞前雖然有 `runway=6.5` 的自動後退，但後退量被硬性夾在 0-7m，湊出來的起始距離通常還是明顯短於這兩招「正常在真實戰鬥中」該有的起手距離（那兩個 range 值本來就是給 scheduler 挑招用的，暗示真實戰鬥時目標本來就该在那個距離帶）。這能不能解釋使用者說的「沒有完整展示」還不確定——這次沒能用 MCP 實際看過場面（Unity Editor 沒有 OS 焦點時 `Time.frameCount` 卡住不動，這次測試從進 Play 到退出全程都停在 frame 2，等於一次都沒真的推進，見既有 memory）。已請使用者說明具體是「衝一半就停」「命中判定沒觸發」「動畫/特效沒播」還是別的現象，才能對症下藥而不是瞎猜著改。
+
+改 `YuanpeiAttackDebugMode.cs`（`BuildDummy` 無敵、`SaveDummyPrefs`/`TryLoadDummyPrefs` + 各移動路徑呼叫、`Enter()` 改先讀存檔、`RestorePlayerCameraControl` 每幀自癒）。編譯無錯、Console 無新增錯誤。第 2 點待使用者回報具體現象。
+
+### 追加94 續 150-151（2026-09-05）— 稻草人視角鍵 + boss 近身震退加後仰後退＋前衝擠壓（正式版）
+
+使用者兩點：1. 需要一個按鍵進入稻草人視角 2. boss 超近距離的近身擊退技能（Shockwave，近身震退），要求攻擊前做「後仰＋後退」再「往前擠壓」的動作，**明確要求這是正式 boss 版本，不是只改除錯工具**。
+
+**1. 稻草人視角（續 151，`YuanpeiAttackDebugMode.cs`）**：新增 **V** 鍵切換。跟既有暫停自由視角（`SetFreeLook`/`DriveFreeLook`）同一套「借用 `Camera.main`、關掉 `ThirdPersonCameraController`」手法，差別是鏡頭固定釘在稻草人的「眼睛」位置（頭頂+1.6m，且每幀都重新貼齊，稻草人被移動時鏡頭跟著动），只給滑鼠自由看方向、不给 WASD 飛行——目的是「從被打的那一方視角確認命中時機/預警範圍」，不是到處亂飛。開啟時初始朝向自動看向 boss。跟暫停自由視角互斥（按 P 會先關掉稻草人視角，按 V 只在非暫停時生效），避免兩邊搶同一顆 `_camController`/`_camControllerWasEnabled` 記錄。Play 模式驗證：`SetDummyView(true)` 後鏡頭座標精確等於稻草人位置+(0,1.6,0)，`ThirdPersonCameraController.enabled` 正確變 false；`SetDummyView(false)` 後正確還原 true。
+
+**2. Shockwave 加後仰後退＋前衝擠壓（續 150，`YuanpeiAttacks.cs`，正式招式邏輯本體，非除錯工具）**：這招（近身震退，range 0-4.5）原本查證後發現是全招式池唯一沒有任何前搖動作的招——直接原地生成一個擴散圈特效，boss 本體完全沒動。改寫成三段：(a) 後仰＋後退——`VisualRoot` 往後傾 18°、boss 本體後退 `number4`(預設1.4m，因為這是近身招不能退太多退出自己命中範圍)，用 `def.windupSeconds` 的時間（跟 `BodyCharge` 一样用 `Mathf.Max` 夾一個下限 0.3s，windupSeconds 資料本身留著 0.1 不動，只在程式邏輯這層夾下限，跟既有 charge 招式手法一致，不是新的硬編碼）；(b) 往前擠壓——0.14s 的快速 ease-in（先慢後快，讀起來像蓄力後的瞬間釋放）衝過原本站的位置 `number5`(預設0.6m)，這才是實際的攻擊瞬間；(c) 落點才生成擴散圈震退特效（沿用原本的 `SpawnHazard`/`Configure` 呼叫，傷害/擊退數值完全沒動），衝完再 ease 回原位。`number4`/`number5` 沿用 續138 建立的通用欄位慣例（每招自己詮釋），`YuanpeiAttack_Shockwave.asset` 補上兩個值（透過 `manage_scriptable_object` 改，不是文字編輯 .asset）。這是 attackPool 裡實際跑的邏輯本體，F8 除錯工具跟正式 `YuanpeiEncounter` 戰鬥呼叫的是同一個 `Shockwave()` 方法，兩邊播的動作完全一致，不是除錯限定版。
+
+**驗證**：Play 模式呼叫 `Fire(3)` 觸發 Shockwave，Console 無例外（coroutine 開頭到第一個 `yield` 那段同步跑過，能看到有沒有立即報錯）；受限於 Unity Editor 沒有 OS 焦點時 `Time.frameCount` 卡住不推進（這次全程停在 frame 2），沒能實際看到後仰/後退/前衝的完整播放效果，待使用者自己在 Focus 的 Editor 裡按 F8→5 現場確認手感/距離感是否符合預期。
+
+改 `YuanpeiAttackDebugMode.cs`（`dummyViewKey`/`_dummyView`/`SetDummyView`/`DriveDummyView` + log/OnGUI 文字）+ `YuanpeiAttacks.cs`（`Shockwave` 重寫）+ `YuanpeiAttack_Shockwave.asset`（`number4`=1.4, `number5`=0.6）。編譯無錯、Console 無新增錯誤。
+
+### 追加94 續 152（2026-09-05）— VFX Inspect 模式：單一物件全螢幕動畫展示
+
+使用者：「我很需要像長矛型光彈、六連彈、雷擊標記 這些物件全螢幕單一物件動畫展示的視覺檢查 比較清楚」——要看單一 VFX 物件（不管是 3D 投射物模型、粒子特效、還是地面貼花）乾淨地全螢幕播放，不被場景其他東西干擾。
+
+**機制**：新增 **I** 鍵切換的「VFX Inspect」模式。核心想法是不去為每種攻擊各自寫框取邏輯（長矛=模型、六連彈=粒子、雷擊標記=地面貼花，形狀完全不同），而是共用一個通用機制：
+
+1. `YuanpeiAttacks.cs` 新增只讀存取器 `SpawnedCount`/`GetSpawnedAt(index)`，讓外部能看到 `_spawned`（本來就存在、原本只給 `CancelAll()` 清場用的內部清單，每個攻擊產生的每一個 VFX GameObject 都會塞進去）。
+2. `YuanpeiAttackDebugMode.cs` 開啟 Inspect 模式時記下當下的 `SpawnedCount` 當水位線，之後每一幀（`DriveInspectView`）掃描水位線之後新增的項目，不管是投射物、粒子系統、或貼花 quad，一律撈進 `_inspectTargets`。
+3. 這些物件被撈到的當下，遞迴把自己＋所有子物件的 layer 改到新建的專用 layer **`YuanpeiVfxInspect`**（第 11 層——原本 `add_layer` 工具自動挑到第 10 層，但查證後發現第 10 層雖然沒被命名，實際上已經被 `DistantMountains`/`BackgroundScenery`/`JapaneseShrineVista` 等場景背景物件在用，撞到會讓背景漏進隔離畫面，改用 `SerializedObject` 直接對 `ProjectManager.asset` 的 layers 陣列寫入來指定第 11 層——先掃過 GreyboxTest+Map_School 全部物件的 layer 值，確認 11-31 完全沒人用）。
+4. `Camera.main` 同時被接管：`clearFlags=SolidColor`（深灰背景，不畫場景）、`cullingMask` 只留這個新 layer——畫面上只剩追蹤到的 VFX 物件，其他全部背景/角色/地形都被裁掉，不是靠拉近鏡頭「擠出畫面」，是真的沒有被畫進去。
+5. 每幀依追蹤物件們的合併 Renderer bounds 算出剛好塞滿畫面的距離，鏡頭平滑跟拍（`Lerp`/`Slerp`），投射物飛走、貼花在地上、粒子噴發都能一路跟著看，不會飛出框外。
+
+跟既有的暫停自由視角(P)、稻草人視角(V) 三者互斥（開任一個會自動關掉另外兩個，避免搶同一顆攝影機控制器記錄），沿用同一套「借用 `Camera.main`、關/還原 `ThirdPersonCameraController`」慣例。
+
+**驗證**：Play 模式測到真實攻擊因為 Editor 沒有 OS 焦點、`Time.frameCount` 卡住而還沒真的跑到會產生 VFX 的那一幀（跟續150 一樣的既有限制）；改成直接塞一個假的測試物件（Sphere，世界座標 50,20,50）進 `_spawned` 清單驗證框取邏輯本身：物件正確被撈進 `_inspectTargets`（count=1）、layer 正確被設成 11、鏡頭正確從遠處迅速貼近到物件附近（距離從 75.8 降到 4.0，符合一顆 scale=2 圓球该有的框取距離）——核心追蹤+框取機制確認正確；實際攻擊 VFX 的顯示效果（長矛的模型、六連彈的粒子、雷擊標記的貼花分別長什麼樣）待使用者在 Focus 的 Editor 用 F8→I→按對應數字鍵現場確認。
+
+新增專案設定改動：Layer 11 命名為 `YuanpeiVfxInspect`（`ProjectSettings/TagManager.asset`）——純新增一個空 layer 名稱，沒有任何現有物件被搬到這個 layer（除了這個工具動態指派的臨時 VFX），不影響其他系統。
+
+改 `YuanpeiAttacks.cs`（`SpawnedCount`/`GetSpawnedAt`）+ `YuanpeiAttackDebugMode.cs`（`inspectKey`/`_inspectMode`/`SetInspectMode`/`DriveInspectView`/`SetLayerRecursive` + `Fire()`/`Exit()`/log/OnGUI 更新）+ `ProjectSettings/TagManager.asset`（新增 layer 11）。編譯無錯、Console 無新增錯誤。
+
+### 追加94 續 153（2026-09-05）— VFX Inspect 改成固定鏡頭 + 左boss右稻草人的展示台
+
+使用者：「這個模式請你改為從畫面最左邊發射 往右邊飛行 主要是為了觀察物件外觀，與boss本身和稻草人位置無關」——續152 做的是「鏡頭每幀自動貼著 VFX 的即時 bounds 跟拍」，這樣物件永遠被鏡頭拉回畫面正中央，根本不會有「從左飛到右」的效果，跟使用者要的相反。
+
+**改法**：拿掉每幀跟拍，改成**固定鏡頭**——`RestageShowcase()` 把 boss 暫時搬到 `arenaCenter` 為中心、世界 -X 方向 `showcaseHalfSeparation`(8m) 處，稻草人搬到 +X 方向對稱處（boss 保留原本的懸浮高度 `hoverHeight`、稻草人維持地面高度，兩者水平線仍落在同一個 `arenaCenter` 附近的真實地面上，讓每招攻擊自己內部的 `ProjectToGround`/`SampleFloorY` 這類地板 raycast 邏輯照樣能找到真的地板，不用另外處理），鏡頭則固定架在這條線的正對面（依 FOV/aspect 反推距離，讓兩點各自落在畫面左右兩側、留一點邊界不貼死），之後**完全不再移動**。攻擊自己算的瞄準方向本來就是「boss → 稻草人」，兩者被擺成左右之後，這個方向自然就是螢幕上的「從左飛到右」——不用去理解每招 VFX 的形狀/邏輯，任何招式都適用同一套暫時擺位。
+
+**暫時性**：`SetInspectMode(true)` 時存下 boss/稻草人「真正」的座標（`EnterShowcaseStage`），`SetInspectMode(false)` 時精確還原（`ExitShowcaseStage`）——這只是一個過場展示台，不會弄丟續149剛做的「記住稻草人上次位置」。每次按數字鍵開新一輪展示前也會重新擺回展示台位置（`RestageShowcase`），避免上一招是衝撞類、把 boss 撞去別的地方，下一招從奇怪的地方開始。
+
+**驗證**（Play 模式）：`SetInspectMode(true)` 後 boss 世界座標變成 `(-10, 5.2, -105)`、稻草人變成 `(6, 0.5, -105)`；`Camera.WorldToViewportPoint` 驗證 boss 投影在 `x=0.12`（畫面左側）、稻草人在 `x=0.88`（畫面右側），兩者都在 0-1 可視範圍內留有邊界，沒有貼死screen邊緣；`SetInspectMode(false)` 後兩者精確還原成展示前的原始座標。固定鏡頭+左右擺位機制確認正確；實際攻擊飛行時的視覺效果（長矛/六連彈/雷擊標記等）待使用者現場用 F8→I→數字鍵確認。
+
+改 `YuanpeiAttackDebugMode.cs`（`EnterShowcaseStage`/`RestageShowcase`/`ExitShowcaseStage` 新增，`DriveInspectView` 移除鏡頭跟拍只留 layer 掃描，`SetInspectMode`/`Fire()` 接上新流程，新增 `showcaseHalfSeparation`/`showcaseFrameMargin` 欄位）。編譯無錯、Console 無新增錯誤。
+
+### 追加94 續 154（2026-09-05）— 隱藏面板鍵 + 新增 VFX Close-up 模式（單物件全螢幕慢動作）
+
+使用者兩點：1. 提供一個按鍵能隱藏 I 模式下的面板提示文字 2. 另一種情境——要能看到每個攻擊物件的特效與移動動畫，必須單個物件占用畫面非常大、慢速播放、一次只看一個物件（子彈），才看得清楚。
+
+**1. 隱藏面板（H 鍵）**：`OnGUI()` 開頭加 `_hidePanel` 檢查，為真就只畫一行極小提示「(H to show panel)」然後 return，其餘完全不畫——工具本身仍是 `Active`（數字鍵等都照常運作），純粹只是不擋畫面，方便截圖/錄影。
+
+**2. VFX Close-up 模式（C 鍵）**：跟 VFX Inspect（I 鍵）共用同一套「接管攝影機＋隔離 layer＋純色背景」機制，但用途和呈現方式刻意不同：
+- **只追一個物件**：`DriveCloseupView()` 每幀檢查目前追蹤目標是否為 null（初始為 null，或前一個 VFX 已經被摧毀歸零），是的話才去 `YuanpeiAttacks.SpawnedCount`/`GetSpawnedAt` 找「水位線之後新出現的第一個」，抓到就鎖定、`break`（不理會同一波後續還會生出的物件，例如六連彈的第2-6發）。等這個物件本身結束消失（`== null`），下一幀才會抓下一個——一次只會有一個物件在追蹤，符合「一次就一個物件才能看得清楚」。
+- **攝影機貼近填滿畫面**：跟 VFX Inspect 拿掉的「即時 bounds 跟拍」邏輯這次留著（而且用意完全相反——Inspect 要固定鏡頭讓物件飛過整個畫面，Close-up 要鏡頭死咬著單一物件不放，讓它盡量佔滿畫面），每幀依目前鎖定物件的 Renderer bounds 算出剛好貼合畫面的距離、`Lerp`/`Slerp`平滑貼近，鏡頭本身的跟隨用 `Time.unscaledDeltaTime`（不受下面的慢動作影響，鏡頭反應保持靈敏，只有物件的動畫本身變慢）。
+- **慢動作**：開啟時 `Time.timeScale`（連同 `_animSpeed`）設成 `closeupTimeScale`（預設 0.2 = 1/5 速），關閉時還原成 1。
+- 跟其餘三個會佔用攝影機的模式（暫停自由視角/稻草人視角/VFX Inspect）互斥——新增 `ExitSpecialModesExcept(SpecialMode)` 集中管理，取代原本 續151/152 那種每個開關各自手動關掉「自己知道的其他一兩個」的寫法（那樣寫法在模式一路長到 4 個之後會變成不好維護的兩兩檢查）。
+
+**驗證**（Play 模式，塞假測試物件繞開 Editor 沒 OS 焦點時 frame 卡住的限制，跟續152/153一樣的既有做法）：
+- `_hidePanel=true` 正確生效。
+- `SetCloseupMode(true)` 後 `Camera.main.clearFlags=SolidColor`、`cullingMask` 正確對應 layer 11、`Time.timeScale=0.2`。
+- 塞兩個假物件（FakeCloseupA 在前、FakeCloseupB 在後）進 `_spawned`，呼叫一次 `DriveCloseupView()` 後 `_closeupTarget` 正確鎖定 **FakeCloseupA**（第一個），完全沒有理會 FakeCloseupB——證實「一次一個」邏輯正確；鏡頭座標也確認從遠處移動貼近 A 的位置。
+- `Destroy(FakeCloseupA)` 後立即在同一個 execute_code 呼叫內再跑一次 `DriveCloseupView()`，`_closeupTarget` 仍顯示 FakeCloseupA——這是 Unity `Destroy()` 延後到當前幀結束才真的清空物件的既有行為（測試方法論的限制，同一個 C# 呼叫內沒有真正跨幀），不是接續邏輯有問題；`_closeupTarget == null` 之後才會抓下一個的判斷本身是單純的 null 檢查，沒有理由不成立，但這次沒能用真實跨幀證實。
+- `SetCloseupMode(false)` 後 `Time.timeScale` 正確還原成 1。
+
+改 `YuanpeiAttackDebugMode.cs`（`hidePanelKey`/`_hidePanel` + `OnGUI()` 提早 return；`closeupKey`/`_closeupMode`/`_closeupTarget`/`_closeupWatermark`/`closeupTimeScale`/`closeupFrameMargin`/`SetCloseupMode`/`DriveCloseupView` 新增；`SpecialMode` enum + `ExitSpecialModesExcept` 取代原本分散的兩兩手動排他；`Fire()`/`Exit()`/log/OnGUI 文字同步更新）。編譯無錯、Console 無新增錯誤。
+
+### 追加94 續 155（2026-09-05）— 真因：按鍵鍵位跟遊戲本身的鍵位撞在一起
+
+使用者：「進入c模式後按技能都沒反應」。
+
+**真因**：這個除錯工具跟遊戲本身用的都是同一顆 `Keyboard.current`（原始輪詢，沒有互相「消費」input 的機制），而 **C 鍵早就被 `CameraPossessionSwitcher`（貓咪附身切換）拿去用了**——按 C 進 Close-up 模式的同時，也把 `Camera.main` 跟操控權整個切給了貓咪自己的攝影機／控制器，而這個切換這個除錯工具完全不知情。結果是：數字鍵開火其實有正常執行（攻擊、VFX 都照樣生成），只是 Close-up 模式的隔離層/純色背景/慢動作全部套用在玩家原本那顆、已經被停用的攝影機上——玩家透過貓咪的攝影機在看，畫面自然「沒反應」。
+
+**順便全面稽查**：把這個工具目前綁定的每一顆鍵，對照 `Assets/_Project` 全專案裡所有 `Key.X`／`keyboard.xKey` 的原始輪詢，抓到另外兩個一樣會撞的：**T**（`snapDummyToPlayerKey`）撞到 `ViewFocusDirector` 的守望者視角切換、**V**（`dummyViewKey`）撞到 `PlayerInputProvider.ViewTogglePressed`（玩家第一人稱切換）。另外 `replayKey`（R）雖然這次不是使用者回報的症狀，但撞到 `PlayerInputProvider.UltimatePressed`（玩家大絕），一樣是「按了工具的鍵，玩家角色也跟著動作」的同一類問題，順便一起修掉。
+
+**改法**：三個＋一個全部換成全專案掃過確認完全沒人用的鍵——`replayKey` R→**Y**、`snapDummyToPlayerKey` T→**J**、`dummyViewKey` V→**L**、`closeupKey` C→**U**。另外修掉 `OnGUI()`/log 文字裡兩處寫死的字面「R replay」（沒有跟著 `replayKey` 欄位走，換了鍵位面板上還是顯示舊的 R，容易誤導）。
+
+**場景欄位同步**：`replayKey`/`snapDummyToPlayerKey`/`dummyViewKey`/`closeupKey` 這幾個欄位在 `Map_School.unity` 裡本來就有明確序列化的值（不是「沿用 C# 預設」），光改程式碼預設值不會覆蓋掉已經存檔的舊鍵位——用 `SerializedObject` 直接對場景裡的元件寫入新值＋存檔（不是文字編輯 .unity 檔）。Play 模式讀取執行期欄位值＋反射呼叫 `SetCloseupMode(true)`／`Fire()` 都確認正常，沒有例外。
+
+**已知但沒動的殘留風險**：方向鍵重新定位用的 Shift 修飾鍵（Shift+方向鍵＝移動 boss 而非稻草人）跟玩家的 `DodgePressed`（左 Shift）共用——`DodgePressed` 只在按下瞬間觸發一次，held 期間不會重複觸發，影響僅止於「開始用 Shift+方向鍵時玩家會閃避一次」，不是持續性的功能性錯誤；Ctrl/Alt 也都被載具飛行/走跑切換佔用，沒有乾淨的修飾鍵可換，這次先不處理，記一筆。
+
+改 `YuanpeiAttackDebugMode.cs`（4 個鍵預設值 + 2 處字面字串修正）+ `Map_School.unity`（`YuanpeiAttackDebugMode` 元件的 4 個鍵欄位序列化值）。編譯無錯、Console 無新增錯誤。
+
+### 追加94 續 156（2026-09-05）— 結構性修法：F8 期間直接停用會搶攝影機的兩個系統
+
+使用者：「還是沒有反應 並且進入到這種f7 f8開發者模式，照理說要停用原本世界的按鍵邏輯 提供一個全新的鍵盤邏輯控制才對」。
+
+續155 逐一改鍵位只堵住當時查到的那幾個洞，使用者這次直接點出結構性問題：這個工具在跟「真實世界」共用同一顆 `Keyboard.current`，只要有其他系統也在監聽鍵盤，這類 bug 就永遠堵不完。
+
+**改法**：不再逐個改鍵位追著堵，直接把「真正會搶攝影機」的兩個系統，在整個 F8 session 期間停用：
+- `CameraPossessionSwitcher`（貓咪附身切換，C 鍵）——會把 `Camera.main` 和操控權整個 SetActive 切到貓咪自己的攝影機，這正是續155 那個「Close-up 沒反應」的真因。
+- `ViewFocusDirector`（守望者視角，T 鍵）——它自己的註解就寫「會接管當下正在使用的攝影機」，跟這個工具的攝影機操作性質完全衝突。
+
+`Enter()` 時透過 `FindFirstObjectByType` 抓到這兩個元件、存下原本的 `enabled` 狀態後停用；`Exit()` 精確還原。兩個都是純粹的「按鍵觸發→切一次狀態」的 toggle 元件，沒有連續性的內部狀態（不像玩家的 `MoveInput`/`GuardPressed` 是持續讀取的），中途被停用/恢復不會有「卡在半個動作」的殘留風險。
+
+**刻意沒動的部分**：`PlayerInputProvider`／`CharacterMovement` 這兩個真正驅動玩家移動/攻擊的元件沒有停用——`PlayerInputProvider.Update()` 一旦被停用，`MoveInput`／`GuardPressed` 這類「持續讀取」的欄位會凍結在停用當下那一刻的值（例如玩家剛好按著 W 或握著防禦鍵時進 F8，移動/防禦動作可能卡住不放），這是比原本要修的 bug 更糟的新 bug；而且續155 已經把這個工具自己的鍵位跟 `PlayerInputProvider` 讀的所有原始按鍵（WASD／V／R／Shift／Space／Ctrl／Q／E／Alt／滑鼠鍵）逐一核對過沒有重複，移動/戰鬥系統本來就不是這次回報的症狀來源，維持原本 續140「玩家保留完整操控」的設計。
+
+**驗證**（Play 模式）：`Enter()` 前 `CameraPossessionSwitcher.enabled`/`ViewFocusDirector.enabled` 皆為 `true`；呼叫 `Enter()` 後兩者皆變 `false`；呼叫 `Exit()` 後精確還原成 `true`。
+
+改 `YuanpeiAttackDebugMode.cs`（`SetWorldInputLocked` 新增，`Enter()`/`Exit()` 接上，log 文字補充說明）。編譯無錯、Console 無新增錯誤。
+
+### 追加94 續 157（2026-09-05）— U 模式重做：單發子彈、放大、左飛右、隱藏血條
+
+使用者確認 I 模式正常運作，接著要求修正 U 模式（VFX Close-up）：主要用來看「發射型攻擊」（六連彈 ProjectileBurst、長矛型光彈 SpearVolley），要一次只看一個物件、一次只射一發子彈、從左往右飛、非常緩慢、外觀放大方便觀看；並且 I/U 兩個模式都要隱藏 boss 血量條。
+
+**真因回顧**：續154 的 Close-up 是「鏡頭每幀動態貼著物件 bounds 跟拍」——物件永遠被拉回畫面中央，跟 I 模式續153 修掉的問題是同一類、只是這次換成鏡頭跟拍造成一樣的「看起來沒在飛」。
+
+**改法**：Close-up 不再動態跟拍，改成跟 I 模式共用同一套「boss=左、稻草人=右、固定鏡頭」機制（`EnterShowcaseStage`/`RestageShowcase`），差別只在 `closeupHalfSeparation`（1.6，遠比 I 模式的 8 窄）——物件因此還是會沿著兩者連線飛過畫面，但因為整個舞台被拉得很近，子彈仍然佔畫面很大一塊。
+
+1. **一次一發、慢、直線飛**：`ProjectileBurst`/`SpearVolley` 的發數/速度是 `YuanpeiAttackDef`（ScriptableObject）上的欄位，不能直接改——改了就是動到真正的戰鬥數值。改成 `BuildCloseupFireDef()`：只在 Close-up 模式開著、且這次要放的招式是這兩招其中之一時，用 `Instantiate(original)` 複製一份「只存在這一次 Fire() 期間」的暫時副本，複製體上把 `count`（發數）改成 1、`number1`（飛行速度，兩招共用的欄位語意）壓低成 `closeupProjectileSpeed`（預設 2.5，再疊加 Close-up 本來就有的 `closeupTimeScale`(0.2) 慢動作，實際觀感更慢），`SpearVolley` 額外把追蹤相關的 `number3`/`number4` 歸零讓它飛直線不拐彎。複製體用完在下一次開新的 Close-up/關閉時 `Destroy()`，不會累積或動到磁碟上的真正資產。其他招式（非這兩者）不受影響，`BuildCloseupFireDef` 直接原樣回傳原本的 def。
+2. **外觀放大**：`DriveCloseupView()` 抓到「這次新生出的第一個物件」的當下，直接 `go.transform.localScale *= closeupTargetScaleMultiplier`（預設 2.5）——不管是六連彈的光球還是長矛的模型，統一用這個方式放大，不用個別去猜每招各自的哪個欄位控制大小（長矛的視覺其實是 prefab 直接 Instantiate，沒有對應的 def 欄位可以調）。
+3. **隱藏血條**：`SetInspectMode(true)`/`SetCloseupMode(true)` 都加一行 `hud.SetVisible(false)`，離開時 `hud.SetVisible(_hudWasVisible)` 還原（`YuanpeiBossHUD.SetVisible` 本身是漸隱漸顯，不是瞬間切換，不用額外處理）。
+
+**順便修掉的框取 bug**：改窄 `half` 之後才發現 `RestageShowcase` 原本只用「水平方向能不能塞進畫面」算鏡頭距離——boss 比稻草人高出一截 `hoverHeight`（固定值，跟 `half` 大小無關），I 模式的寬 `half`(8) 讓這個垂直落差相對很小，從沒露餡；U 模式窄 `half`(1.6) 一用，垂直落差反而變成更吃緊的那一項，boss/稻草人直接被推出畫面上下邊界（實測 viewport y 分別是 2.28 跟 -1.28，遠超出 0-1）。改成水平/垂直兩個方向都各自算一次需要的距離，取比較遠的那個，兩個模式現在都會兩個方向一起塞得下。
+
+**驗證**（Play 模式）：
+- Close-up 模式下 boss/稻草人 viewport 座標從壞掉的 y=2.28/-1.28 修正為 y=0.93/0.07（都在 0-1 內），x=0.39/0.61 維持左右分邊。
+- `_closeupDefClone.count=1`、`number1=2.5` 確認複製體覆寫生效；`attacks.SpawnedCount` 開火當下尚未真的生出物件（跟先前幾次一樣，卡在 Editor 沒 OS 焦點、`Time.frameCount` 不推進的既有限制，這次連續兩次檢查都停在同一個 frame，沒能等到真的生出子彈那一刻）。
+- `YuanpeiBossHUD._target` 在 Inspect/Close-up 開啟時皆確認變 0，關閉後皆確認還原成 1。
+- 順便驗證：I 模式本身的框取（寬 `half`=8）在雙軸修正後數值完全沒變（viewport 0.12/0.88，跟續153 驗證時一致），確認這次的修正沒有把 I 模式弄壞。
+
+改 `YuanpeiAttackDebugMode.cs`（`RestageShowcase`/`EnterShowcaseStage` 加 `half`/`margin` 參數並改雙軸距離計算；`SetCloseupMode`/`DriveCloseupView` 重寫為固定舞台，拿掉動態跟拍；新增 `BuildCloseupFireDef`/`closeupHalfSeparation`/`closeupProjectileSpeed`/`closeupTargetScaleMultiplier`/`_closeupDefClone`；`Fire()` 接上覆寫 def 邏輯；`SetInspectMode`/`SetCloseupMode` 加 HUD 隱藏/還原）。編譯無錯、Console 無新增錯誤。實際子彈飛行手感（速度、大小是否恰當）待使用者現場用 F8→U→1（六連彈）／9（長矛型光彈）確認。
+
+### 追加94 續 159（2026-09-05）— U 模式限定三招按鍵 + 修正斜飛為水平直飛 + 大幅減速
+
+使用者：「u模式的話就只提供那三個技能得按鍵，且目前是從左上往右下發射，我要你直接從畫面左邊直線往右邊飛行，且飛行速度大幅放緩」。
+
+**1. 限定三招按鍵**：新增 `IsCloseupEligible(def)`——只認 `ProjectileBurst`／`LightningMark`／`SpearVolley` 這三個 attackId（對應數字鍵 1／3／9，用 attackId 判斷不寫死索引，pool 順序以後變動也不會跟著錯）。數字鍵迴圈跟 `replayKey` 重播都加這個檢查，Close-up 模式下按其他數字鍵直接是 no-op，不會誤發不支援覆寫的招式。`BuildCloseupFireDef` 也同步擴大認得 `LightningMark`（單純把 `count` 壓成 1——雷擊標記本身是原地標記，不像另外兩招會飛行，沒有速度可以放慢）。
+
+**2. 斜飛修正為水平直飛（真因）**：`RestageShowcase` 原本不管 Inspect 或 Close-up 都用同一套「boss 站在正常戰鬥懸浮高度（`hoverHeight`，約 4.7）、稻草人站在地面」的擺法——這對 Inspect（純粹看整段飛行弧線）沒問題，但攻擊瞄準的是稻草人的**碰撞體中心**（`PlayerCenter` 讀 collider bounds，比稻草人的地面座標高 1.1），boss 站在 4.7 高處往一個只有 1.1 高的目標瞄準，飛行路線自然是明顯的左上往右下斜線。新增 `flatTrajectory` 參數：Close-up 模式改把 boss 直接放在跟稻草人瞄準點同一個高度（`anchor.y + 1.1`，不是 `hoverHeight`），兩者打平之後，飛行路徑自然是水平直線，不用另外做「飛行軌跡拉平」的特殊邏輯。Inspect 模式不受影響（`flatTrajectory` 預設 false，維持原本的懸浮弧線）。
+
+**3. 大幅減速**：`closeupProjectileSpeed` 2.5→**0.6**（疊加原本的 0.2 倍慢動作，實際飛行速度只剩原本的 1/4 左右）。
+
+**驗證**（Play 模式）：`boss.y - dummy.y` 從續157的 `~4.7`（斜飛的根源）修正為 `1.1`（精確對齊稻草人瞄準中心，水平飛行）；viewport y 座標（0.92/0.08）仍在 0-1 範圍內，沒有被這次的高度調整弄出框；`IsCloseupEligible` 對 pool[0]/[2]/[8]（ProjectileBurst/LightningMark/SpearVolley）回傳 `true`，對 pool[1]（FocusLaser）回傳 `false`；直接呼叫 `Fire(2)`（LightningMark）確認 `_closeupDefClone.count=1` 且無例外。
+
+改 `YuanpeiAttackDebugMode.cs`（`IsCloseupEligible` 新增並接進數字鍵/重播判斷；`BuildCloseupFireDef` 擴大支援 `LightningMark`；`RestageShowcase`/`EnterShowcaseStage` 加 `flatTrajectory` 參數；`closeupProjectileSpeed` 2.5→0.6；log 文字更新）。編譯無錯、Console 無新增錯誤。實際飛行手感待使用者現場用 F8→U→1／3／9 確認。
+
+### 追加94 續 160（2026-09-05）— U 模式：限制放大倍率、-/= 調整子彈速度、面板精簡
+
+使用者：「1 3 g[9] 技能都沒聚焦在畫面上 從左到右 請修正 要考量到畫面大小 物件不能沒有限制的放大 然後提供speed調整手段 u模式下清理掉非必要提示」。
+
+**真因（「都沒聚焦在畫面上」）**：續157 的放大邏輯是固定倍率 `localScale *= 2.5`，對六連彈/長矛的小型物件還好，但雷擊標記的地面標記本身半徑就有 ~2.4m，`×2.5` 之後變成接近 12m 直徑的巨物——而 Close-up 的舞台（`closeupHalfSeparation`=1.6）整個寬度只有 3.2m，這個巨物直接大到遠遠超出整個鏡頭框取範圍，畫面上只會看到色塊的一小角，完全「沒有聚焦」可言，不是太小看不到，是太大到認不出形狀。
+
+**改法**：`ScaleCloseupTargetToFit()` 取代原本的固定倍率——量測物件實際 Renderer bounds 半徑，換算成「要縮放到目標半徑」所需的倍率（目標半徑＝`closeupHalfSeparation × closeupTargetRadiusFraction`，預設抓舞台寬度的 28%，舞台改窄/改寬時目標大小會跟著等比例調整，不用另外重調），倍率本身再夾在 `closeupMinScaleFactor`(0.15) ～ `closeupMaxScaleFactor`(5) 之間（避免量到退化的極小 bounds 時算出離譜的縮放值）。小物件放大、大物件縮小，最後都收斂到差不多的、跟舞台成比例的合理大小。
+
+**speed 調整手段**：`-`/`=` 這兩個既有的速度鍵，在 Close-up 模式下改成調整 `closeupProjectileSpeed`（子彈飛行速度本身），非 Close-up 模式時維持原本調整全域播放速度（`_animSpeed`/`Time.timeScale`）的行為——同一組鍵，依情境切換意義，不用另外占用新鍵位。
+
+**面板精簡**：`OnGUI()` 新增 Close-up 專用的精簡面板（只列 3 招按鍵、子彈速度、重播鍵），取代原本那份列出全部 9 招＋方向鍵重定位提示＋範圍圈說明的完整面板——Close-up 模式下 boss/稻草人站在固定舞台上，方向鍵重定位、範圍圈這些提示本來就用不到。
+
+**驗證**（Play 模式）：塞一顆模擬雷擊標記大小的假物件（scale 4.8，半徑~2.4）進 `_spawned`，跑一次 `ScaleCloseupTargetToFit` 後縮小到 scale 0.72（bounds 半徑 ~0.51，貼近目標值 0.448）；另外塞一顆極小假物件（scale 0.05）驗證放大邏輯，結果被放大到 scale 0.25，卡在 `closeupMaxScaleFactor`(5) 的上限，沒有無限放大。Console 無新增例外。
+
+改 `YuanpeiAttackDebugMode.cs`（`ScaleCloseupTargetToFit` 取代固定倍率的 `closeupTargetScaleMultiplier`；`closeupTargetRadiusFraction`/`closeupMinScaleFactor`/`closeupMaxScaleFactor` 新增；`-`/`=` 鍵在 Close-up 模式下改接 `closeupProjectileSpeed`；`OnGUI()` 新增 Close-up 專用精簡面板）。編譯無錯、Console 無新增錯誤。實際觀感（放大後大小是否恰當、速度快慢）待使用者現場用 F8→U→1／3／9 確認，另外「都沒聚焦」是否完全解決也待現場確認（受限於本次 Editor 沒有 OS 焦點、無法即時看到畫面播放）。
+
+### 追加94 續 161（2026-09-05）— U 模式真正的 bug：watermark 沒跟著 CancelAll 同步，導致第二次以後開火全部失效
+
+使用者在自己的 Play session 裡實測回報：「這三種技能起始位置都不對，感覺在畫面邊界上，而且起始等待時間長，要確保每次按下數字或y都能撥放」。這次直接連上使用者正在跑的 Play session 現場量測，抓到一個之前都沒測到的真正功能性 bug。
+
+**真因（「確保每次按下數字或y都能撥放」）**：`Fire()` 裡的 `_inspectWatermark`／`_closeupWatermark` 一直都是在呼叫 `StartCoroutine(FireRoutine(...))` **之前**用 `attacks.SpawnedCount` 設定——但 `attacks.CancelAll()`（真正把 `_spawned` 清空的地方）是寫在 `FireRoutine` 內部，只有等 `StartCoroutine` 真的執行到那一行才會清空。所以第一次開火沒事（水位線設 0，清空後还是 0，正常對齊），**第二次開火開始就全部壞掉**：水位線在清空「之前」被設成舊清單的長度（比如 1），`CancelAll()` 隨後把清單清空、新攻擊再從索引 0 重新生成物件——水位線卡在一個舊清單長度算出來的值，永遠對不上重新從 0 算起的新清單，新生成的 VFX 從此再也不會被撈進 `_inspectTargets`／指定成 `_closeupTarget`：Inspect 模式下新物件不會被搬到隔離 layer（鏡頭只看那個 layer，等於直接隱形）、Close-up 模式下新物件永遠不會被追蹤/放大。這不是「有時候」失效，是**除了每次進入該模式後的第一發，之後每一發都會失效**，跟使用者「按了沒反應」的描述完全吻合。
+
+**修法**：把 `attacks.CancelAll()` 提到 `Fire()` 開頭、兩個水位線指定**之前**，同步呼叫（不透過 coroutine），確保兩個水位線永遠是從真正清空後的狀態（count=0）算起。`FireRoutine` 內部原本那次 `CancelAll()` 留著當保險（清單已空，等於 no-op，無害）。
+
+**驗證**（直接連上使用者的 Play session，非另開session）：模擬「塞假物件→Fire()→塞下一個假物件→Fire()」兩輪連續開火——修好前這個測試在第二輪就會讓 `_closeupTarget` 卡在 `null`（重現使用者回報的症狀），修好後兩輪都正確追蹤到各自新生成的物件。
+
+**「起始位置在邊界上」**：實測 viewport 座標 boss=(0.07,0.92)、稻草人=(0.93,0.08)——margin 只留不到 10% 緩衝，確實貼著邊界。`closeupFrameMargin` 1.15→**1.6**，兩軸同時後退，實測改善為 (0.19,0.80)/(0.81,0.20)，緩衝拉開到約 20%。
+
+**「起始等待時間長」**：`closeupTimeScale`（0.2＝5倍慢動作）連 telegraph／windup 一起拖慢，兩者相加常態要價 0.35-1s 的攻擊前搖，乘上5倍變成好幾秒的純等待。既然子彈本身的飛行速度已經有獨立的 `closeupProjectileSpeed` 在控制，慢動作不需要獨自扛這個責任——`closeupTimeScale` 0.2→**0.5**，另外 `BuildCloseupFireDef` 的複製體把共用的 `telegraphSeconds`/`windupSeconds` 夾在很小的上限（0.15／0.05），雷擊標記自己的符文警示秒數（`number2`）砍半（1.1→至多0.6，不是歸零——警示動畫本身還值得看，只是不要拖那麼久）。六連彈/長矛自己招式特有的前搖（`MuzzleCharge` 0.55s／`SpearMuzzleGlow` 0.4s）是寫死在攻擊程式碼裡、不吃 def 覆寫，這次沒有動（不想為了除錯工具去碰核心戰鬥邏輯），改善幅度有限但至少不會再被慢動作乘數放大。
+
+**注意**：`closeupTimeScale`／`closeupFrameMargin` 這兩個欄位在 `Map_School.unity` 場景裡已經有明確序列化的舊值（0.2／1.15），跟續155 遇到的狀況一樣，光改程式碼預設值不會生效——已用 `SerializedObject` 直接寫入場景並存檔。
+
+改 `YuanpeiAttackDebugMode.cs`（`Fire()` 把 `attacks.CancelAll()` 提前到水位線指定之前；`closeupTimeScale` 0.2→0.5；`closeupFrameMargin` 1.15→1.6；`BuildCloseupFireDef` 加 telegraph/windup/雷擊標記警示秒數的上限夾制）+ `Map_School.unity`（`closeupTimeScale`/`closeupFrameMargin` 場景序列化值同步）。編譯無錯、Console 無新增錯誤。連續開火兩輪的追蹤修復已現場驗證；實際手感（等待時間是否夠短、位置是否舒適）待使用者接續確認。
+
+### 追加94 續 162（2026-09-05）— 修正縮放造成的垂直偏移 + 長矛型光彈額外放大 2 倍
+
+使用者：「這三個技能我都有看到了 還是偏畫面上方 請往下移動一點到螢幕中心 長矛型光彈請整體放大2倍」。
+
+**真因（偏畫面上方）**：`ScaleCloseupTargetToFit` 直接 `localScale *= factor`——縮放是繞著物件的 **pivot**（transform 原點）進行，如果物件模型的 pivot 不在視覺中心（很常見，尤其是膠囊體/角色型模型的 pivot 常常在某一端而非正中央），放大之後視覺外觀會往 pivot 的對側偏移，讀起來就像「整個物件飄向畫面上方」——即使 boss/稻草人的擺位本身（續157驗證過）在垂直方向是完全對稱置中的，縮放這個動作本身就會把物件的視覺重心搬離原本置中的位置。
+
+**修法**：`ScaleCloseupTargetToFit` 縮放前後各量一次 Renderer bounds 中心，縮放完直接把 `transform.position` 補上「縮放前中心－縮放後中心」的差值，把視覺中心精確地釘回原本的位置——不管 pivot 偏在哪一側，縮放後看起來都不會位移。
+
+**長矛型光彈額外放大 2 倍**：`_selected`（目前正在開火的 pool 索引，`Fire()` 呼叫 coroutine 前就設好）拿來判斷這次擊發是不是 `SpearVolley`，是的話在原本「縮放到符合畫面比例」的倍率之上，再乘上新欄位 `closeupSpearVolleyExtraScale`（預設 2）——`ScaleCloseupTargetToFit` 新增 `extraScale` 參數承接這個逐招式的加成倍率。
+
+**驗證**（Play 模式）：
+- 建一個 pivot 刻意偏離視覺中心的假物件（父物件 pivot 在原點，子網格局部往上偏移 1 單位）——縮放前後量測子網格 Renderer bounds 中心，兩次結果完全相同（delta=0），確認位移補償公式正確抵銷了 pivot 偏移造成的漂移。
+- 分別模擬 `_selected`=SpearVolley 索引／`_selected`=ProjectileBurst 索引，對兩顆起始尺寸完全相同的假物件跑 `ScaleCloseupTargetToFit`，量測縮放後尺寸比值 ≈1.96-1.98（預期 2.0，誤差來自兩者最終倍率各自被 min/max 夾制範圍浮動），確認額外倍率只套用在長矛型光彈身上。
+
+改 `YuanpeiAttackDebugMode.cs`（`ScaleCloseupTargetToFit` 加縮放後位置補償 + `extraScale` 參數；`DriveCloseupView` 依 `_selected` 的 attackId 判斷是否套用 `closeupSpearVolleyExtraScale`(2) 新欄位）。編譯無錯、Console 無新增錯誤。實際觀感待使用者現場用 F8→U→1／3／9 確認。
+
+### 追加94 續 163（2026-09-05）— 再往下移一點；「U 模式要先玩過 I 模式才正常」查無code層級成因
+
+使用者：「不夠下面 繼續往下移動 並且[現]我要先在i模式撥放動作,u模式下的按鍵功能才會正常 請修正」。
+
+**再往下移動**：續162 的 pivot 補償只修掉「縮放造成的位移」，沒有處理「舞台本身在畫面上的垂直位置」——加了 `closeupVerticalBiasFraction`（相對 `closeupHalfSeparation` 的比例，套在鏡頭高度上，鏡頭抬高、維持水平視角，畫面中的一切就會整體往下移）只套用在 Close-up 的 `flatTrajectory` 情境（Inspect 沒人反應過這個問題，不動它）。
+
+**過程中一個插曲**：第一次試 0.35 這個比例，實測直接把稻草人推出畫面下緣（viewport y=-0.10，超出可視範圍），才發現這個比例對「鏡頭離舞台很近」的 Close-up 尺度來說影響量級遠比預期大。退回 0.15 重新量測：boss 從 0.80→0.67、稻草人從 0.20→00.07——確實往下移動了，且兩者都還在 0-1 可視範圍內，稻草人離下緣還有約 7% 緩衝（比較窄，但沒有被推出去）。這只是量測 boss/稻草人「舞台」座標當代理值——實際攻擊物件本身在畫面上確切落點沒辦法用這個方法直接驗證，這輪的數字是盡力而為的近似值，仍待使用者現場确认是否已經置中，需要再微調隨時再說。
+
+**「U模式要先玩過I模式才正常」**：這次直接在 Play session 裡測了一次「完全沒碰過 Inspect 模式、F8 進來就直接開 Close-up」，依序開火 `ProjectileBurst`／`LightningMark`／`SpearVolley` 三招，Console 全程無任何例外，三次都正確印出「firing ...」的 log——沒有重現「U 模式按鍵沒反應」這個症狀，程式碼邏輯本身查不出讓 U 模式功能依賴 I 模式的地方（兩個模式各自獨立初始化 `_inspectLayer`、各自呼叫 `EnterShowcaseStage`，互不相依）。**這點目前無法確認修好**——比較可能的解釋是這次一併修掉的「起始等待時間長」問題（續161）讓沒耐心等的第一次嘗試看起來像「沒反應」，換到另一個模式重試時因為已經等過一次前搖而顯得「正常」；也可能是遊戲視窗本身的輸入焦點問題，不是這個工具的程式碼邏輯。如果之後還發生，麻煩留意當下 Console 有沒有跳出任何紅字，能幫忙判斷到底是完全没执行到 `Fire()`，還是有執行但畫面沒顯示。
+
+**場景欄位同步**：`closeupVerticalBiasFraction` 這個新欄位在 Play 模式期間一度停在編譯前的舊預設值（0.35，不是 0.15）而非新的程式碼預設——這次的 Play session 是在改程式碼「之後」才進的，理論上應該要吃到新預設值，但實測沒有，猜測是同一個 session 內連續幾次重編譯時，編輯器沒有完整重新套用最新程式碼預設到已在場景中的元件欄位（不是續155/161那種「場景本來就存了舊值」的情況——這次編輯模式下場景檔本身其實已經是新值 0.15，但 Play 中的執行期物件一度沒吃到，額外重新 Stop→Play 一次後才吃到正確的 0.15）。記一筆做為這類欄位調整時的已知現象，不是每次都需要，但數值改完看起來沒生效時，先試著整個 Stop→Play 重進一次再下結論。
+
+改 `YuanpeiAttackDebugMode.cs`（`RestageShowcase` 加 `closeupVerticalBiasFraction` 套用在 Close-up 的鏡頭高度上）。編譯無錯、Console 無新增錯誤。垂直置中效果、以及「U模式沒反應」是否還會重現，都待使用者接續確認。
+
+### 追加94 續 164（2026-09-05）— 延長飛行距離 + 附上招式特效（不只模型）
+
+使用者確認前面的問題都解決了，接著提兩點：「子彈本身飛行一段很小距離就消失了 請讓延長飛行距離，另外除了模型之外也請附上該攻擊具有的特效(boss戰會出現的)」。
+
+**真因（飛行距離太短）**：`YuanpeiProjectile.OrbSurfaceHitsPlayer()` 每幀檢查子彈表面有沒有碰到目標（稻草人）的真實 `CapsuleCollider`，碰到就自我摧毀——這是正常戰鬥的命中判定，設計上沒有問題，但 Close-up 舞台原本只有 `closeupHalfSeparation`=1.6（總寬度 3.2m），子彈離開 boss 沒多久就進入稻草人的命中半徑，觸發自我摧毀，讀起來就是「飛沒多遠就消失了」。
+
+**改法**：`closeupHalfSeparation` 1.6→**5**（總距離 3.2m→10m）。這個數值是其他所有 Close-up 相關量測（目標縮放比例、垂直偏移、框取邊界）共同的基準單位，全部都是相對這個值的比例，所以單純拉大它，子彈能飛更遠，但畫面上的相對大小、置中程度都會跟著一起等比例縮放，不會因為舞台變寬而變小或跑位。
+
+**真因（特效缺失）**：`DriveCloseupView` 原本只認「這次開火後新出現的第一個物件」，抓到就不再繼續掃——但一次真實攻擊（即使 `count` 已經被覆寫成 1）往往還會另外生成好幾個獨立 GameObject（前搖光暈、拖尾、命中特效等），這些都是在攻擊播放過程中陸續才生成，不是一開始就跟主物件同時出現。原本的邏輯只把「第一個」搬到隔離 layer，其餘的全部留在預設 layer——而 Close-up 鏡頭只畫隔離 layer，等於除了模型本體，其餘特效全部被鏡頭忽略（不是沒生成，是生成了但看不到）。
+
+**改法**：`_closeupTarget`（單一物件）改成 `_closeupTargets`（清單），邏輯比照 Inspect 模式的 `_inspectTargets`——每一幀持續掃描新出現的物件，全部搬去隔離 layer（讓 Close-up 鏡頭看得到），但**只有清單裡第一個**（真正的子彈/標記本體）套用「縮放到符合畫面比例」，之後陸續出現的（拖尾、光暈、命中特效等）維持原本的大小不去動它——強行把一個粒子系統或點光源縮放到跟子彈一樣大小，看起來只會更奇怪。
+
+**驗證**（Play 模式）：
+- `boss.transform.position`／`_dummy.transform.position` 距離從 ~3.2 變成 ~10.06，符合預期；viewport 座標仍在 0-1 範圍內（框取的等比例縮放正確運作）。
+- 模擬一次開火：塞「主子彈」（scale 0.1）＋「伴隨特效」（scale 0.3）兩個假物件進 `_spawned`，跑一次 `DriveCloseupView()` 後 `_closeupTargets.Count=2`（兩個都被追蹤到）、兩者 layer 皆為隔離用的 11（都看得到）、主子彈縮放成 0.5（套用了縮放）、伴隨特效維持原本的 0.3（沒有被強制縮放）——完全符合預期。
+
+改 `YuanpeiAttackDebugMode.cs`（`closeupHalfSeparation` 1.6→5；`_closeupTarget`→`_closeupTargets` 清單，`DriveCloseupView` 持續掃描＋只縮放清單首項）+ `Map_School.unity`（`closeupHalfSeparation` 場景序列化值同步）。編譯無錯、Console 無新增錯誤。實際觀感（飛行距離、特效是否完整顯示）待使用者現場用 F8→U→1／3／9 確認。
+
+### 追加94 續 165（2026-09-05）— I 模式的長矛型光彈（[9]）本體放大 3 倍
+
+使用者確認續164的兩點都解決了，接著要求：「接下來i模式的[9] 讓他本體放大三倍」。
+
+**改法**：跟 Close-up 模式的 SpearVolley 加成放大（續162）同一個道理，但這次是 Inspect 模式——先把續162那段「縮放＋位置補償」邏輯拆成獨立共用方法 `ScaleObjectPreserveCenter(go, factor)`（`ScaleCloseupTargetToFit` 內部改呼叫它，行為不變），`DriveInspectView` 比照 Close-up 的做法：只在**這次開火看到的第一個物件**（`_inspectTargets.Count == 0` 那一刻）且**目前開火的是長矛型光彈**（透過 `_selected` 的 attackId 判斷）時，套用新欄位 `inspectSpearVolleyExtraScale`(3) 的位置補償縮放；之後陸續出現的拖尾/光暈等伴隨特效不受影響，維持原尺寸——跟 Close-up 一樣的「只放大本體、特效原樣」原則。
+
+**驗證**（Play 模式）：模擬 `_selected`=長矛型光彈索引，塞一顆起始尺寸 (0.2,0.6,0.2) 的假物件跑 `DriveInspectView()`，縮放後變成 (0.6,1.8,0.6)，精確 3 倍；另外模擬 `_selected`=六連彈索引（非長矛型光彈），同一顆假物件尺寸維持不變，確認加成只套用在長矛型光彈身上。
+
+改 `YuanpeiAttackDebugMode.cs`（`ScaleObjectPreserveCenter` 抽出為共用方法；`DriveInspectView` 加 `inspectSpearVolleyExtraScale`(3) 新欄位＋長矛型光彈判斷）。編譯無錯、Console 無新增錯誤。實際觀感待使用者現場用 F8→I→9 確認。
+
+### 追加94 續 166（2026-09-05）— 抓到 Close-up 縮放公式漏算 margin 的真因：物件變小不是錯覺
+
+使用者傳了一張 F8→U→9（長矛型光彈）的實際截圖，回報「感覺更小了」。
+
+**真因**：`ScaleCloseupTargetToFit` 的目標半徑公式一直是 `closeupHalfSeparation * closeupTargetRadiusFraction`——沒有乘上 `closeupFrameMargin`。但鏡頭實際距離（`RestageShowcase`）是解出「畫面實際可視半寬 = half × margin」這個式子算的，不是只有 `half`。續161 為了修「舞台貼著畫面邊緣」把 `closeupFrameMargin` 從 1.15 調到 1.6，這個調整只影響鏡頭要退多遠（拉開緩衝），但目標半徑公式沒有把新的 margin 算進去——結果變成物件實際佔畫面的比例從 `0.28/1.15≈24%` 掉到 `0.28/1.6≈17.5%`，縮小了將近 3 成，不是錯覺，是續161那次改動的真實副作用，只是這次才第一次認真檢視大小。
+
+**修法**：目標半徑公式改成 `closeupHalfSeparation * closeupFrameMargin * closeupTargetRadiusFraction`——這樣「目標半徑 ÷ 畫面實際可視半寬」永遠精確等於 `closeupTargetRadiusFraction` 這個純比例，不管 `margin` 或 `half` 之後再怎麼調都不會互相污染（margin 只管鏡頭退多遠當緩衝，不該連帶影響物件縮放後看起來多大）。順便把 `closeupMaxScaleFactor` 5→**8**——目標半徑變大後，長矛型光彈「符合畫面比例的倍率 × 額外2倍加成」總和有機會超過舊的 5 倍上限被夾住，導致 2 倍加成打折扣，拉高上限讓額外加成能完整生效。
+
+**驗證方法的插曲**：一開始想直接在 Play 模式即時開火量測，但這次又卡在 Editor 沒有 OS 焦點、`Time.frameCount` 不推進——改用反射抓 `SpearVolley` 這個 private coroutine、手動 `MoveNext()` 硬跑，結果量到荒謬的巨大 bounds（half-extent 66，正常應該不到1）——這是手動硬跑 coroutine 繞過 Unity 正常的每幀計時機制，導致 `Time.deltaTime` 在單次 `MoveNext()` 內炸出不合理的大數值（子彈瞬間飛超遠、拖尾 bounds 跟著爆掉），不是真正遊戲裡會發生的行為，這個測法本身不可靠、放棄。改用直接 `Instantiate` 長矛 prefab 量測「剛生成、還沒被攻擊程式碰過」的原始 bounds（extents.magnitude≈0.69-0.89，依測法而定），確認是合理的小物件尺寸，再拿這個真實數字手算＋實測驗證新公式：修正前用同樣的假設算出來的縮放倍率是 3.16 倍，修正後實測是 **5.06 倍**——精確等於 3.16×1.6（正是這次補上的 margin 倍數），數學上完全對得上，物件會比之前明顯更大。
+
+改 `YuanpeiAttackDebugMode.cs`（`ScaleCloseupTargetToFit` 目標半徑公式加乘 `closeupFrameMargin`；`closeupMaxScaleFactor` 5→8）+ `Map_School.unity`（`closeupMaxScaleFactor` 場景序列化值同步）。編譯無錯、Console 無新增錯誤。實際觀感待使用者現場用 F8→U→9 確認變大了多少、是否已經足夠。
+
+### 追加94 續 167（2026-09-05）— 兩個真正的縮放 bug：認錯物件 + TrailRenderer 假 bounds
+
+使用者：「還是很小 這是什麼情況 有用及時座標烘培嗎」——續166 修完margin問題後理論上應該要明顯變大，使用者卻說還是很小，代表理論計算跟實際結果之間一定還有落差沒抓到。這次deep dive查出兩個各自獨立、疊加起來讓修正完全沒生效的真因。
+
+**真因1：認錯物件**——`DriveCloseupView`/`DriveInspectView` 一直假設「這次開火後第一個生出來的物件＝本體」，但六連彈(`ProjectileBurst`)跟長矛型光彈(`SpearVolley`)都有自己專屬的發射前特效（`MuzzleCharge`螺旋聚粒／`SpearMuzzleGlow`光暈脈動），這兩個特效物件在真正的子彈/長矛生成**之前**就已經呼叫 `_spawned.Add(...)` 註冊進清單——所以「放大」「額外2/3倍加成」這些操作，從續157這一系列改動開始，其實一直是套用在這個小小的發射前光暈特效上，真正的長矛/光球模型從頭到尾都沒被動過，維持原始的迷你尺寸。改法：新增 `IsAttackHeroObject(go)`，改用**物件名稱**判斷誰是真正的攻擊本體（`YuanpeiLightOrb`＝六連彈、`YuanpeiSpearProjectile`＝長矛型光彈、`YuanpeiHazard`＝雷擊標記，雷擊標記沒有獨立發射前特效物件所以原本沒受影響），不再迷信「先出現的就是本體」。
+
+**真因2：TrailRenderer 的假 bounds**——就算抓對了物件，量測它「目前多大」時用 `GetComponentsInChildren<Renderer>()` 撈到的所有 Renderer 一起算包圍盒——長矛跟光球都在生成時掛了一個 `TrailRenderer`（拖尾特效），**剛掛上、還沒有任何拖尾歷史紀錄**的 `TrailRenderer.bounds` 回報了完全不合理的巨大數值（實測：真正的模型 `MeshRenderer` bounds 只有 (0.51, 0.46, 1.20)，同一個物件上的 `TrailRenderer` bounds 卻回報 (1, 9, 132)——大了兩個數量級）。這個假 bounds 被吃進「量測目前多大」的計算，導致算出來的「目前尺寸」被誤判成巨大，接下來「該放大幾倍」的公式自然算出一個遠小於1的縮放值（被下限 0.15 夾住），子彈不但沒被放大，反而被**縮小**到下限——不管 `closeupSpearVolleyExtraScale` 調多高都沒用，因為源頭的「目前尺寸」量測本身就是錯的。改法：新增 `GetSizeRenderers(go)`，量測時明確排除 `TrailRenderer`／`LineRenderer`（同類型的、沒有實際「模型體積」意義的線性特效渲染器），只用有意義的 Renderer（MeshRenderer 等）計算包圍盒。
+
+**驗證方法的教訓**：這次進一步發現，先前用反射硬跑 coroutine（`enumerator.MoveNext()`）測試時量到的巨大 bounds（66）並不是我原本猜測的「手動跑 coroutine 導致 Time.deltaTime 爆炸」造成的——是 TrailRenderer 本身天生就會這樣，跟測試手法無關，是真實會在正式遊戲裡發生的 bug。這次順便解開了上一輪「這個測法不可靠」的誤判，兩個 bug 都是真的，不是測試手法的假象。
+
+**驗證**（Play 模式，真實生成的長矛型光彈物件，非合成假物件）：`GetSizeRenderers` 對真實生成的長矛物件回傳 1 個 Renderer（`MeshRenderer`，正確排除掉 `TrailRenderer`）；量到的 Mesh bounds 從 (0.51, 0.46, 1.20) 正確放大到 (3.30, 3.01, 7.77)，縮放倍率 **6.5 倍**（精確符合「目標半徑2.24 ÷ 原始半徑0.69 × 額外2倍加成」的手算結果）——長矛型光彈現在應該會顯著變大（長度接近 8m）。
+
+改 `YuanpeiAttackDebugMode.cs`（`IsAttackHeroObject` 新增並取代原本的「第一個物件＝本體」邏輯，兩個 Drive 方法都套用；`GetSizeRenderers` 新增排除 `TrailRenderer`/`LineRenderer`，`ScaleCloseupTargetToFit`／`ScaleObjectPreserveCenter` 都改用它）。編譯無錯、Console 無新增錯誤。實際觀感待使用者現場用 F8→U→9／F8→I→9 確認這次是否真的夠大了。
+
+### 追加94 續 168（2026-09-05）— 修正 I/U 模式「有時出不來」的兩個真因
+
+使用者確認大小正常了，接著回報：「進入 u或i模式後 有時會出不來」。
+
+**真因1**：`dummyViewKey`／`inspectKey`／`closeupKey` 這三個切換鍵的判斷式都多寫了一個 `&& !_paused`——如果使用者在 I/U 模式裡不小心按到 P（暫停自由視角，這個鍵在另一個除錯工具 F7 也有一樣的按鍵慣例，很容易手滑按到），`_paused` 就會變 `true`，接下來想按 I 或 U 想離開，這個判斷式會直接**無聲擋下**，不會有任何 log 或提示告訴使用者「你現在是暫停狀態，要先按 P」——體感上就是「按 I/U 沒反應，出不去」。實際上 `ExitSpecialModesExcept` 本來就會正確把暫停狀態關掉並換到新模式，唯一擋住這件事發生的只有這個多餘的額外判斷——拿掉之後 I/U/L 三個鍵不管當下是不是暫停中都能正常運作。
+
+**真因2**：`SetInspectMode`／`SetCloseupMode` 的「關閉」分支，原本是重新查詢一次「當下的」`Camera.main` 來還原設定，而不是用「開啟當下」實際被動過手腳的那顆攝影機。如果在 I/U 模式開著的期間，因為某些這個工具不知情的原因（例如按了 B 切到守望者視角，或載具/貓咪附身之類跟攝影機相關的其他系統）導致 `Camera.main` 指向了另一顆攝影機，「關閉」時的還原動作就會套用到**錯誤的（當下的）**攝影機身上，真正被隔離／改成純色背景的那顆攝影機永遠不會被還原——切換鍵本身「有作用」（布林值有翻轉），但畫面死死卡在隔離狀態，完全符合「出不來」的體感。新增 `_isolatedCam` 欄位在「開啟」當下記住實際被動手腳的那顆攝影機，「關閉」時改用這個記住的參照還原，不管 `Camera.main` 中途換成誰都一樣正確。
+
+**驗證**（Play 模式）：
+- 模擬「開啟 Close-up 後 `_paused` 意外變 `true`」，直接呼叫跟 `Update()` 現在完全一樣的離開流程（不再檢查 `_paused`），確認結果 `_closeupMode=False`、`_paused=False`、攝影機 `clearFlags` 正確從 `SolidColor` 還原成 `Skybox`。
+- 模擬「開啟 Close-up 後 `Camera.main` 被別的系統換成另一顆攝影機」（建一顆假的、tag 為 MainCamera 的攝影機，停用原本那顆），確認關閉 Close-up 後，**原本被隔離的那顆**攝影機（不是新的 `Camera.main`）正確還原 `clearFlags` 成 `Skybox`。
+
+改 `YuanpeiAttackDebugMode.cs`（`dummyViewKey`/`inspectKey`/`closeupKey` 拿掉 `&& !_paused`；`_isolatedCam` 新增，`SetInspectMode`/`SetCloseupMode` 開啟時記住、關閉時改用它而非重新查詢 `Camera.main`）。編譯無錯、Console 無新增錯誤。
+
+### 追加94 續 169（2026-09-05）— 長矛型光彈疊加影片烘焙 flipbook 特效（Crimson Void Spear × 使用者提供影片）
+
+使用者：「目前大小正常了，但是發現進入 u或i模式後 有時會出不來 你幫我排查，再來是長矛型光彈的特效，能採用 `C:\Users\homec\Downloads\長矛型光彈-3d.mp4` 這個影片當特效嗎」（U/I 出不來已在續168修好）。透過 `AskUserQuestion` 確認做法：疊加在現有 3D 模型上（模型／拖尾／點光源完全不動），額外加一層影片烘焙的 flipbook 當能量視覺層，不取代。
+
+**素材處理**：來源影片 1280×720、24fps、10 秒、H.264。用 ffmpeg 逐段擷取 contact sheet 看過整段影片的視覺弧線（黑畫面起手→波動能量線成形→箭頭輪廓固化＋白閃轉場→乾淨的「箭頭朝向飛行方向＋紫紅拖尾能量＋火花粒子」飛行段→溶解成透明透鏡狀→淡出黑幕），選定 frame 144-191（第 6-8 秒，48 幀）當飛行中最乾淨的一段。背景用 Python/PIL 取樣：四角落深灰黑（RGB 約20-23，中上方有淡淡暈影到36-42），跟先前 `不要有人形.mp4`（SwordOrbit 用的淺灰棋盤格透明慣例）不同，luma-key 門檻改用 55（SwordOrbit 是60）。畫面右下角每一幀都有一個固定的四角星水印小圖示，用 `drawbox` 在 alpha-key 之前先塗成背景色蓋掉（範圍 x:1110-1270/y:555-715，全幀 1280×720 座標）。
+
+沿用 `SwordOrbitVfxSetup.cs` 建立的 ffmpeg 烘焙慣例（`geq` luma-key 產生 alpha、`drawbox` 蓋水印、texture import 設 `npotScale=None`／`alphaIsTransparency`、`SlashFlipbookURP` shader premultiplied blend）烘出 `SpearFlipbook_Atlas.png`（8×6 grid、240×135/格＝1920×810，48 幀剛好填滿整張圖，無多餘空格）。實際用 Python 逐點採樣驗證 alpha：背景角落 alpha=0、箭頭核心亮部 alpha=255、中段拖尾漸層 alpha≈70-120，水印被蓋掉的區域也確認 alpha=0——key 抓得乾淨。
+
+**跟 SwordOrbit 的兩個關鍵差異**（新建 `SpearFlipbookVfxSetup.cs`，未動 `SwordOrbitVfxSetup.cs`）：
+1. **朝向**：SwordOrbit 是 Billboard（永遠面向攝影機）；長矛型光彈必須跟著飛行方向走，所以用 Mesh render mode + `alignment=World`，quad 掛在 `CrimsonVoidSpearProjectile.prefab` 底下當子物件，本地旋轉 `Euler(0,-90,0)`——因為內建 Quad 本身攤平在自己的本地 XY 平面（法線 -Z），這樣轉完之後圖片的「長邊」（箭頭指向的軸）會對齊到父物件的本地 Z 軸，正好是 `SpearVolley()` 呼叫 `Instantiate(prefab, origin, Quaternion.LookRotation(dir, Vector3.up))` 時已經對準玩家的飛行方向。有用非 Play 模式的編輯器截圖實際驗證朝向（把一顆預覽物件搬到天空無干擾處，物件面朝世界 +Z，用 `manage_camera` 側面取景）——箭頭尖端確實朝向 +Z（飛行方向），紫紅拖尾在後方，方向抓對，不用再翻轉。
+2. **播放方式**：SwordOrbit 是固定時長的一次性施放特效，靠 `SlashVfxController` 播完自動 `Destroy`；長矛型光彈的飛行時間跟速度、距離有關（不固定），所以這次不掛 `SlashVfxController`，改成 `main.loop=true`＋單一 burst 在 t=0（Unity 對 loop 中的粒子系統，同一顆 burst 每次循環都會自動重新觸發），每輪 0.6 秒循環撥放 48 幀——飛多久就跟著循環播多久，物件真正銷毀時（`YuanpeiProjectile` 自己的邏輯，撞到玩家或壽命到期）這顆子物件跟著一起消失，不需要自己另外排 `Destroy`。
+
+**改法**：新增 `SpearFlipbookVfxSetup.cs`（menu「Tools/Live2DAction/Add Spear Flipbook VFX (SpearVolley overlay)」），直接編輯（非新建）`Assets/_Project/VFX/Boss/CrimsonVoidSpearProjectile.prefab`——加一個新的子物件 `SpearFlipbookVFX`（`ParticleSystem` + `SpearFlipbookMat` 材質，shader 沿用既有的 `Live2DAction/VFX/SlashFlipbook`，`_Brightness`=2.0 讓箭頭白熱核心吃到 URP Bloom）。`YuanpeiAttacks.SpearVolley()` 完全沒有改動一行——因為 `spearProjectilePrefab` 欄位本來就指向這個 prefab（Play 模式讀取確認路徑一致），新增的視覺層自動隨每一發長矛型光彈一起出現。
+
+**驗證**：編譯無錯（`refresh_unity` + `read_console` 無新增錯誤）。菜單執行成功（console log 確認「added/updated 'SpearFlipbookVFX' on ...」）。非 Play 模式下用 `execute_code` 實例化＋`manage_camera` 側面截圖確認：飛行方向朝向正確（箭頭尖端朝 +Z）、alpha key 乾淨（背景角落透明、水印區域透明、能量核心不透明）、跟既有 3D 模型輪廓疊在一起視覺上吻合（都是箭頭/長矛形狀，方向一致）。實際 Play 模式下 F8→U/I→9 觀感（循環撥放速度手感、跟真實移動速度搭配起來是否自然）待使用者現場確認。
+
+### 追加94 續 170（2026-09-05）— 修正長矛型光彈 flipbook 左右方向顛倒的真因
+
+使用者：「影片特效的左右方向顛倒了，請反轉」。
+
+**真因（比想像中複雜，兩層問題疊在一起）**：
+1. **續169的驗證方法本身就是假的**——非 Play 模式下用 `execute_code` 生一個預覽物件截圖，看起來「方向正確」，但 `ParticleSystem` 在非 Play 模式下不會自動 tick（沒有呼叫 `Simulate()` 就不會真的跑起來），那次截圖裡看到的「箭頭形狀」其實全部是**3D 模型本身**的輪廓（模型本來就長得像箭頭/長矛），flipbook 粒子系統從頭到尾都沒有真的渲染出來過——等於那次驗證完全沒驗證到 flipbook。
+2. **真正的 bug**：`renderer.alignment = ParticleSystemRenderSpace.World`——這個模式下 Mesh 渲染完全不吃這個 transform 自己的旋轉。用 `ps.Simulate(t,true,true,true)` 強制模擬＋隱藏 3D 模型只留 flipbook，把 child 的本地 Y 旋轉掃過 0/45/90/.../315 八個角度，`World` 模式下全部八個角度渲染出來的畫面一模一樣（箭頭都指向飛行方向的反方向）——證實問題根本不在旋轉數值，而在 alignment 模式本身。
+
+**修法**：`renderer.alignment` 改成 `ParticleSystemRenderSpace.Local`（會確實套用這個 transform 自己的旋轉），改用 Local 之後重新掃一次同樣八個角度：0°/180° 剛好側面對到鏡頭（完全看不到，等於卡片轉到跟視線幾乎平行）、45°/90°/135° 箭頭方向正確（指向飛行方向），225°/270°/315° 方向依然是反的，其中 **90°** 卡片最正面朝向鏡頭（45/135 都有明顯的斜角透視縮短）。改用 90° + Local。
+
+**驗證**：用真實的 F8 Showcase 幾何（boss 在 -X、玩家/假人在 +X，飛行方向世界 +X；鏡頭固定在 -Z 往 +Z 看，跟 `RestageShowcase` 完全一致的座標關係，不是隨便取一個角度）重新截圖確認：箭頭尖端正確指向畫面右側（飛行方向），紫紅拖尾能量正確拖在後方（畫面左側），3D 模型跟 flipbook 疊在一起方向一致。
+
+**順便回答使用者的另外兩個問題**：
+- **這個特效是否已經正式上線到 BOSS 戰？**——是，從續169開始就已經是了，不是只存在於 F8 除錯工具。原因：這個 flipbook 是直接烘進 `CrimsonVoidSpearProjectile.prefab` 這個檔案本身（不是另外建一個 debug-only 的複本），而 `YuanpeiAttacks.spearProjectilePrefab` 這個欄位本來就指向同一個檔案（Play 模式讀取確認過路徑完全一致）——`SpearVolley()` 一行都沒改，所以正式關卡裡 boss 真的打長矛型光彈時，這個視覺層本來就會自動出現，F8 只是拿來檢視，不是唯一入口。
+- **加入特效前後的差異，怎麼做視覺比較？**——非 Play 模式下用 `execute_code` 直接生兩顆真實 prefab 副本（一顆停用 flipbook 子物件＝加入前、一顆啟用並用 `ParticleSystem.Simulate()` 強制跑到飛行中的某一幀＝加入後），對齊同一個攝影機角度分別截圖，再用 Python/PIL 裁切拼成一張上下對照圖——這個方法後續要看任何「改動前後差異」都可以照搬（前提是像這次一樣先用 `Simulate()` 避開粒子系統在非 Play 模式不會自動 tick 的問題，續169最初的失敗验证就是漏了這一步）。
+
+改 `SpearFlipbookVfxSetup.cs`（`renderer.alignment` World→Local；child 本地旋轉沿用 Euler(0,90,0) 但這次是在正確的 alignment 模式下重新掃描驗證出來的，不是續169那次的誤判）。編譯無錯、Console 無新增錯誤。已重新執行 bake menu item 把修正套用到 `CrimsonVoidSpearProjectile.prefab` 上（正式 boss 戰使用的同一個檔案）。
+
+### 追加94 續 171（2026-09-05）— F8 U模式新增「有/無特效對照」（K 鍵）
+
+使用者：「能不能在F8模式 U模式 同時射出有無特效版本的比較」。
+
+**做法**：新增 `compareKey`(K)，跟 Close-up 本身分開,是一個獨立的開關(切一次就持續生效,不用每次都按),只對長矛型光彈(9)有作用。開著 K 的狀態下在 U 模式按 9,`DriveCloseupView` 抓到真正的長矛本體、套用完原本的縮放之後,額外呼叫新方法 `BuildCompareClone`——複製一份剛剛那顆(已經縮放/定位/隔離好)的物件當「無特效對照組」,把複製體的 `SpearFlipbookVFX` 子物件強制關閉,疊在正牌那顆的**正下方**(間距 = 物件本身高度 × `compareStackGapFraction`(1.3),不是固定距離,縮放倍率變動時對照組間距會跟著等比例調整)——正牌本體完全不動,不去干擾 Close-up 鏡頭本來就算好的置中位置。
+
+複製體會帶著自己那份 `YuanpeiProjectile`(`Instantiate` 連同飛行方向/速度/追蹤等 runtime 狀態一起複製,不只是外觀),等於兩顆會各自平行飛行、各自命中/消失,不用另外寫一套獨立的生命週期管理——但因為它是這個工具自己生出來的、不在 `attacks` 的 `_spawned` 清單裡,`attacks.CancelAll()` 不會連帶清掉它,所以額外在 `Fire()` 開頭、`SetCloseupMode(false)` 都手動 `Destroy` 它,避免下一次開火或離開 Close-up 時殘留。
+
+**驗證**：編譯無錯、Console 無新增錯誤。非 Play 模式下無法端到端驗證(粒子系統/攻擊 coroutine 都要 Play 模式才會真的跑),新欄位是全新序列化欄位(不是改既有預設值),不需要額外同步場景檔——下次載入場景會自動套用程式碼預設值(K / 1.3)。實際兩顆是否確實不重疊、間距是否夠清楚,需要使用者在 Play 模式下 F8→U→K(開對照)→9 現場確認一次。
+
+### 追加94 續 172（2026-09-05）— 抓到「K沒發現區別」的真因：ParticleSystemRenderer 汙染了 bounds 量測（連帶修好一個從續169就潛伏的隱藏迴歸）
+
+使用者：「1.按下K沒發現區別 2. 在幫我確認正式BOSS戰 /F8(非I,U模式)的長矛型光彈特效是否有套用」。
+
+**問題2先回答**：載入 `Map_School.unity` 直接讀取場景裡真正的 `yuanpei_LogoSky` 的 `YuanpeiAttacks.spearProjectilePrefab` 欄位，確認路徑就是 `CrimsonVoidSpearProjectile.prefab`——跟 F8 除錯工具、跟正式 BOSS 戰用的是同一份檔案，`SpearVolley()` 沒有任何 debug-only 的分支去替換它。所以答案是：**F8（不管有沒有開 I/U）、正式 BOSS 戰，全部都已經套用**，不是只有 U/I 模式才看得到。
+
+**問題1的真因**：寫了一個非 Play 模式的受控重現測試（直接用反射呼叫 `ScaleCloseupTargetToFit`／`BuildCompareClone` 這兩個 private 方法,不需要真的進 Play 模式)，量到 `BuildCompareClone` 算出來的間距 `gap` 是 **910**——對照組被塞到離正牌本體 910 個單位遠的地方，等於扔到看不見的天涯海角，這才是「沒發現區別」的真正原因（不是縮放太小、也不是顏色不夠明顯，是根本不在畫面附近）。
+
+往上追一層,連 `ScaleCloseupTargetToFit` 本身都被牽連：同一次測試量到長矛型光彈的縮放倍率變成 **0.30**（正常應該是 6.5 倍放大，續167驗證過的數字）——即使沒有 K，續169加了 flipbook 之後，U/I 模式長矛型光彈的自動放大其實已經默默壞掉了，只是沒人剛好在這幾天測試時注意到「怎麼變小了」。
+
+**根本原因**：`GetSizeRenderers`（續167為了排除 `TrailRenderer` 剛生成時的假 bounds 而寫的方法）沒有把 `ParticleSystemRenderer` 也排除掉——續169新增的 `SpearFlipbookVFX` 子物件，牠的 `ParticleSystemRenderer` 在**從沒被 `Simulate()` 過**的狀態下，`bounds` 回報的是一個位於**世界原點 (0,0,0)**、大小 (0,0,0) 的退化值——完全不合理，連物件自己的座標都對不上。當這個座落在世界原點的退化 bounds 被 `Encapsulate` 進長矛本體（座落在關卡裡某個座標，例如 y=700）的真實 bounds 時，量出來的「大小」直接被拉伸成「從世界原點到長矛所在位置」的距離（好幾百甚至上千），是一個跟長矛實際大小完全無關的天文數字——`ScaleCloseupTargetToFit` 的縮放公式跟 `BuildCompareClone` 的間距公式都是拿這個被污染的數字去算，前者算出離譜的小縮放(0.30)，後者算出離譜的大間距(910)。這是跟續167（TrailRenderer 剛生成的假 bounds）完全同一類的 bug，只是這次的元凶換成了 `ParticleSystemRenderer`。
+
+**修法**：`GetSizeRenderers` 的排除清單加上 `ParticleSystemRenderer`（現在排除 `TrailRenderer`／`LineRenderer`／`ParticleSystemRenderer` 三種）——量測「這個物件的模型到底多大」只看真正的網格渲染器（`MeshRenderer`/`SkinnedMeshRenderer`），特效類渲染器一律不列入考慮。
+
+**驗證**：修正後重新跑同一套非 Play 模式受控測試——縮放倍率恢復成 **6.50**（跟續167的舊數字完全吻合），間距恢復成 **3.91**（合理的物件本身高度等級,不是天文數字）；接著用跟 `RestageShowcase` 完全相同的鏡頭距離公式重新截圖，確認兩顆物件（有特效的正牌＋無特效的對照組）都清楚落在畫面內、都看得見。
+
+**額外發現（附帶一提，非本次修正範圍）**：把兩顆疊在一起（垂直方向）截圖時，發現這個測試用的空曠場景本身自帶某種「地面倒影」效果（在天空中飄浮的物件下方會出現一個上下顛倒的鏡像），跟對照組疊放的位置意外地接近，光用肉眼掃過去確實有可能誤把「對照組」看成「正牌的倒影」而忽略掉——這可能是造成「沒發現區別」的次要原因（次要於上面那個 910 的主因）。這個倒影效果在正式 BOSS 戰的關卡場地是否存在、疊放位置會不會撞上，還沒有確認；如果使用者在 Play 模式實測後仍然覺得兩顆長得太像沒辦法一眼分辨，可以再考慮把對照組改成左右並排而不是上下疊放。
+
+改 `YuanpeiAttackDebugMode.cs`（`GetSizeRenderers` 排除清單加 `ParticleSystemRenderer`）。編譯無錯、Console 無新增錯誤。用反射直接呼叫 private 方法的非 Play 模式受控測試驗證兩個數字都恢復正常；實際 Play 模式下 F8→U→K→9 是否已經看得出兩顆的差異，待使用者現場確認。
+
+### 追加94 續 173（2026-09-06）— K鍵沒觸發的三個疊加原因 + flipbook 尺寸改成跟著3D模型走
+
+使用者：「1.按下k鍵沒有正確觸發 2. 影片特效應該要調整跟3d模型對應的大小」。
+
+**問題1：K鍵「沒觸發」其實是三個問題疊在一起**
+1. **鍵位衝突**：`Key.K` 撞到 `ViewFocusDirector.commitViewKey`（也是 K）。雖然 `SetWorldInputLocked` 在整個 F8 期間會停用那個 director、實際上不會真的搶輸入，但照續155立下的規矩（這個工具的按鍵一律不跟世界按鍵衝突），還是把它換成 `Key.N`（"no VFX" 好記）。
+2. **對照組被塞到畫面外（下方）**：續171 把對照組疊在正牌**下方**——但 Close-up 模式為了讓舞台落在畫面偏下（`closeupVerticalBiasFraction` 把鏡頭抬高），畫面下緣幾乎沒有空間，上緣才有 headroom。對照組往下疊等於直接掉出畫面下緣。改成疊在**上方**。
+3. **加成放大讓兩顆塞不下**：長矛型光彈在 Close-up 有「符合畫面 ×2」的加成放大（續162），單獨一顆就快要頂到畫面上下緣了，再往上疊第二顆一定爆框。開對照模式時（且只有這時）**取消那個 ×2 加成**，兩顆都用純「符合畫面」的尺寸，才疊得下。
+
+（另外續172修好的 `ParticleSystemRenderer` 假 bounds 也是其中一環——沒修那個的話間距會算成 910，比上面三個都嚴重。）
+
+**驗證**：反射直接呼叫 private 方法的非 Play 受控測試——對照模式下長矛縮放 3.25 倍（純符合畫面、無加成），對照組落在正牌**上方 +1.96**（間距 = 物件高度 1.50 × `compareStackGapFraction` 1.3），正牌 flipbook 開、對照組 flipbook 關；用 RestageShowcase 相同的鏡頭幾何截圖，確認兩顆都完整落在畫面內、上下排開、肉眼可分辨（上＝純模型無特效、下＝帶白紫能量特效）。`Map_School.unity` 的 `compareKey` 序列化值同步成 28（Key.N）。
+
+**問題2：flipbook 尺寸改成量測 3D 模型**
+原本 card 是寫死的 2.2 長（模型本身 world bounds 只有 1.20 長 / collider 1.25），等於特效比模型大了 1.8 倍，看起來像一團脫離模型的能量雲而不是「疊在模型上」的覆蓋層。改成 `BakeOntoPrefab` 時實際量測 "Model" 子物件的 renderer bounds 最長軸（1.20），card 長度 = 1.20 × `CardLengthVsModel`(1.12)（留一點點尾巴讓拖尾能量還是稍微超出矛尖），card 高度依影片 240:135 比例換算 = 0.75。重新烘焙後 card 從 2.2×1.24 變成 **1.34×0.75**，非 Play 模式截圖確認能量現在是貼著矛身走、不再是外擴的一大團。Close-up/Inspect 的整體放大是乘在父物件 localScale 上、flipbook 子物件會等比例跟著縮放，所以改基準比例後各種放大倍率下都維持正確。
+
+改 `SpearFlipbookVfxSetup.cs`（card 尺寸改成量測模型 bounds）+ `YuanpeiAttackDebugMode.cs`（`compareKey` K→N；對照模式疊上方、取消長矛加成放大；`BuildCompareClone` 間距公式加 clamp 上限）+ `Map_School.unity`（`compareKey` 序列化同步）。編譯無錯、Console 無新增錯誤。已重新執行 bake menu 把新 card 尺寸套到 `CrimsonVoidSpearProjectile.prefab`。實際 Play 模式下 F8→U→N→9 是否能清楚看到兩顆對照、以及新的 flipbook 尺寸是否恰當，待使用者現場確認。
+
+### 追加94 續 174（2026-09-06）— Boss 支配領域全螢幕邊界特效（yuanpei_LogoSky，URP Fullscreen Pass）
+
+使用者提供完整工程規格，要求分析專案（Render Pipeline / Main Camera / HUD / Boss 戰控制器 / 階段事件）後，在不破壞既有戰鬥系統的前提下實作一套螢幕空間的「Boss 支配領域」邊界特效。
+
+**分析結論**：URP 17.0.4（單一 pipeline asset + 單一 renderer，`m_RendererFeatures` 原本空）；3 台互斥 Base Camera、無 Camera Stack、無 Overlay Camera；所有 HUD 都是 Screen-Space-Overlay（天生蓋在整條 pipeline 之後）；`yuanpei_LogoSky` 的階段事件在 `YuanpeiBossVitals.PhaseChanged`；生命週期接點在 `YuanpeiEncounter.StartEncounter/Victory/Defeat`；專案無 Bloom。
+
+**新增**：`BossDomainScreenVFX.shader`（fullscreen HLSL，程序 fbm 噪聲、螢幕高度單位 edge mask、中央硬 early-out、四角加權、不規則 dissolve、黑霧、翠綠 emission、呼吸、僅邊界 UV 扭曲、進場/常駐/脈衝/消散參數）+ `BossDomainScreenVFXRendererFeature.cs`（自訂 ScriptableRendererFeature，RenderGraph copy→blit，Game camera only，未註冊材質時零成本早退）+ `BossDomainScreenVFX.cs`（控制器 + 可測試的 `BossDomainEnvelope` 狀態機，runtime 材質實例、快取 property ID、Update 無 GC）+ `BossDomainScreenVFXSetup.cs`（選單一鍵接線）+ `BossDomainScreenVFX.mat` + `BossDomainScreenVFXTests.cs`（12 測試全綠）。
+
+**改**：`Live2DAction_Renderer.asset`（+1 Renderer Feature，注入 BeforeRenderingPostProcessing）；`YuanpeiEncounter.cs`（+1 欄位、Awake 自動尋找、StartEncounter → BeginDomain、Victory/Defeat → EndDomain，共 4 處，不動既有邏輯）；`Map_School.unity`（`yuanpei_LogoSky` 掛控制器 + 接線）。
+
+**驗證**：EditMode 12/12 綠。Play 模式（Editor 對焦）實測 —— BeginDomain 進場 → Active（截圖確認四周翠綠火焰＋四角較強＋黑霧、中央清楚、HUD 在上）；玩家移動時特效固定螢幕邊界；SetPhase(2) 觸發一次脈衝後回 Active；EndDomain 消散 → Inactive，feature `s_Material` 清空、Pass 完全停止。Shader `isSupported=True` 訊息數 0，Console 無 Shader/RendererFeature/RenderGraph/NRE 錯誤。詳見 `Docs/YUANPEI_LOGO_SKY_BOSS.md` §Boss 支配領域全螢幕邊界特效。
+
+**尚需人工**：rune 貼圖（`runeTexture` 欄位，留空＝關）；正式夜空場地的觀感微調；`onPhasePulse` 接天空巨劍增亮；（可選）加 Bloom override。
+
+### 追加94 續 175（2026-09-06）— Boss 戰夜空全景圖（rogland_clear_night，CC0）
+
+使用者：「rogland_clear_night_4k.exr 可以當作 boss 戰的全景圖嗎」→ 可以（Poly Haven「Rogland Clear Night」，4096×2048 equirectangular、真夜空銀河、CC0）。
+
+**匯入**：ffmpeg 降 2K（ZIP16 half-float，8MB）→ `Assets/_Project/Environment/Textures/rogland_clear_night_2k.exr`（BC6H HDR，進版控 OK；4K 原檔留 Downloads）。
+
+**下半球沙漠地面**：自訂 skybox shader `Live2DAction/Environment/SkyboxNightPanorama`（legacy CG lat/long + exposure + rotation + tint + horizon-down darken）—— `_HorizonDarken` 把地平線以下淡成近黑，只留上方星空。材質 `Skybox_NightRogland.mat`（exposure 0.62、rotation 205°、horizonDarken 0.92）。
+
+**runtime 切換**：地圖串流不把 Map_School 設 active scene，Boss 戰實際用 GreyboxTest 的白天 skybox 渲染。`BossDomainScreenVFX.BeginDomain()` 時 swap `RenderSettings.skybox` + 壓低 ambient(0.35) + 開低霧，快取原值，退場/OnDisable/OnDestroy 完整還原（「進入 Boss 支配領域，天空本身就變了」）。控制器 +欄位 `domainSkybox` / `darkenEnvironment` / `domainAmbientIntensity` / `domainAmbientColor`；BeginDomain/EndDomain +`ApplyEnvironment`/`RestoreEnvironment`。
+
+**改**：`BossDomainScreenVFX.cs`（+夜空/ambient swap）；`BossDomainScreenVFXSetup.cs`（+匯入 EXR、建夜空材質、wire domainSkybox；修好 CloseScene 後 `boss.name` 的 MissingReferenceException — 先存字串）。**新增** `SkyboxNightPanorama.shader`、`Skybox_NightRogland.mat`、`rogland_clear_night_2k.exr`。
+
+**驗證**：EditMode 12/12 綠。Play 模式（frozen-frame）確認 BeginDomain 換成夜空、ambient 1.0→0.35、綠色領域邊界在暗背景下明顯；EndDomain 跑完 exit → skybox/ambient/fog 全還原、`s_Material` NULL。詳見 `Docs/YUANPEI_LOGO_SKY_BOSS.md` §夜空全景圖。
+
+### 追加94 續 176（2026-09-06）— Boss 外觀被夜空色調染到 → 加 4 個可調鈕
+
+使用者：「boss 的外觀似乎有被夜空全景圖影像(色調)，能調整嗎」。真因：續175 換夜空時 ambient 硬設飽和深藍綠 + `ambientMode=Flat` + `DynamicGI.UpdateEnvironment()` 重烘反射，整個場地(含 Boss)被染色。
+
+`BossDomainScreenVFX.cs` 新增：`domainAmbientColorTint`(0=不改色相只調暗，預設0.35)、`domainAmbientIntensity`(0.35→0.5)、`updateReflectionsFromSky`(預設 false = 不重烘反射，Boss 高光維持原樣)、`bossFillLight`(選填 Light，domain 期間開/退場關，可把 Boss 單獨重新照亮)。ApplyEnvironment 改成 `Color.Lerp(場景原 ambient, domain 色, tint)`；退場完整還原 ambientMode/三色/reflection。`BossDomainScreenVFXSetup` 同步新預設值。
+
+驗證：EditMode 12/12 綠。Play 實測 ambient (0.212,0.227,0.259)@1.0 → (0.157,0.176,0.203)@0.5（同色相只調暗），Boss 白羽/紅刃回到接近正常，夜空+綠邊界仍在；EndDomain 全還原。
+
+### 追加94 續 177（2026-09-06）— alt 靜走模式：更慢、身體搖擺減少（沉浸式觀景行走）
+
+使用者：「調整 alt 靜走模式 目前移動模式還是太快，身體搖擺太明顯，請真的做成 rpg 遊戲中的緩慢沉浸式行走 觀賞景觀的感覺」。
+
+分析：Maya Locomotion blend tree 的 3 個 <0.8 子節點(threshold 0/0.4/0.8)其實**全部是 `NewWalk`**,threshold 2 才是 `NewRun`。`walkSpeed` 原本 0.9 > 0.8 → 混了一點 `NewRun` 進來(額外搖擺);而且 0.9 translation 太快。
+
+改法:
+- `CharacterMovement.walkSpeed` 0.9 → **0.55**(~27% 跑速,完全落在純 NewWalk 區間,無 run 混入)。code default + GreyboxTest 的 Player/Cat 序列化值都同步。
+- `CharacterAnimatorLink` 新增 `walkAnimatorSpeed`(0.65):`IsWalking && grounded` 時 `animator.speed = 0.65`,整段走路 clip(步頻＋烘進去的胯部/肩膀搖擺)一起放慢 → 更沉穩、腳步不打滑(0.55 translation vs NewWalk ~0.9 authored × 0.65 ≈ 0.585,接近吻合)。退出走路模式 → `animator.speed` 回 1。
+- `ICharacterSpeedSource` 加 `IsWalking`(Enemy/Boss → `false`);`CharacterMovement.IsWalking` 已存在直接滿足介面。
+- 抽出純函式 `CharacterAnimatorLink.ComputeGroundAnimatorSpeed(...)`,7 個新 EditMode 測試。
+
+驗證:EditMode 20/20 綠(CharacterAnimatorLinkTests + WalkRunToggleTests)。Play 模式(frozen-frame + 反射)確認:walkSpeed 序列化 0.55、`IsWalking` true 時 `animator.speed` = 0.65、切回 run → 1.00。實際手感(是否夠慢、搖擺是否可接受)待使用者對焦 Editor Play-test;若搖擺仍太大,下一步是對 Visual/胯部骨骼做程序性 upright-damp 或加 additive Animator layer。
+
+改 `CharacterMovement.cs`、`CharacterAnimatorLink.cs`、`ICharacterSpeedSource.cs`、`EnemyAI.cs`、`BossStateMachine.cs`、`CharacterAnimatorLinkTests.cs` + `GreyboxTest.unity`(Player/Cat walkSpeed)。
+
+### 追加94 續 178（2026-09-06）— 靜走「姿勢還是跑步」→ 換成真正的慢走 clip（玩家專用 override）
+
+使用者：「速度正確但是 姿勢還是跑步 能調整與速度匹配的姿勢嗎」。真因：靜走時 translation 已經是 0.55(正確),但播的 clip 是 Maya 的 `NewWalk`(cycle 0.83s)—— 只比 `NewRun`(0.70s)慢一點點,姿勢本身就是小跑步。在 Speed 0.55~0.6 時 Locomotion 是 ~90% `NewWalk` + 10% `NewIdle`,沒有 run 混入,但 NewWalk 這支 clip 本身太急。
+
+改法:新增 `PlayerImmersiveWalkSetup.cs`(選單「Tools/Live2DAction/Setup Player Immersive Walk Pose」)——
+- 把 `TC_Sword_Free_Pack/KBS_Walk_F_001_IP`(cycle **1.17s**,真正放鬆的散步)的 import 設 Loop Time = true
+- 建 `NewAnimator_PlayerImmersiveWalk.overrideController`(wrap 共用的 `NewAnimator`),把 `NewWalk` → `KBS_Walk_F_001`
+- 指到 **Player 的 Visual Animator**(GreyboxTest)—— **玩家專用**,共用的 `NewAnimator.controller`(中立者1/守望者也在用)完全沒動
+
+配合 `CharacterAnimatorLink.walkAnimatorSpeed`(0.65):KBS_Walk 1.17s × (1/0.65) ≈ 1.8s/cycle 的緩慢刻意散步,跟 0.55 位移大致腳步吻合。手感微調就調 `walkAnimatorSpeed`(調高=散步快一點,調低=更慢)。
+
+驗證:編譯無錯、選單執行成功、Play 讀取確認 Player Visual controller = `NewAnimator_PlayerImmersiveWalk` (AnimatorOverrideController)、靜走時播 KBS_Walk。實際姿勢觀感待使用者對焦 Editor Play-test(截圖受翅膀 cosmetic 遮擋 + frozen editor 限制,無法清楚呈現)。
+
+新增 `PlayerImmersiveWalkSetup.cs` + `NewAnimator_PlayerImmersiveWalk.overrideController`;改 `KBS_Walk_F_001_IP.fbx`(loopTime)+ `GreyboxTest.unity`(Player Visual Animator controller)。
+
+### 追加94 續 179（2026-09-06）— 靜走速度微調（0.55→0.70）
+
+使用者：「接下來調整速度 有點太慢」。`CharacterMovement.walkSpeed` 0.55 → **0.70**(~35% 跑速,仍完全落在純 walk blend,無 run 混入 — Play 確認 Speed 0.7/0.8 都是 ~100% KBS_Walk)。`CharacterAnimatorLink.walkAnimatorSpeed` 0.65 → **0.82** 配合(KBS_Walk 1.17s ÷ 0.82 ≈ 1.43s/cycle,舒適的放鬆散步節奏,腳步跟得上)。Player + Cat 的 code default + GreyboxTest 序列化值同步。EditMode 全綠、Console 無錯誤。
+
+### 追加94 續 180（2026-09-06）— yuanpei_LogoSky 觸發 Boss 戰的 6 拍過場動畫
+
+使用者不滿意舊過場,要求:①360全景圖從地平線往上晴天→夜 ②鏡頭拉近 boss ③boss 邊轉圈邊升起 ④鏡頭拉遠、玩家跳過去劈砍 ⑤側面近 2-shot、劈中瞬間 boss 蓄力頂飛玩家 ⑥正式開戰。決定:白天用 shader 內建漸層、boss 從地下升起、~12s、不可跳過。
+
+Coroutine 驅動(沿用 `DeathDissolve` 模式,不用 Timeline)。新 `YuanpeiIntroCinematic.cs` —— `YuanpeiEncounter.StartEncounter` `yield` 它跑完再 `boss.BeginEncounter(playIntro:false)`。玩家/相機控制 + CharacterController + boss AI hand-off(`finally` + failsafe),控制腳本 runtime 依型別解析(跨場景不能序列化)。
+
+- `SkyboxNightPanorama.shader` +`_NightRise`(0晴/1夜,夜色 sweep 從 `d.y=-1.15` 往 `1.15` 爬)+ `_DayZenith/_DayHorizon/_DayGround` 白天漸層
+- `BossDomainScreenVFX` 改用 `domainSkybox` runtime 實例 + `SetNightRise()`
+- `YuanpeiBoss` `BeginEncounter` +`playIntro` 參數、新 `DriveRiseAndSpin(startPos, startScale, t01, spin)`
+- `YuanpeiEncounter` +`introCinematic` 欄位 + `IntroThenFight` coroutine
+
+新增 `YuanpeiIntroCinematic.cs` / `YuanpeiIntroCinematicSetup.cs`(選單) / `YuanpeiIntroCinematicTests.cs`(9)。改 `YuanpeiBoss.cs` `YuanpeiEncounter.cs` `SkyboxNightPanorama.shader` `BossDomainScreenVFX.cs` `Map_School.unity`。
+
+驗證:用 `EditorApplication.Step()` 逐幀跑完整段(Editor 失焦也能驗)—— 拍1 `_NightRise` 0→0.98、拍3 boss Y −2.5→6.5 / scale 85→400 / 自轉、拍5 玩家拋物線飛出 ~10m 峰值 Y≈2.2、拍6 IsRunning=False / State=Hover / 控制全還原、Console 無錯、EditMode 331/331 綠。細部時長/鏡頭/顏色/力道待 Play-test 微調;HUD 隱藏(`playerUiRoots`)+ 細緻躍擊動作待補。詳見 `Docs/YUANPEI_LOGO_SKY_BOSS.md` §觸發 Boss 戰的過場動畫。
+
+### 追加94 續 181（2026-09-06）— 過場動畫 v2:全景圖放慢、boss 原地升空、空中水平 2-shot 頂飛
+
+使用者修訂:①全景圖渲染太快 → 放慢 + 鏡頭再拉遠,看到大部分天空慢慢變夜 ②boss 不要跑到玩家背後 —— 在**原本位置**轉圈升到**真正的高空**,鏡頭斜向拍 boss → 玩家跳到 boss 面前(高空水平平行線)→ 玩家出手前一瞬鏡頭拉近特寫(玩家左側面 / boss 右側面)→ boss 快速蓄力後仰再往前把玩家頂飛 → 鏡頭拉遠拍玩家被擊飛落地。
+
+- `YuanpeiIntroTimeline.Default` → `SkyWipe 5.0 / PushToBoss 1.8 / BossRise 2.6 / PlayerLeap 2.6 / Clash 3.0 / Settle 1.6`(共 16.6s;舊 ~12s)。拍1 鏡頭 `skyCamBack=34 / skyCamHeight=15 / skyCamAimHeight=16`(遠 + 高 + 朝天瞄),`SetNightRise` 走完整 5s。
+- `RunBeats` 重寫:boss 埋在**競技場中心自己的點**(`arenaCenter + down*3`),從不橫移;拍3 `DriveRiseAndSpin(center, …, bossAirAltitude=13, …)` 升到 `floor+13 ≈ Y13.5`;拍4 玩家 `leapEnd = bossPos - flatDir*airStandoff` **同 Y**(高空水平線),`side = Cross(up, flatDir)` → 玩家 screen-L / boss screen-R;拍5 k<0.22 定格特寫、0.22–0.5 boss `+flatDir*bossChargeBack` 後仰 + disc tilt、k≥0.5 `HitStop` + `Staggered` + boss lunge、玩家沿拋物線飛到 `playerHome - flatDir*launchBackDistance`(Y 落回 `groundY`)、鏡頭拉遠追墜落;拍6 ease 到玩家背後交還控制。
+- `YuanpeiBoss.DriveRiseAndSpin` **移除 `config.maxWorldY` 夾制**(cinematic-only:過場期間 boss `enabled=false` 所以 `ClampWorldY` 不會打架,`SettleToHoverPose`(仍夾制)在開戰前把 boss 放回戰鬥高度)—— 這是本次關鍵修正:舊版 boss 升空被 `maxWorldY=8` 夾住,升不到「高空」。
+- `YuanpeiIntroCinematic.cs` 新欄位:`skyCamBack/Height/AimHeight`、`bossStartDepthBelowArena`、`bossAirAltitude`、`airStandoff`、`bossChargeBack`、`launchBackDistance`、`launchArcHeight`、`closeFov`。`CrossFade` 用 `Animator.HasState` 護欄(避免 "State could not be found");躍起改用 `SetFloat("Speed", 2f)` 而非 CrossFade 巢狀 state。
+
+驗證:`EditorApplication.Step()` 逐幀 + 6 張 game-view 截圖 —— 拍1 mid `_NightRise=0.42` 鏡頭 `(-2,15.5,-72)` / 拍1 end 全夜遠景 + 綠色支配領域邊框 / 拍3 boss 升到 Y12–13.5 原地自轉 / 拍4 玩家升到 boss 同高 / 拍5 特寫 2-shot 玩家左 boss 右 / 拍5 頂飛 玩家空中被擊退 / 拍6 玩家落地 `(-2,1.1,-92)` boss Hover 控制還原。`PlayerGuard` 過場後 `enabled=false` 是 `YuanpeiEncounter.ApplyNoDefenceRule` 的**既有規則**(spec §8.1 此戰禁防禦),非 bug,Victory/Defeat 會還原。EditMode 34/34(YuanpeiIntroCinematic + BossDomainScreenVFX + CharacterAnimatorLink)綠。細部節奏/鏡位/力道仍待使用者聚焦 Play 微調。
+
+### 追加94 續 182（2026-09-06）— 過場動畫 v3:真實躍擊動畫 + 電影加速/慢動作 + 落地硬直
+
+使用者:拍4「玩家跳過去劈砍」的動畫不真實(要用真的普通攻擊、跳過去那瞬間畫面播放速度加快帶電影感);拍5 boss 擊退動畫不真實(只要稍微傾斜 → 往後 → 往前一個「頂」的動作,而且整段用電影雙方交打的慢速感);落地後應該看到玩家做出**硬直動作(架式條滿格的那個)**。
+
+- **拍4 真實躍擊**:`SetTrigger("AttackComboSword")`(→ `KBS_Sword_ATK_Combo_01_001_IP` 真刀連段,不再用 Speed 參數硬套跑步);先 `Jump`(→ `NewJump`)再在 k≥0.6 觸發揮刀。`Time.timeScale` envelope:k<0.55 從 1 → `leapTimeScale`(1.5)加速衝刺,之後 → `clashTimeScale`(0.4)進入慢動作。
+- **拍5 慢動作交打**:`Time.timeScale = clashTimeScale`(0.4) 整段。boss 動作簡化為 k<0.4 微傾 −6° + 後退 0.7m → k0.4–0.6 前傾 +4° + 前「頂」2.2m → k>0.6 ease 回原位(不再是舊版的大 lunge)。玩家被頂飛沿拋物線落地,`timeScale` 於墜落段 ease 回 0.9。
+- **落地硬直**:玩家**觸地瞬間**(grounded && lk≥0.9)`_stance.AddPostureDamage(MaxStance*2)` → `IsStaggered` → `StaggerAnimationLink` 撐住 `KneelingDown` 跪姿(= 架式條滿格的那個)。玩家 `StancePoise.staggerDurationSeconds` 場景值=1.2s → 跪 ~1.2s 後自動恢復。拍5 尾鏡頭改為掃到落點的地面 3/4 shot(`landCam = landSpot + side*5 + (-flatDir)*4.5 + up*2.4`),玩家落地跪姿填滿畫面(舊版 farCam 太遠玩家縮成一點)。
+- **時間軸/還原**:`YuanpeiIntroTimeline.Default.Clash` 3.0 → **2.4**(scaled 秒,在 0.4x 下 ≈ 6s 慢動作實時)。失效保護鐘 `Time.time` → **`Time.unscaledTime`**(慢動作下 scaled time 跑太慢會誤觸;`realtimeSinceStartup` 又會被 Editor 逐幀驗證的實牆鐘誤觸)。`LockActors` 接管 `Time.timeScale` + 玩家 `Animator.speed`(重設 1),`CharacterAnimatorLink` 也納入停用清單(否則它每幀搶 Speed / animator.speed);`UnlockActors` 全部還原 + `_stance.EndStagger()` 乾淨起身。
+- `YuanpeiBoss.SettleToHoverPose` 加 `visualRoot.localRotation = _skyVisualLocalRot`(清掉拍3 累積的自轉 yaw + 拍5 tilt,開戰時 disc 回正)。
+
+新欄位:`leapTimeScale`(1.5)、`clashTimeScale`(0.4)、`groundStaggerHoldSeconds`(1.0)。`YuanpeiIntroCinematic.cs` / `YuanpeiBoss.cs` 改。
+
+驗證:`EditorApplication.Step()` 逐幀跑完整段 + 4 張截圖 —— 拍4 timeScale 1→1.5 衝刺(`NewJump` → `AttackComboSword`)/ 拍5 特寫 timeScale 0.4 玩家揮刀(左)boss disc 傾斜(右)/ boss 後退 z−104→−107 再前頂回 −105 / 玩家拋物線落地 `(-2,1.1,-92)` timeScale ease 回 1 / **落地 `stagger=True` `KneelingDown` 撐 ~1.2s** / 拍6 `run=False` `timeScale=1` `anim.speed=1` boss `Hover` CharacterMovement/AnimatorLink/PlayerInput 全還原。EditMode 20/20(YuanpeiIntroCinematic + BossDomainScreenVFX)綠、Console 無錯。細部力道/節奏仍待使用者聚焦 Play 微調。

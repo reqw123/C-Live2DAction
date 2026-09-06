@@ -35,6 +35,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         public Transform Player => player;
         public Transform VisualRoot => visualRoot;
         public Transform GroundRayOrigin => groundRayOrigin != null ? groundRayOrigin : transform;
+        public IReadOnlyList<YuanpeiAttackDef> AttackPool => attackPool;
 
         // Damage/interaction gates read by the hit receiver / execution controller.
         public bool AcceptsDamageNow =>
@@ -93,7 +94,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         // ---------------------------------------------------------------- external control
 
-        public void BeginEncounter(Vector3 combatCenter, Transform triggeringPlayer = null)
+        public void BeginEncounter(Vector3 combatCenter, Transform triggeringPlayer = null, bool playIntro = true)
         {
             _arenaCenter = combatCenter;
             if (config != null) config.arenaCenter = combatCenter;
@@ -106,7 +107,75 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 player = t != null ? t : triggeringPlayer.root;
             }
             if (player == null || player.name != "Player") player = ResolvePlayer();
-            StartCoroutine(IntroRoutine());
+
+            if (playIntro)
+            {
+                StartCoroutine(IntroRoutine());
+            }
+            else
+            {
+                // 續 180 - YuanpeiIntroCinematic already ran the descend/rise演出; drop straight into
+                // combat at the hover pose (no 2.6s IntroRoutine).
+                SnapToCombatPose(combatCenter);
+                _lastPlayerPos = player != null ? player.position : Vector3.zero;
+                _globalRestUntil = Time.time + 0.6f;
+                State = YuanpeiState.Hover;
+            }
+        }
+
+        // 續 180 - the boss's own rise/spin/scale beat, exposed for YuanpeiIntroCinematic to drive
+        // frame-by-frame during the "boss邊轉圈邊升起" shot. Rises straight up at `center` X/Z (never
+        // moves sideways) from `startPos` to `center.x, altitudeAboveFloor, center.z`, growing
+        // startScale -> combat visual scale, spinning. 續181: altitude is a param now (the fight
+        // choreography happens HIGH in the air, well above the hover pose).
+        public void DriveRiseAndSpin(Vector3 center, Vector3 startPos, Vector3 startScale, float altitudeAboveFloor, float t01, float spinDegPerSec)
+        {
+            _arenaCenter = center;
+            float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t01));
+            float floor = SampleFloorY(center);
+            // 續181: cinematic-only - deliberately NOT clamped to config.maxWorldY. The rise beat takes
+            // the boss up to a genuine "高空" for the air clash; SettleToHoverPose() (still clamped)
+            // drops it back into combat range before the fight starts, and the boss is disabled during
+            // the cutscene so ClampWorldY never fights this.
+            float endY = floor + altitudeAboveFloor;
+            Vector3 endPos = new Vector3(center.x, endY, center.z);
+            Vector3 endScale = _skyVisualScale.sqrMagnitude > 0.0001f
+                ? _skyVisualScale * combatVisualScaleFraction
+                : startScale;
+
+            transform.position = Vector3.Lerp(startPos, endPos, k);
+            if (visualRoot != null)
+            {
+                visualRoot.localScale = Vector3.Lerp(startScale, endScale, k);
+                visualRoot.Rotate(0f, spinDegPerSec * Time.deltaTime, 0f, Space.Self);
+            }
+        }
+
+        /// <summary>Cinematic hand-off: drop the boss straight to its combat hover pose from wherever it is.</summary>
+        public void SettleToHoverPose()
+        {
+            float floor = SampleFloorY(_arenaCenter);
+            float y = config != null ? Mathf.Min(floor + config.hoverHeight + 1.5f, config.maxWorldY) : floor + 4f;
+            transform.position = new Vector3(_arenaCenter.x, y, _arenaCenter.z);
+            // 續182 - undo the accumulated rise-spin yaw + any cutscene tilt so the disc enters the
+            // fight at its authored upright orientation.
+            if (visualRoot != null) visualRoot.localRotation = _skyVisualLocalRot;
+        }
+
+        // 續 143 (YuanpeiAttackDebugMode, user: "稻草人在非常高的高空") - instantly place the boss at a
+        // sensible combat pose (position + shrunk visual scale), no animated descend, no FSM/State
+        // change. If a real encounter is never triggered first, the boss just sits at its authored
+        // idle "giant sky logo" transform (~Y42, scale 1700) - the debug tool needs a way to get it
+        // (and anything spawned relative to it) down to ground level without playing IntroRoutine's
+        // 2.6s cinematic every time F8 is pressed.
+        public void SnapToCombatPose(Vector3 center)
+        {
+            _arenaCenter = center;
+            if (config != null) config.arenaCenter = center;
+            float floor = SampleFloorY(center);
+            float y = config != null ? Mathf.Min(floor + config.hoverHeight, config.maxWorldY) : floor + 3f;
+            transform.position = new Vector3(center.x, y, center.z);
+            if (visualRoot != null && config != null) visualRoot.localScale = _skyVisualScale * combatVisualScaleFraction;
         }
 
         // The player died in this fight and gets kicked out - put the boss fully back to its
@@ -338,9 +407,30 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _hoverPhase += Time.deltaTime * config.hoverBobAmplitudeSpeed.y * Mathf.PI * 2f;
             float floor = SampleFloorY(transform.position);
             float targetY = floor + config.hoverHeight + Mathf.Sin(_hoverPhase) * config.hoverBobAmplitudeSpeed.x;
+            // 續 139 (user: "調整之後仍然有一部份是陷入地板...請讓他稍微浮在空中") - hand-tuned hoverHeight
+            // numbers kept guessing wrong because they never accounted for the visual's ACTUAL rendered
+            // size. Read the disc's real current silhouette and never let its lowest point sink below a
+            // floor + margin line, on top of whatever hoverHeight is tuned to - self-corrects if the
+            // model/scale changes again instead of needing another round of hand-tuned constants.
+            float minY = floor + VisualBottomOffset() + config.groundClearanceMargin;
+            if (targetY < minY) targetY = minY;
             Vector3 p = transform.position;
             p.y = Mathf.MoveTowards(p.y, targetY, 8f * Time.deltaTime);
             transform.position = p;
+        }
+
+        // How far the visual's CURRENT rendered silhouette extends below the boss's pivot, whatever
+        // orientation it's in right now (flat hover tilt vs edge-first charge attitude give different
+        // answers) - lets ground-hugging logic stay exact instead of a hand-tuned constant that goes
+        // stale the moment the model/scale/rotation changes (續 139).
+        public float VisualBottomOffset()
+        {
+            if (visualRoot == null) return 0f;
+            var renderers = visualRoot.GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0) return 0f;
+            Bounds b = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++) b.Encapsulate(renderers[i].bounds);
+            return transform.position.y - b.min.y;
         }
 
         private void MaintainRange()

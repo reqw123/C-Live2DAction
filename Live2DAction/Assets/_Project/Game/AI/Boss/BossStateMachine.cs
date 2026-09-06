@@ -254,6 +254,7 @@ namespace Live2DAction.AI.Boss
         // Controller wires MovementSpeed through a blend tree instead of discrete clip states.
         public float CurrentHorizontalSpeed => new Vector2(_horizontalVelocity.x, _horizontalVelocity.z).magnitude;
         public bool IsFlying => false;
+        public bool IsWalking => false;   // boss has no walk toggle
 
         // 2026-08-25 - see ICharacterSpeedSource.IsGrounded's own comment. This class already
         // writes its own Grounded bool directly in WriteAnimatorParameters() below rather than

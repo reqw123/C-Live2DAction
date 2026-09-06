@@ -45,6 +45,15 @@ namespace Live2DAction.Characters
         [SerializeField] private bool syncStrideToGroundSpeed;
         [SerializeField] private float maxStrideRate = 2.5f;
 
+        // 2026-09-06, user request ("alt 靜走模式...身體搖擺太明顯...緩慢沉浸式行走 觀賞景觀") - while
+        // the walk toggle is on and grounded, the WHOLE locomotion clip is played at this rate.
+        // The baked stride/sway then happens this much less often (calmer, more deliberate), and it
+        // keeps the feet planted against the lowered CharacterMovement.walkSpeed instead of dragging
+        // or skating. 1 = no slow-down. Only affects characters whose speed source reports IsWalking
+        // (Player + Cat); Enemy/Boss always report false. 續(2026-09-06 "有點太慢"): 0.65 -> 0.82 to
+        // track walkSpeed's bump to 0.70.
+        [SerializeField] private float walkAnimatorSpeed = 0.82f;
+
         private ICharacterSpeedSource _speedSource;
         private int _speedParameterHash;
 
@@ -107,10 +116,18 @@ namespace Live2DAction.Characters
             // out or a knockback) still correctly shows Fall.
             animator.SetBool(GroundedParameterHash, _speedSource.IsGrounded || _speedSource.IsFlying);
 
-            if (syncStrideToGroundSpeed)
+            bool onGround = _speedSource.IsGrounded && !_speedSource.IsFlying;
+            if (syncStrideToGroundSpeed || (onGround && _speedSource.IsWalking))
             {
-                bool grounded = _speedSource.IsGrounded && !_speedSource.IsFlying;
-                animator.speed = ComputeStrideRate(_speedSource.CurrentHorizontalSpeed, maxAnimatorSpeed, maxStrideRate, grounded);
+                animator.speed = ComputeGroundAnimatorSpeed(
+                    _speedSource.IsWalking, walkAnimatorSpeed,
+                    _speedSource.CurrentHorizontalSpeed, maxAnimatorSpeed, maxStrideRate,
+                    onGround, syncStrideToGroundSpeed);
+            }
+            else if (!Mathf.Approximately(animator.speed, 1f))
+            {
+                // we sped it up / slowed it down last frame and no longer should - hand it back
+                animator.speed = 1f;
             }
         }
 
@@ -130,6 +147,23 @@ namespace Live2DAction.Characters
             }
 
             return Mathf.Clamp(currentSpeed / authoredTopSpeed, 1f, maxRate);
+        }
+
+        // Resolves the grounded Animator playback rate: the walk-mode slow-down wins (it is the
+        // whole point of the toggle), otherwise the overspeed stride-sync if it's enabled, else 1.
+        public static float ComputeGroundAnimatorSpeed(bool isWalking, float walkRate,
+            float currentSpeed, float authoredTopSpeed, float maxStrideRate,
+            bool grounded, bool syncStride)
+        {
+            if (grounded && isWalking)
+            {
+                return Mathf.Clamp(walkRate, 0.05f, 1f);
+            }
+            if (syncStride)
+            {
+                return ComputeStrideRate(currentSpeed, authoredTopSpeed, maxStrideRate, grounded);
+            }
+            return 1f;
         }
     }
 }

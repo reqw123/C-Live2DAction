@@ -34,11 +34,18 @@ namespace Live2DAction.Characters
         // 2026-08-30, explicit user request ("設計像原神那樣的 切換式 跑步/慢走 沉浸式體驗") - Left Alt
         // toggles a persistent walk mode; while it's on, ground movement uses this instead of
         // moveSpeed. Maya's Locomotion blend tree (CharacterAnimatorLink) is fed the real
-        // translation speed, and NewWalk is its clip for anything up to 0.8, so a lower speed here
-        // makes the walk animation come out on its own - no Animator change needed. 0.9 ~= 45% of
-        // the run pace (a Genshin-ish ratio); the primary feel knob - if the feet slide because
-        // NewWalk is authored for a faster pace, raise this toward that pace.
-        [SerializeField] private float walkSpeed = 0.9f;
+        // translation speed, and NewWalk is its clip for the whole 0-0.8 range (all three of the
+        // tree's sub-0.8 children ARE NewWalk), so anything below 0.8 is pure walk with no run
+        // blended in.
+        //
+        // 2026-09-06, user: "移動模式還是太快...身體搖擺太明顯...緩慢沉浸式行走 觀賞景觀的感覺" -
+        // 0.9 was ~45% of run pace AND sat at 0.9 > 0.8 so a touch of NewRun bled in (extra sway).
+        // Dropped to 0.55, then the walk POSE itself was still jog-like (NewWalk is only marginally
+        // slower than NewRun) - fixed by a Player-only override to KBS_Walk_F_001 (a real relaxed
+        // stroll, see PlayerImmersiveWalkSetup). 續: "有點太慢" -> nudged 0.55 -> 0.70 (~35% of run,
+        // still purely inside the walk blend). CharacterAnimatorLink.walkAnimatorSpeed slows the
+        // clip to match so the feet stay planted.
+        [SerializeField] private float walkSpeed = 0.7f;
 
         // Eased (SmoothDamp/SmoothDampAngle) rather than constant-rate (MoveTowards/
         // RotateTowards): a constant rate accelerates linearly and then cuts off the instant

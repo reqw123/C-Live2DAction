@@ -32,4 +32,6 @@ MonoBehaviour:
   number1: 5
   number2: 7
   number3: 0.8
+  number4: 1.4
+  number5: 0.6
   count: 1

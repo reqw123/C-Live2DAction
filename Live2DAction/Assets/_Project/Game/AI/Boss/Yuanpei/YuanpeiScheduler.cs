@@ -94,6 +94,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 case YuanpeiAttackId.ChargeLine:      return s.playerDistance >= 9f;                    // reward it at range
                 case YuanpeiAttackId.ChargeCrush:     return s.playerLingeringArea;                     // punish a camper
                 case YuanpeiAttackId.OrbitDash:       return s.playerDistance >= 5f && s.playerDistance <= 13f;
+                case YuanpeiAttackId.SpearVolley:     return s.playerDistance >= 8f;                     // 遠距離連續發射 - reward it when the player is furthest out (續 137: 13→8m，使用者嫌太遠)
                 default: return false;
             }
         }

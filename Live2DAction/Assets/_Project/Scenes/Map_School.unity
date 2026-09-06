@@ -323,6 +323,7 @@ GameObject:
   - component: {fileID: 230221645}
   - component: {fileID: 230221644}
   - component: {fileID: 230221643}
+  - component: {fileID: 230221646}
   m_Layer: 0
   m_Name: YuanpeiEncounter
   m_TagString: Untagged
@@ -344,6 +345,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   boss: {fileID: 607562221226281425}
   hud: {fileID: 607562221226281421}
+  domainVfx: {fileID: 607562221226281429}
+  introCinematic: {fileID: 230221646}
   combatCenter: {x: -2, y: 0.5, z: -105}
   startOnTrigger: 1
   activationLineZ: -109
@@ -354,6 +357,13 @@ MonoBehaviour:
   returnUnloadScene: Map_School
   returnArrivalPosition: {x: 0, y: 1.1, z: -78}
   returnArrivalYaw: 0
+  lockdownCenterXZ: {x: 0, y: -115}
+  lockdownHalfX: 31.5
+  lockdownHalfZ: 31.5
+  lockdownGateGapHalfWidth: 4.31
+  lockdownWallThickness: 1
+  lockdownFloorY: -8
+  lockdownCeilingY: 45
 --- !u!65 &230221644
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -390,6 +400,53 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &230221646
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 230221642}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 17c0956747e1fe34097eb93f52b48aa0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  boss: {fileID: 607562221226281425}
+  domainVfx: {fileID: 607562221226281429}
+  playerControlScripts:
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  - {fileID: 0}
+  playerUiRoots: []
+  timing:
+    SkyWipe: 5
+    PushToBoss: 1.8
+    BossRise: 2.6
+    PlayerLeap: 2.6
+    Clash: 2.4
+    Settle: 1.6
+  skyCamBack: 34
+  skyCamHeight: 15
+  skyCamAimHeight: 16
+  bossStartDepthBelowArena: 3
+  bossStartScaleFraction: 0.05
+  bossSpinDegPerSec: 260
+  bossAirAltitude: 13
+  airStandoff: 3
+  bossChargeBack: 2.6
+  launchBackDistance: 10
+  launchArcHeight: 3.5
+  hitStopSeconds: 0.14
+  baseFov: 60
+  closeFov: 34
+  leapTimeScale: 1.5
+  clashTimeScale: 0.4
+  groundStaggerHoldSeconds: 1.5
 --- !u!1 &275365321
 GameObject:
   m_ObjectHideFlags: 0
@@ -1223,6 +1280,88 @@ Transform:
   m_Children:
   - {fileID: 658114898}
   - {fileID: 1496319356}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &673839420
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 673839422}
+  - component: {fileID: 673839421}
+  m_Layer: 0
+  m_Name: YuanpeiAttackDebugMode
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &673839421
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 673839420}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6c687054ebb000446b074d94522e3ed1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  toggleKey: 101
+  pauseKey: 30
+  replayKey: 39
+  slowerKey: 13
+  fasterKey: 14
+  rangeRingKey: 21
+  snapDummyToPlayerKey: 24
+  resetDummyKey: 68
+  dummyViewKey: 26
+  inspectKey: 23
+  hidePanelKey: 22
+  closeupKey: 35
+  compareKey: 28
+  closeupTimeScale: 0.5
+  closeupFrameMargin: 1.6
+  moveSpeed: 6
+  groundMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  verticalUpKey: 67
+  verticalDownKey: 66
+  freeLookSensitivity: 0.12
+  freeFlySpeed: 8
+  boss: {fileID: 607562221226281425}
+  attacks: {fileID: 607562221226281426}
+  hud: {fileID: 607562221226281421}
+  fallRecoverDepth: 8
+  showcaseHalfSeparation: 8
+  showcaseFrameMargin: 1.3
+  compareStackGapFraction: 1.3
+  inspectSpearVolleyExtraScale: 3
+  closeupTargetRadiusFraction: 0.28
+  closeupMinScaleFactor: 0.15
+  closeupMaxScaleFactor: 8
+  closeupSpearVolleyExtraScale: 2
+  closeupHalfSeparation: 5
+  closeupProjectileSpeed: 0.6
+  closeupVerticalBiasFraction: 0.15
+--- !u!4 &673839422
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 673839420}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &743892656
@@ -2193,6 +2332,7 @@ GameObject:
   - component: {fileID: 607562221226281421}
   - component: {fileID: 607562221226281428}
   - component: {fileID: 607562221226281427}
+  - component: {fileID: 607562221226281429}
   m_Layer: 0
   m_Name: yuanpei_LogoSky
   m_TagString: Untagged
@@ -2324,6 +2464,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 3ad6f8e337791b646b955e79d3de757e, type: 2}
   - {fileID: 11400000, guid: 1e6b5168139b7a34f83230eaefc490df, type: 2}
   - {fileID: 11400000, guid: dabbb6da1df202f4d921d101183465b4, type: 2}
+  - {fileID: 11400000, guid: 3eeecb42346ab5c4b86f2c4bb2d8e6f5, type: 2}
   losBlockers:
     serializedVersion: 2
     m_Bits: 1
@@ -2331,7 +2472,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 4294966783
   verboseLog: 1
-  combatVisualScaleFraction: 0.28
+  combatVisualScaleFraction: 0.24
 --- !u!114 &607562221226281426
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2353,14 +2494,17 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 512
   strikeFlipbookMaterial: {fileID: 2100000, guid: ab13d3761f6712e4d8a62bb8a2b378b5, type: 2}
-  strikeFlipbookCols: 6
-  strikeFlipbookRows: 6
-  strikeFlipbookFrames: 36
-  strikeFlipbookImpactFraction: 0.62
+  strikeFlipbookCols: 8
+  strikeFlipbookRows: 8
+  strikeFlipbookFrames: 64
+  strikeFlipbookImpactFraction: 0.68
   castColor: {r: 1, g: 0.9, b: 0.4, a: 1}
   warnColor: {r: 1, g: 0.55, b: 0.15, a: 0.5}
   burstColor: {r: 1, g: 0.35, b: 0.15, a: 1}
   dangerColor: {r: 1, g: 0.15, b: 0.1, a: 1}
+  spearProjectilePrefab: {fileID: 3253124986367353766, guid: 28bab10d03dd2a047804d1fb15a437be, type: 3}
+  spearGlowColor: {r: 0.85, g: 0.12, b: 0.32, a: 1}
+  spearCoreColor: {r: 0.62, g: 0.28, b: 0.95, a: 1}
 --- !u!114 &607562221226281427
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2392,6 +2536,49 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   boss: {fileID: 607562221226281425}
   dangerRadius: 3.5
+--- !u!114 &607562221226281429
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 226778892962337654}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e4699d862013d6242961352b0503db15, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  sourceMaterial: {fileID: 2100000, guid: 7f631797b4444a048a6c3daae0c1525a, type: 2}
+  runeTexture: {fileID: 0}
+  bossVitals: {fileID: 607562221226281423}
+  baseIntensity: 1
+  enterDuration: 1.2
+  exitDuration: 2
+  pulseDuration: 0.6
+  pulseStrength: 1
+  useUnscaledTime: 1
+  edgeWidth: 0.12
+  cornerStrength: 1.5
+  fogOpacity: 0.38
+  flameIntensity: 1.1
+  emissionSpeed: 0.6
+  noiseScale: 3.2
+  noiseSpeed: 0.05
+  distortionStrength: 0.004
+  runeIntensity: 0.25
+  breathPeriod: 6.5
+  breathAmount: 0.12
+  domainColor: {r: 0.1, g: 0.85, b: 0.55, a: 1}
+  domainSkybox: {fileID: 2100000, guid: 923479b4bcff65f4fafe6182602a6101, type: 2}
+  darkenEnvironment: 1
+  domainAmbientIntensity: 0.5
+  domainAmbientColorTint: 0.35
+  domainAmbientColor: {r: 0.055, g: 0.08, b: 0.1, a: 1}
+  updateReflectionsFromSky: 0
+  bossFillLight: {fileID: 0}
+  onPhasePulse:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -2412,3 +2599,4 @@ SceneRoots:
   - {fileID: 671840271}
   - {fileID: 607562221226281420}
   - {fileID: 230221645}
+  - {fileID: 673839422}

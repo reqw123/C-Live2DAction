@@ -273,6 +273,7 @@ namespace Live2DAction.AI
         // already-settled scope decision, see CharacterMovement.IsFlying's own history).
         public float CurrentHorizontalSpeed => _horizontalVelocity.magnitude;
         public bool IsFlying => false;
+        public bool IsWalking => false;   // Enemy has no Genshin-style walk toggle
 
         // 2026-08-25 - see ICharacterSpeedSource.IsGrounded's own comment (the Grounded
         // Animator bool had no writer at all until this). _controller.isGrounded is already

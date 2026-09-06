@@ -28,5 +28,11 @@ namespace Live2DAction.Characters
         // CharacterController.isGrounded for its own gravity/landing logic, this just exposes
         // that existing value through the same interface so CharacterAnimatorLink can write it.
         bool IsGrounded { get; }
+
+        // 2026-09-06, user request ("alt 靜走模式...太快...身體搖擺太明顯...緩慢沉浸式行走") - true
+        // while the Genshin-style walk toggle is on and grounded. CharacterAnimatorLink reads it to
+        // slow the whole locomotion clip down (calmer stride + less body sway) on top of the lower
+        // walkSpeed. Enemy/Boss have no walk toggle -> they just return false.
+        bool IsWalking { get; }
     }
 }

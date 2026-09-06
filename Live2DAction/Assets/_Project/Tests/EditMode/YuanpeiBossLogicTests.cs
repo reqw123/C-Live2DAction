@@ -142,4 +142,24 @@ public class YuanpeiBossLogicTests
     }
 
     // MultiAoE (spec §9.4) + YuanpeiAoePlacement removed 追加94 續 119 (attack cut from the pool).
+
+    // ---------------- SpearVolley / 長矛型光彈 (續 136, Crimson Void Spear) ----------------
+
+    [Test]
+    public void Scheduler_SpearVolley_PickedAtLongRange()
+    {
+        var pool = new List<YuanpeiAttackDef> { Def(YuanpeiAttackId.SpearVolley, 1, 20f, 8f, 20f) };
+        var s = BaseSituation(); s.playerDistance = 15f;
+        var pick = YuanpeiScheduler.Select(pool, in s, Empty, Empty, 0f, 1f, new System.Random(1));
+        Assert.NotNull(pick);
+        Assert.AreEqual(YuanpeiAttackId.SpearVolley, pick.attackId);
+    }
+
+    [Test]
+    public void Scheduler_SpearVolley_SkippedTooClose()
+    {
+        var pool = new List<YuanpeiAttackDef> { Def(YuanpeiAttackId.SpearVolley, 1, 20f, 8f, 20f) };
+        var s = BaseSituation(); s.playerDistance = 6f;   // below minRange
+        Assert.IsNull(YuanpeiScheduler.Select(pool, in s, Empty, Empty, 0f, 1f, new System.Random(1)));
+    }
 }

@@ -17,6 +17,12 @@ namespace Live2DAction.AI.Boss.Yuanpei
     {
         [SerializeField] private YuanpeiBoss boss;
         [SerializeField] private YuanpeiBossHUD hud;
+        [Tooltip("Optional - the screen-space Boss domain edge effect (BossDomainScreenVFXSetup wires it). " +
+                 "BeginDomain on start, EndDomain on victory/defeat. Auto-found if left null.")]
+        [SerializeField] private BossDomainScreenVFX domainVfx;
+        [Tooltip("Optional - the 6-beat intro cutscene (續180). When set, it plays before the fight; " +
+                 "leave null to keep the boss's own 2.6s descend.")]
+        [SerializeField] private YuanpeiIntroCinematic introCinematic;
         [SerializeField] private Vector3 combatCenter = new Vector3(0f, 0f, -114f);
         [SerializeField] private bool startOnTrigger = true;
         [Tooltip("續 131 (user): a LINE across the plaza, not a point. The fight arms the moment the " +
@@ -34,6 +40,26 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [Tooltip("Where the player is placed on return - default matches SchoolGate_Exit (在路口前).")]
         [SerializeField] private Vector3 returnArrivalPosition = new Vector3(0f, 1.1f, -78f);
         [SerializeField] private float returnArrivalYaw = 0f;
+
+        [Header("Arena lockdown (續 134→135, user: \"boss有機會因為直線衝刺衝出圍牆之外\" + " +
+                 "\"觸發時把整個學校領地60*60往上框起來\")")]
+        [Tooltip("Invisible collider-only box the instant the fight starts, covering the WHOLE 學校 " +
+                 "60x60 footprint (not just the small boss combat ring) so neither the player nor the " +
+                 "boss can wander/fly/get-flung off the map mid-fight. Torn down again on Victory/Defeat " +
+                 "- the return teleport and the ChargeCrush void-punt both move players by a direct " +
+                 "position set, so they pass through it untouched either way.")]
+        [SerializeField] private Vector2 lockdownCenterXZ = new Vector2(0f, -115f);
+        [SerializeField] private float lockdownHalfX = 31.5f;
+        [SerializeField] private float lockdownHalfZ = 31.5f;
+        [Tooltip("The school's own north gate opening (SchoolGate_Exit sits at X=0,Z=-86) stays open at " +
+                 "every height, matching the permanent SchoolWall_NorthLeft/Right gap - so the portal-" +
+                 "dialogue exception still works while the lockdown is up. Half-width of that gap.")]
+        [SerializeField] private float lockdownGateGapHalfWidth = 4.31f;
+        [SerializeField] private float lockdownWallThickness = 1f;
+        [SerializeField] private float lockdownFloorY = -8f;
+        [SerializeField] private float lockdownCeilingY = 45f;
+
+        private GameObject _lockdownRoot;
 
         public bool Started { get; private set; }
         public bool Won { get; private set; }
@@ -54,6 +80,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
         {
             if (boss == null) boss = FindFirstObjectByType<YuanpeiBoss>();
             if (hud == null && boss != null) hud = boss.GetComponent<YuanpeiBossHUD>();
+            if (domainVfx == null) domainVfx = FindFirstObjectByType<BossDomainScreenVFX>();
+            if (introCinematic == null) introCinematic = FindFirstObjectByType<YuanpeiIntroCinematic>();
         }
 
         private Transform _zonePlayer;   // the player character while it's inside the trigger volume
@@ -99,9 +127,102 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 if (ves.PlayerSeat != VehicleEntrySystem.Seat.None)   // only if the PLAYER drove in - don't yank a cat out of a car it's driving elsewhere
                     ves.ForceDismountAll();
 
-            hud?.SetVisible(true);
             ApplyNoDefenceRule(triggeringPlayer);
-            boss.BeginEncounter(combatCenter, triggeringPlayer);
+            SpawnArenaLockdown();
+
+            Transform p = triggeringPlayer != null ? triggeringPlayer : ResolvePlayerTransform();
+            if (introCinematic != null && p != null)
+            {
+                // 續 180 - play the 6-beat intro演出 first, THEN begin the fight (the cinematic
+                // already did the boss descend + started the domain, so skip both here).
+                StartCoroutine(IntroThenFight(p));
+            }
+            else
+            {
+                hud?.SetVisible(true);
+                boss.BeginEncounter(combatCenter, triggeringPlayer, playIntro: true);
+                domainVfx?.BeginDomain();
+            }
+        }
+
+        private IEnumerator IntroThenFight(Transform player)
+        {
+            yield return introCinematic.Play(player, combatCenter);
+            hud?.SetVisible(true);
+            boss.BeginEncounter(combatCenter, player, playIntro: false);   // cinematic did the descend
+            // domainVfx.BeginDomain() already ran inside the cinematic's first beat.
+        }
+
+        private Transform ResolvePlayerTransform()
+        {
+            foreach (var pip in FindObjectsByType<PlayerInputProvider>(FindObjectsSortMode.None))
+                for (var t = pip.transform; t != null; t = t.parent)
+                    if (t.name == "Player") return t;
+            return null;
+        }
+
+        // 續 134 - six invisible collider-only panels (4 walls + ceiling + floor) sealing the fight
+        // area the moment the encounter starts. Reuses the existing BoundaryBlockEffect/BoundaryBlockHud
+        // pair (already a persistent singleton from GreyboxTest.unity) for the same screen-vignette
+        // touch feedback the map's other boundary walls give - no new assets needed.
+        private void SpawnArenaLockdown()
+        {
+            if (_lockdownRoot != null) return;   // idempotent - a rematch after Defeat() rebuilds it fresh
+            _lockdownRoot = new GameObject("YuanpeiArenaLockdown");
+            _lockdownRoot.transform.SetParent(transform, false);
+
+            float t = lockdownWallThickness;
+            float cx = lockdownCenterXZ.x, cz = lockdownCenterXZ.y;
+            float wallHeight = lockdownCeilingY - lockdownFloorY;
+            float wallCenterY = (lockdownCeilingY + lockdownFloorY) * 0.5f;
+            // overlaps past the corners so there's no seam to slip through, matching the school's own
+            // permanent perimeter wall idiom (SchoolAreaSetup).
+            float spanX = lockdownHalfX * 2f + t * 2f;
+            float spanZ = lockdownHalfZ * 2f + t * 2f;
+
+            // south / east / west are solid across their whole span - only the school's own north gate
+            // (where SchoolGate_Exit lives) stays open, so nothing new is exploitable there.
+            MakeLockdownPanel("South", new Vector3(cx, wallCenterY, cz - lockdownHalfZ - t * 0.5f), new Vector3(spanX, wallHeight, t));
+            MakeLockdownPanel("East",  new Vector3(cx + lockdownHalfX + t * 0.5f, wallCenterY, cz), new Vector3(t, wallHeight, spanZ));
+            MakeLockdownPanel("West",  new Vector3(cx - lockdownHalfX - t * 0.5f, wallCenterY, cz), new Vector3(t, wallHeight, spanZ));
+
+            // north wall: two segments flanking the existing gate gap (mirrors SchoolWall_NorthLeft/
+            // Right exactly) - walkable/interactable at every height inside the gap, solid everywhere
+            // else including straight up, so the boss can't fly out over just this one side either.
+            float gateHalf = lockdownGateGapHalfWidth;
+            float northZ = cz + lockdownHalfZ + t * 0.5f;
+            float sideWidth = (lockdownHalfX + t) - gateHalf;
+            MakeLockdownPanel("NorthLeft",  new Vector3(cx - gateHalf - sideWidth * 0.5f, wallCenterY, northZ), new Vector3(sideWidth, wallHeight, t));
+            MakeLockdownPanel("NorthRight", new Vector3(cx + gateHalf + sideWidth * 0.5f, wallCenterY, northZ), new Vector3(sideWidth, wallHeight, t));
+
+            MakeLockdownPanel("Ceiling", new Vector3(cx, lockdownCeilingY + t * 0.5f, cz), new Vector3(spanX, t, spanZ));
+            MakeLockdownPanel("Floor",   new Vector3(cx, lockdownFloorY - t * 0.5f, cz), new Vector3(spanX, t, spanZ));
+        }
+
+        private void MakeLockdownPanel(string suffix, Vector3 pos, Vector3 size)
+        {
+            var go = new GameObject("ArenaWall_" + suffix);
+            go.transform.SetParent(_lockdownRoot.transform, false);
+            go.transform.position = pos;
+
+            var solid = go.AddComponent<BoxCollider>();
+            solid.size = size;   // blocks CharacterController.Move / vehicle physics like any ordinary wall
+
+            var trigger = go.AddComponent<BoxCollider>();
+            trigger.isTrigger = true;
+            trigger.size = size + Vector3.one * (0.6f * 2f);   // same padding convention as the map's other boundary walls
+
+            go.AddComponent<BoundaryBlockEffect>();   // ripple field stays unset (null-safe) - still pulses BoundaryBlockHud
+        }
+
+        // Direct position sets (SceneTransitionRunner's return teleport, ChargeCrush's VoidPunt) both
+        // bypass CharacterController collision entirely, so neither exception needs special-casing here
+        // - they simply aren't stopped by these colliders regardless of when the lockdown is torn down.
+        private void DestroyArenaLockdown()
+        {
+            if (_lockdownRoot == null) return;
+            Destroy(_lockdownRoot);
+            _lockdownRoot = null;
         }
 
         private void ApplyNoDefenceRule(Transform player)
@@ -168,6 +289,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         private IEnumerator Defeat()
         {
+            domainVfx?.EndDomain();   // dissolve the domain edge effect over its exit duration
             Transform player = boss != null ? boss.Player : null;
             // let RespawnController run its course: 你菜完了 at ~0.9s, respawn at respawnDelaySeconds
             // (5s). Wait a touch past that so the player is active again before we teleport it.
@@ -177,6 +299,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             RestoreDefenceRule();
             hud?.SetVisible(false);
             if (boss != null) boss.ResetForRematch();
+            DestroyArenaLockdown();
             Started = false;
             _ended = false;
             _playerHealth = null;
@@ -204,6 +327,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private IEnumerator Victory()
         {
             Won = true;
+            domainVfx?.EndDomain();               // domain breaks apart as the boss dies
             RestoreDefenceRule();                 // spec §20.7 - lift the combat rule set on defeat
             Transform player = boss != null ? boss.Player : null;
 
@@ -221,6 +345,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // 3. hold, then auto-return the player to the road entrance
             yield return new WaitForSecondsRealtime(victoryHoldSeconds);
             YuanpeiVictoryBanner.Hide();
+            DestroyArenaLockdown();
 
             if (SceneTransitionRunner.Instance != null)
             {

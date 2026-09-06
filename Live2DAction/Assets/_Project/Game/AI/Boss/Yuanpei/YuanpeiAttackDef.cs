@@ -13,6 +13,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         ChargeLine,        // 肉身衝撞：長距離高速直線衝
         ChargeCrush,       // 肉身衝撞：滑到玩家頭頂正上方後垂直下壓（命中 = 秒殺）
         OrbitDash,         // 肉身衝撞：繞玩家轉圈，某一瞬間突然直衝
+        SpearVolley,       // 長矛型光彈：遠距離連續發射（續 136，Crimson Void Spear）
     }
 
     // Per-attack data (spec §9, §14.1). Every timing/number lives here, not in code.
@@ -53,6 +54,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
         public float number1;   // meaning per attack - see YuanpeiAttacks.cs
         public float number2;
         public float number3;
+        public float number4;
+        public float number5;
         public int count = 3;
 
         public float TotalDuration => telegraphSeconds + windupSeconds + activeSeconds + recoverySeconds;
