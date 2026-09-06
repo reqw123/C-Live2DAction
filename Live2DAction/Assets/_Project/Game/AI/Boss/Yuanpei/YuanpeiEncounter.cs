@@ -118,7 +118,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         public void StartEncounter(Transform triggeringPlayer)
         {
-            if (Started || boss == null) return;
+            if (Started || _teardown || boss == null) return;
             Started = true;
             // 續 124 (user "boss 不該把車輛當成目標物件"): if the player drove in, get everyone out of
             // the vehicle first - the fight is on foot, and while seated the Player GameObject is
@@ -252,6 +252,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private void OnDestroy() => RestoreDefenceRule();
 
         private bool _ended;
+        // 續184d - set the instant Victory()/Defeat() begins and never cleared. The teardown does
+        // Started=false (for a would-be in-place rematch) while the player's dead body is still
+        // sitting past activationLineZ inside the trigger and Update() still runs - without this
+        // guard, Update() immediately re-fires StartEncounter() -> IntroThenFight -> the intro's
+        // LockActors() re-disables every player-control + camera-director script, then Map_School
+        // unloads and kills the coroutine before UnlockActors() can run -> player permanently
+        // frozen after the return teleport (user: "死亡後出來依舊無法移動玩家"). A real rematch is a
+        // fresh Map_School load = a fresh YuanpeiEncounter, so this flag never needs clearing.
+        private bool _teardown;
         private Live2DAction.Core.Health _playerHealth;
 
         // YuanpeiBoss.EnterDeath() sends "OnYuanpeiBossDefeated" to its own GameObject; this
@@ -260,7 +269,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         {
             // arm the fight only once the player (on foot OR in a vehicle) is at the plaza's
             // innermost centre - not merely inside the trigger volume (續 123, user).
-            if (startOnTrigger && !Started && _zonePlayer != null)
+            if (startOnTrigger && !Started && !_teardown && _zonePlayer != null)
             {
                 float pz = _zonePlayer.position.z;
                 if (activationCrossSouth ? pz <= activationLineZ : pz >= activationLineZ)
@@ -289,11 +298,32 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
         private IEnumerator Defeat()
         {
+            _teardown = true;   // block Update() from re-firing StartEncounter while we tear down (see _teardown)
             domainVfx?.EndDomain();   // dissolve the domain edge effect over its exit duration
             Transform player = boss != null ? boss.Player : null;
-            // let RespawnController run its course: 你菜完了 at ~0.9s, respawn at respawnDelaySeconds
-            // (5s). Wait a touch past that so the player is active again before we teleport it.
-            yield return new WaitForSecondsRealtime(5.6f);
+
+            // 續184c - was a flat WaitForSecondsRealtime(5.6): RespawnController revives the player on
+            // a SCALED WaitForSeconds(5), so if a cinematic leaked a low Time.timeScale that 5s
+            // stretches well past 5.6s real and we ran the restore + teleport while the player was
+            // still dead / SetActive(false) - it came out unmovable. Wait for the ACTUAL revive
+            // (Health.IsDead cleared + GameObject active again), timeboxed so a genuinely stuck
+            // respawn can't hang the return forever.
+            // a cinematic slow-mo left running would also stretch RespawnController's own scaled
+            // WaitForSeconds - clear it now so the revive lands on schedule.
+            if (!Mathf.Approximately(Time.timeScale, 1f))
+            {
+                Debug.LogWarning($"[YuanpeiEncounter] Defeat: Time.timeScale was {Time.timeScale:0.00} - forcing to 1");
+                Time.timeScale = 1f;
+            }
+            var reviveHealth = player != null ? player.GetComponentInChildren<Live2DAction.Core.Health>(true) : null;
+            float waitDeadline = Time.unscaledTime + 15f;
+            while (Time.unscaledTime < waitDeadline)
+            {
+                bool alive = reviveHealth == null || !reviveHealth.IsDead;
+                bool active = player != null && player.gameObject.activeInHierarchy;
+                if (alive && active) break;
+                yield return null;
+            }
             Live2DAction.UI.PlayerDeathScreen.Hide();
 
             RestoreDefenceRule();
@@ -305,12 +335,9 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _playerHealth = null;
 
             // A ChargeCrush death runs a wide-shot cinematic that deliberately leaves the camera
-            // controller OFF (the player is dead in the void). Re-enable it now so the returned
-            // player has a live follow cam (SceneTransitionRunner only snaps yaw, doesn't re-enable).
-            var tpc = Camera.main != null
-                ? Camera.main.GetComponent(typeof(Live2DAction.CameraSystem.ThirdPersonCameraController)) as Behaviour
-                : null;
-            if (tpc != null) tpc.enabled = true;
+            // controller OFF (the player is dead in the void). Re-assert camera + full player control
+            // (+ drop any lock-on onto the dead boss) now so the returned player can actually move.
+            HandControlBackToPlayer(player);
 
             if (SceneTransitionRunner.Instance != null)
                 SceneTransitionRunner.Instance.Begin("", returnUnloadScene, player,
@@ -327,14 +354,21 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private IEnumerator Victory()
         {
             Won = true;
+            _teardown = true;                     // block Update() from re-firing StartEncounter while we tear down (see _teardown)
             domainVfx?.EndDomain();               // domain breaks apart as the boss dies
             RestoreDefenceRule();                 // spec §20.7 - lift the combat rule set on defeat
             Transform player = boss != null ? boss.Player : null;
 
             // 1. death演出 (user: "boss 回到廣場空中做一段震動動畫後碎裂消失" + a camera move).
             //    Runs here on the encounter - YuanpeiBoss.EnterDeath already stopped the boss's own
-            //    coroutines + disabled its colliders / lock-on.
-            yield return DeathDissolve();
+            //    coroutines + disabled its colliders / lock-on. Driven guarded so a fault inside it
+            //    can't skip the camera hand-back + the scene return below (user: "boss戰結束後 攝影機
+            //    視角沒有正確回到玩家身上 無論勝利或失敗").
+            yield return RunGuarded(DeathDissolve(), "DeathDissolve");
+
+            // DeathDissolve re-enables the controller on its own last line; re-assert camera + full
+            // player control here so a mid-dissolve fault still hands everything back before the hold.
+            HandControlBackToPlayer(player);
 
             // 2. centre-screen "戰鬥勝利"
             YuanpeiVictoryBanner.Show(victoryMessage);
@@ -359,6 +393,86 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 if (cc != null) cc.enabled = false;
                 player.SetPositionAndRotation(returnArrivalPosition, Quaternion.Euler(0f, returnArrivalYaw, 0f));
                 if (cc != null) cc.enabled = true;
+            }
+        }
+
+        // 2026-09-06 - guaranteed camera + player-control hand-back on fight end (user: "boss戰結束後
+        // 攝影機視角沒有正確回到玩家身上 無論勝利或失敗" then, once the camera was fixed, "有成功傳送回
+        // 入口 但是無法移動角色了"). Every fight-end cinematic (YuanpeiIntroCinematic, DeathDissolve,
+        // YuanpeiExecution.Finisher, ChargeCrush's CrushEjectCam) parks some subset of {camera
+        // controller, CharacterMovement, PlayerCombat, PlayerInputProvider, CharacterController,
+        // Time.timeScale, the lock-on, a StancePoise stagger} and each is supposed to un-park its own
+        // set on its own last line. If any faults partway, or two overlap, the player comes back
+        // frozen. Rather than trust every path, re-assert the whole "player is in full control" state
+        // here, once, at the single encounter-end choke point. Mirrors YuanpeiIntroCinematic.
+        // UnlockActors' own end-of-cutscene restore.
+        private void HandControlBackToPlayer(Transform player)
+        {
+            var tpc = Camera.main != null
+                ? Camera.main.GetComponent(typeof(Live2DAction.CameraSystem.ThirdPersonCameraController)) as Behaviour
+                : null;
+            if (tpc != null)
+            {
+                tpc.enabled = true;
+                (tpc as Live2DAction.CameraSystem.ThirdPersonCameraController)?.SnapYawToTarget();
+            }
+
+            Transform root = player != null ? player.root : null;
+            if (root == null || root.name != "Player")
+                foreach (var pip in FindObjectsByType<PlayerInputProvider>(FindObjectsSortMode.None))
+                    if (pip.transform.root.name == "Player") { root = pip.transform.root; break; }
+            if (root == null) { Debug.LogWarning("[YuanpeiEncounter] HandControlBackToPlayer - no Player root"); return; }
+
+            var stuck = new System.Collections.Generic.List<string>();
+
+            // slow-mo left running by a cinematic (intro clash, hitstop) would freeze the player.
+            if (!Mathf.Approximately(Time.timeScale, 1f)) { stuck.Add($"Time.timeScale({Time.timeScale:0.00})"); Time.timeScale = 1f; }
+
+            void ReEnable<T>() where T : Behaviour
+            {
+                var c = root.GetComponentInChildren<T>(true);
+                if (c != null && !c.enabled) { c.enabled = true; stuck.Add(typeof(T).Name); }
+            }
+            ReEnable<Live2DAction.Input.PlayerInputProvider>();
+            ReEnable<Live2DAction.Characters.CharacterMovement>();
+            ReEnable<Live2DAction.Characters.CharacterAnimatorLink>();
+            ReEnable<Live2DAction.Combat.PlayerCombat>();
+
+            var cc = root.GetComponent<CharacterController>();
+            if (cc != null && !cc.enabled) { cc.enabled = true; stuck.Add("CharacterController"); }
+
+            var stance = root.GetComponentInChildren<Live2DAction.Combat.StancePoise>(true);
+            if (stance != null && stance.IsStaggered) { stance.EndStagger(); stuck.Add("StancePoise(staggered)"); }
+
+            var lockCtrl = root.GetComponentInChildren<Live2DAction.Targeting.TargetLockController>(true);
+            if (lockCtrl != null) lockCtrl.ForceRelease();
+
+            // Only noisy when something actually had to be un-parked - a healthy fight end logs nothing.
+            if (stuck.Count > 0)
+                Debug.LogWarning("[YuanpeiEncounter] fight end left player state parked - force-restored: " + string.Join(", ", stuck));
+        }
+
+        // Drive a cinematic sub-coroutine so an exception inside it can't abort the caller (which
+        // would skip the camera hand-back + the scene return). Mirrors YuanpeiIntroCinematic.Play's
+        // own fault guard.
+        private IEnumerator RunGuarded(IEnumerator inner, string label)
+        {
+            while (true)
+            {
+                object cur = null;
+                bool done = false;
+                try
+                {
+                    if (!inner.MoveNext()) done = true;
+                    else cur = inner.Current;
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"[YuanpeiEncounter] {label} faulted - handing control back anyway: {e}");
+                    done = true;
+                }
+                if (done) yield break;
+                yield return cur;
             }
         }
 

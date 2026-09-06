@@ -28,6 +28,15 @@ namespace Live2DAction.Targeting
         public Transform LockedTarget => _lockedTarget;
         public bool IsLocked => _lockedTarget != null;
 
+        // 2026-09-06 - drop any current lock immediately, from outside the normal
+        // press-to-toggle / drifted-past-breakRange flow. Used when a scripted sequence ends and
+        // needs the camera handed cleanly back to a plain follow of the player (e.g.
+        // YuanpeiEncounter victory / defeat): disabling a boss's LockOnTarget doesn't release an
+        // already-acquired lock on its own - _lockedTarget is a raw Transform and IsStillValid
+        // only checks activeInHierarchy + horizontal range, so the lock (and its camera-distance
+        // multiplier) would otherwise linger until the boss is destroyed by the scene unload.
+        public void ForceRelease() => _lockedTarget = null;
+
         private void Update()
         {
             IInputCommand inputCommand = InputCommand;

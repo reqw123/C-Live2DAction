@@ -73,4 +73,17 @@ public class YuanpeiIntroCinematicTests
         // 續181: slower sky wipe + air choreography -> ~16-17s
         Assert.That(YuanpeiIntroTimeline.Default.Total, Is.InRange(12f, 20f));
     }
+
+    [Test]
+    public void Short_IsShorterThanDefaultAndSane()
+    {
+        // 續183d: ~15s milestone cut - every beat trimmed but the beat ORDER/maths still hold.
+        Assert.Less(YuanpeiIntroTimeline.Short.Total, YuanpeiIntroTimeline.Default.Total);
+        Assert.That(YuanpeiIntroTimeline.Short.Total, Is.InRange(8f, 13f));
+        // sanity: beats still resolve in order on the Short timeline
+        var b = YuanpeiIntroTimeline.Short.BeatAt(0f, out _);
+        Assert.AreEqual(YuanpeiIntroBeat.SkyWipe, b);
+        Assert.AreEqual(YuanpeiIntroBeat.Done,
+            YuanpeiIntroTimeline.Short.BeatAt(YuanpeiIntroTimeline.Short.Total + 0.1f, out _));
+    }
 }

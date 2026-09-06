@@ -14,6 +14,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         ChargeCrush,       // 肉身衝撞：滑到玩家頭頂正上方後垂直下壓（命中 = 秒殺）
         OrbitDash,         // 肉身衝撞：繞玩家轉圈，某一瞬間突然直衝
         SpearVolley,       // 長矛型光彈：遠距離連續發射（續 136，Crimson Void Spear）
+        OpeningBarrage,    // 下馬威：開戰瞬間 長矛＋雷射＋六連彈 三線齊射玩家左/中/右（續183e，不進 attackPool，由 YuanpeiBoss 腳本觸發）
     }
 
     // Per-attack data (spec §9, §14.1). Every timing/number lives here, not in code.
@@ -51,6 +52,12 @@ namespace Live2DAction.AI.Boss.Yuanpei
         public float situationalWeightBonus = 2.5f;
 
         [Header("Attack-specific numbers")]
+        // OpeningBarrage (續183e→183h): number1 = 長矛 per-spear damage, number2 = 雷射 per-tick damage,
+        // number3 = 六連彈 per-orb damage, number4 = lane offset (m) - the L/R separation of the 3
+        // straight lanes (spear=left / laser=centre / orb=right); big enough to see 3 distinct lines,
+        // small enough all 3 still hit a stationary player. number5 = projectile speed. windupSeconds =
+        // spacing between spears in the volley. count = 六連彈 orb count (長矛 volley = ceil(count/2)).
+        // telegraphSeconds = 下馬威 wind-up, activeSeconds = total volley / beam window.
         public float number1;   // meaning per attack - see YuanpeiAttacks.cs
         public float number2;
         public float number3;

@@ -437,16 +437,27 @@ MonoBehaviour:
   bossStartScaleFraction: 0.05
   bossSpinDegPerSec: 260
   bossAirAltitude: 13
-  airStandoff: 3
+  slashStandoff: 1.8
   bossChargeBack: 2.6
+  bossRamClose: 2.8
   launchBackDistance: 10
   launchArcHeight: 3.5
-  hitStopSeconds: 0.14
   baseFov: 60
   closeFov: 34
-  leapTimeScale: 1.5
   clashTimeScale: 0.4
-  groundStaggerHoldSeconds: 1.5
+  downedHoldSeconds: 1.6
+  getUpSeconds: 0.95
+  length: 1
+  shortTiming:
+    SkyWipe: 3.2
+    PushToBoss: 1.1
+    BossRise: 2
+    PlayerLeap: 1.9
+    Clash: 1.7
+    Settle: 1
+  shortClashTimeScale: 0.55
+  shortDownedHoldSeconds: 0.9
+  shortGetUpSeconds: 0.7
 --- !u!1 &275365321
 GameObject:
   m_ObjectHideFlags: 0
@@ -2465,6 +2476,8 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1e6b5168139b7a34f83230eaefc490df, type: 2}
   - {fileID: 11400000, guid: dabbb6da1df202f4d921d101183465b4, type: 2}
   - {fileID: 11400000, guid: 3eeecb42346ab5c4b86f2c4bb2d8e6f5, type: 2}
+  openingBarrageDef: {fileID: 11400000, guid: 76f3ee07ae819c2409883bee0e193b02, type: 2}
+  playOpeningBarrage: 1
   losBlockers:
     serializedVersion: 2
     m_Bits: 1

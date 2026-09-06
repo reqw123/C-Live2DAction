@@ -24,6 +24,13 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [SerializeField] private Transform player;
         [SerializeField] private Transform groundRayOrigin;
         [SerializeField] private List<YuanpeiAttackDef> attackPool = new List<YuanpeiAttackDef>();
+
+        [Header("下馬威 opening barrage (續183e)")]
+        [Tooltip("One-shot 長矛+雷射+六連彈 三線齊射 fired the instant combat starts (after the intro). " +
+                 "NOT in attackPool - scripted here. Leave null to disable.")]
+        [SerializeField] private YuanpeiAttackDef openingBarrageDef;
+        [SerializeField] private bool playOpeningBarrage = true;
+
         [SerializeField] private LayerMask losBlockers = ~0;
         [SerializeField] private LayerMask groundMask = ~0;
         [Tooltip("Log FSM state / player / distance / LOS / on-screen / attack pick once per second.")]
@@ -120,6 +127,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 _lastPlayerPos = player != null ? player.position : Vector3.zero;
                 _globalRestUntil = Time.time + 0.6f;
                 State = YuanpeiState.Hover;
+                if (playOpeningBarrage) StartCoroutine(OpeningBarrageRoutine());   // 續183e 下馬威
             }
         }
 
@@ -634,6 +642,38 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 State = YuanpeiState.Hover;
         }
 
+        // 續183e/f - 下馬威. Kicked from IntroRoutine's tail / BeginEncounter(playIntro:false).
+        // CLAIMS the FSM immediately (State=AttackTelegraph + a huge _globalRestUntil) so TickAirCombat's
+        // 0.12s watchdog can't fire a normal attack in the settle beat and run concurrently with it
+        // (that was 續183f's "沒命中 / 看起來沒變" - a scheduled attack stomped the barrage's VisualRoot
+        // + _majorHazardActive + timing).
+        private IEnumerator OpeningBarrageRoutine()
+        {
+            if (attacks == null || openingBarrageDef == null) { if (verboseLog) Debug.LogWarning("[YuanpeiBoss] 下馬威 skipped - attacks/def not wired"); yield break; }
+
+            if (_attackRoutine != null) { StopCoroutine(_attackRoutine); _attackRoutine = null; }
+            attacks.CancelAll();
+            State = YuanpeiState.AttackTelegraph;
+            _globalRestUntil = Time.time + 9999f;   // nothing else picks an attack until the barrage restores it
+
+            yield return new WaitForSeconds(0.2f);  // let the player settle + camera hand back
+            if (BattleOver || player == null || !player.gameObject.activeInHierarchy)
+            { State = YuanpeiState.Hover; _globalRestUntil = Time.time + 0.5f; yield break; }
+
+            if (verboseLog) Debug.Log("[YuanpeiBoss] 下馬威 OpeningBarrage FIRING (player=" + player.name + ")", this);
+            _attackRoutine = StartCoroutine(RunOpeningBarrage());
+        }
+
+        private IEnumerator RunOpeningBarrage()
+        {
+            State = YuanpeiState.AttackTelegraph;
+            yield return attacks.RunOpeningBarrage(openingBarrageDef, player, this);
+            _attackRoutine = null;
+            _globalRestUntil = Time.time + 1.2f;
+            State = YuanpeiState.Hover;
+            if (verboseLog) Debug.Log("[YuanpeiBoss] 下馬威 OpeningBarrage DONE", this);
+        }
+
         // ---------------------------------------------------------------- recharge (spec §5.2)
 
         private void EnterRecharge()
@@ -792,6 +832,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _lastPlayerPos = player != null ? player.position : Vector3.zero;
             _globalRestUntil = Time.time + 0.8f;
             State = YuanpeiState.Hover;
+            if (playOpeningBarrage) StartCoroutine(OpeningBarrageRoutine());   // 續183e 下馬威
         }
         private Vector3 _skyVisualScale = Vector3.one;
         private Quaternion _skyVisualLocalRot = Quaternion.identity;

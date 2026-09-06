@@ -197,3 +197,63 @@ Base Intensity / Enter・Exit・Pulse Duration / Pulse Strength / Use Unscaled T
 - 新欄位:`leapTimeScale(1.5)`、`clashTimeScale(0.4)`、`groundStaggerHoldSeconds(1.0)`。
 
 **驗證 v3**:逐幀 + 4 截圖 —— 拍④ timeScale 1→1.5(`NewJump`→`AttackComboSword`)/ 拍⑤ 特寫 timeScale 0.4 玩家揮刀(左)disc 傾斜(右)/ boss z −104→−107 後退再前頂回 −105 / 玩家拋物線落地 `(-2,1.1,-92)` / **落地 `stagger=True` 跪 ~1.2s** / 拍⑥ `run=False` `timeScale=1` `anim.speed=1` boss `Hover` 控制全還原。EditMode 20/20 綠、Console 無錯。
+
+#### 續 183 修訂 v4（2026-09-06）— 慢動作劈砍 → boss 後/前 RAM 交會 → 面向 boss 倒地起身
+
+使用者不滿意拍④–⑥:①玩家應**衝**到 boss 一個武士刀距離(電影視角)→ **慢動作**播**普通劈砍** → 劈砍快碰到 boss 那一瞬**反被 boss 撞開擊退**(不再是加速衝刺)②boss 撞擊要真實 —— **boss 往後 → 往前 → 兩者交會 → 玩家被擊飛 → 玩家落地視角** ③玩家落地**面向 boss 倒地** + 播倒地動作 ④再**起身** ⑤才正式開打。
+
+- **拍④ 慢動作接近**:整段 `Time.timeScale` `0.95 → clashTimeScale(0.4)`(不再加速衝刺)。`leapEnd = bossPos - flatDir * slashStandoff(1.8)`(一個武士刀),k≥0.72 `SetTrigger("AttackComboSword")` 普通刀劈。鏡頭側面 2-shot 往內推(玩家 screen-L / boss screen-R,`mid + side*(slashStandoff+4.5) + (-flatDir)*1.5 + up*1.4`)。
+- **拍⑤ 交會 RAM**:`contactK = 0.42`(刀碰到 boss 的瞬間)。boss:k<0.22 後仰 `-bossChargeBack(2.6)` + 低頭 tilt −8° + spin-up 90°/s;0.22→contactK **爆發前衝** `+bossRamClose(3.4)` 迎上刀 + tilt +6° + spin 520°/s;contactK→0.62 急收(recoil 到 `-back*0.4`);0.62→1 ease 回原位。contactK 時 `domainVfx.Pulse(1f)` 閃光。玩家在 contactK 後被擊飛 —— **全程面向 boss(`flatDir`)**,拋物線 + 短上揚後長墜落到 `groundY`,`timeScale` ease 回 1。`ResetTrigger("AttackComboSword")` 避免排隊的揮刀在過場後才觸發。
+- **拍⑥ 倒地 → 起身**(取代 v3 的 `AddPostureDamage` 跪姿):`ScrubState("Dead", nt)` 手動每幀 `Animator.Play("Dead", 0, nt)`(Mixamo Dying = 向後仰倒地,壓過任何 AnyState 轉場)。墜落段 nt 0.05→0.85、落地定 0.9。(a) `downedHoldSeconds(1.6)` 倒地定格,低機位越過倒地玩家往上看 boss。(b) `getUpSeconds(0.95)` 把 `Dead` clip **倒放**(nt 0.9→0.12)= 撐起身,鏡頭 ease 到玩家背後。(c) `CrossFade("Locomotion", 0.15)` —— **必須在交還控制前離開 `Dead` state**(該 state 無退出轉場,否則交還後玩家永遠躺著)。
+- **移除欄位**:`leapTimeScale`、`airStandoff`、`groundStaggerHoldSeconds`(舊 YAML key 被 Unity 忽略)。**新欄位**:`slashStandoff(1.8)`、`bossRamClose(3.4)`、`downedHoldSeconds(1.6)`、`getUpSeconds(0.95)` —— 皆有 C# 預設,`YuanpeiIntroCinematicSetup` 免重跑。新 helper `ScrubState(state, nt)`。失效保護鐘改用 `downedHoldSeconds + getUpSeconds`。
+
+**驗證 v4**:`validate_script` 0 error/warning、`refresh_unity` 編譯無錯、Console 無錯、EditMode `YuanpeiIntroCinematicTests` 8/8 綠。**細部節奏/鏡位/力道 + `Dead` clip 倒放起身觀感仍待使用者聚焦 Editor Play-test 微調**(逐幀 Step 驗不出動畫觀感;`Dead` 是唯一夠像「倒地」的 player clip,無專屬 knockdown/getup clip)。
+
+##### 續 183b 修:衝撞方向反了 + 擊飛延遲
+
+使用者:boss 視覺上撞到玩家了,擊飛動畫卻等 boss 回原位好幾秒才觸發。根因兩個:①`boss.position = bossHome + flatDir*fwd` 方向反了 —— `flatDir` 指玩家→boss,玩家在 boss 的 `-flatDir` 側,所以「後仰段」(`fwd` 負)其實往玩家衝、「前頂段」(`fwd` 正)在後退。改 `bossHome - flatDir*fwd`(`fwd` 正=朝玩家),四段重排(0–0.30 後仰**遠離**玩家、0.30–contactK `a=p²` 加速前衝穿過玩家、contactK–0.66 急退、0.66–1 回位)。②擊飛用 SmoothStep ease-in + `timeScale` 從 0.4 起爬 → contactK 後玩家半天不動。改 punchy ease-OUT `lk = 1-(1-p)^2.4` + `timeScale = Lerp(0.7,1,p)`;水平用 `lk`、垂直拋物線/`Dead` scrub/鏡頭用 `p`。`bossRamClose` 3.4→**2.8**。
+
+##### 續 183c 修:躍起突兀 + 過場中玩家原地跑步；總時長 ≈ 22s
+
+①`LockActors` arm 當下就把玩家 `Speed=0`/`Grounded=true`/`Jump=false` + `CrossFade("Locomotion",0.12)`(`CharacterAnimatorLink` 停用 → 拍①–③ ~9s 沒人驅動 Speed,玩家卡在跑步 clip)。②拍④重寫:`crouch(0.16)` 蓄力下沉 → ease-OUT 起跳 `move = 1-(1-jk)^1.8` → 弧線 `Sin(jk·π)·2.6` 峰值在 boss 之上;鏡頭從拍③機位乾淨 eased slerp 到側面 2-shot(不再每幀追),look 從 bossPos ease 到中點。**過場總時長 ≈ 22s 牆鐘**(拍① 5.0 / ② 1.8 / ③ 2.6 / ④ ~4.2 / ⑤ ~4.2 / ⑥a 1.6 / ⑥b 0.95 / ⑥c 1.6;名目 `timing.Total`=16.0 少算慢動作膨脹 + 拍⑥倒地/起身)。
+
+##### 續 183d 長度預設:Full(≈22s)/ Short(≈15s)
+
+22s 版保留為 **Full**(預設)。加 `YuanpeiIntroLength { Full, Short }` + `YuanpeiIntroTimeline.Short`(`3.2/1.1/2.0/1.9/1.7/1.0`)+ 短版欄位 `shortClashTimeScale(0.55,比 Full 0.4 淺)`/`shortDownedHoldSeconds(0.9)`/`shortGetUpSeconds(0.7)`。`Play()` 依 `length` 解析成 `_tl/_clashTS/_downedHold/_getUp`,`RunBeats` 全讀這四個;Full 路徑的欄位 Short 完全不碰。切換:Inspector `length` 或選單 `Tools/Live2DAction/Yuanpei Intro Length ▸ Short/Full`。Short 預估牆鐘 ≈ 14–15s。目前 Map_School = **Short**。`YuanpeiIntroCinematicTests` 9/9。
+
+## 下馬威 開場齊射（2026-09-06,續 183e）
+
+使用者:「boss 開啟時來個下馬威,同時用長矛/雷射/六連彈三種攻擊向玩家當前位置發射(瞄準身體左/中/右),集中打擊,全命中基本必死」。
+
+**觸發**:`YuanpeiBoss.OpeningBarrageRoutine()` —— `IntroRoutine()` 結尾 + `BeginEncounter(playIntro:false)` 分支各呼叫一次(過場動畫結束、玩家拿回控制那一刻)。0.35s 緩衝 → `State=AttackTelegraph` → `_attackRoutine`。開關 = boss 上 `playOpeningBarrage`(預設 on)。**不在 `attackPool`**,純腳本。
+
+**流程**(`YuanpeiAttacks.RunOpeningBarrage`):
+1. **前搖 `telegraphSeconds`(1.2s)**:disc 蓄力脈動 + `YuanpeiScreenFlash` 紅閃 + 3 條追蹤預警光束(從 muzzle 指向三條 lane 的即時投影,讓玩家判斷往哪邊閃)。
+2. **鎖定** `PlayerCenter(player)` 一次 → `YuanpeiOpeningBarrageLanes.AimPoint()` 算左/中/右三點(沿 boss→玩家 的垂直軸偏移 `number4`=1.15m)。
+3. **同一瞬間三線齊射**:
+   - 玩家左 → **長矛**(`SpawnBarrageSpear`,Crimson Void Spear prefab,鎖定不追蹤,`number1`=45 傷)
+   - 玩家中 → **雷射**(`BarrageLaser`,0.16s 鎖定閃 → hitscan,`number2`=40 傷,一次性)
+   - 玩家右 → **六連彈**(`BarrageOrbs`,`count`=6 顆光球在 `activeSeconds`=0.6s 內打完,`number3`=15/顆)
+4. 全中 = 45+40+90 = **175 vs ~100 HP → 必死**;長矛+雷射=85、雷射+六連彈=130,任兩類都致命 → 「集中打擊」。往側邊走可清掉整條 lane。打死玩家走 `Health → RespawnController → YuanpeiEncounter.Defeat()`(同 BodyCharge 秒殺路徑)。
+
+**數值** 全在 `YuanpeiAttack_OpeningBarrage.asset`(`attackId=OpeningBarrage`,規則 7):`number1..3`=三線傷害、`number4`=lane 偏移、`number5`=彈速、`count`=六連彈數、`telegraphSeconds`=前搖、`activeSeconds`=齊射窗。選單 **Tools/Live2DAction/Setup Yuanpei Opening Barrage (下馬威)** 建 asset + 掛 boss。
+
+**檔案**:`YuanpeiAttackDef.cs`(+enum `OpeningBarrage`)、`YuanpeiOpeningBarrageLanes.cs`(純幾何/傷害,新)、`YuanpeiAttacks.cs`(+`RunOpeningBarrage`+3 helper)、`YuanpeiBoss.cs`(+`openingBarrageDef`/`playOpeningBarrage`/`OpeningBarrageRoutine`)、`YuanpeiOpeningBarrageSetup.cs`(選單,新)、`YuanpeiOpeningBarrageLanesTests.cs`(6,新)、`Map_School.unity`(wire)。
+
+**驗證**:`validate_script` clean、`refresh_unity` 編譯無錯、Console 無錯、EditMode **337/337**(含 6 新 lane/傷害測)。**前搖長度/lane 偏移/傷害/預警可讀性仍待 Play-test**(逐幀 Step 驗不出);目前無 F8 debug 快捷鍵,需走進 encounter 觸發。
+
+### 續 183f 強化(Play 後):沒命中 + 呈現直線 + 威嚇力不夠
+
+使用者:①三招都沒命中 ②都呈現「直線發射」③大幅增強。**沒命中根因**:183e 左/右 lane 偏移玩家中心 1.15m(> 膠囊半徑 ~0.3m)→ 站著不動也錯過;雷射鎖定後不追蹤。**重寫**:三 stream 改**扇形發射 + 全程 homing 追活體玩家**;視覺散開靠扇角+homing 曲線,不是直線。
+
+##### 續 183g — 使用者原話重複(沒命中/直線/威嚇不夠)→ 再修+再強化
+
+183f 沒生效。**最可能根因**:`OpeningBarrageRoutine` 開頭 0.35s `WaitForSeconds` 時 `State` 還是 `Hover` → `TickAirCombat` 的 0.12s watchdog fire 了普通攻擊 → barrage 覆蓋 `_attackRoutine` 沒停舊的 → **兩個攻擊同時跑互搶** VisualRoot/時序 → barrage 看起來沒動。修:`OpeningBarrageRoutine` **立刻**接管 FSM(`StopCoroutine` + `attacks.CancelAll()` + `State=AttackTelegraph` + `_globalRestUntil = now+9999`)**在** 0.2s 緩衝前。加 `verboseLog` 診斷 log。再強化:boss 前搖時下降逼近玩家(loom)+ 鏡頭震動。
+
+##### 續 183h — 三條分離直線(不要重疊)+ 長矛子彈 2×
+
+barrage 有觸發了。183f/g 的扇形+homing 把 27 顆彈散開又全彎回同一點 = 一團重疊。**改回三 lane 概念調對**:玩家左=長矛、中=雷射、右=六連彈,三條**分離直線**,各鎖沿 boss→玩家垂直軸偏移 `number4`=0.6m 的點,**無扇形/無 homing/無掃射**。站著不動三條都吃(胖子彈涵蓋 0.6m),側步清一條。長矛子彈 **×2**(hitRadius 0.9,間距=`windupSeconds`=0.2s,數 9→6),雷射鎖中線直射(移除掃射),六連彈 12 兩波直線。全中 ≈ **590**。`number4` homing 秒 → lane 偏移;新 `BarrageAxis()`。EditMode 338/338。
+
+### 續 184 修:boss 戰結束相機沒回到玩家(勝利/失敗)
+
+收尾每條路徑都靠某個過場協程的最後一行 `camCtrl.enabled = true`,無保底:`Victory()` 全靠 `DeathDissolve` 末行(中間丟例外就卡死亡運鏡);ChargeCrush 秒殺靠 `Defeat()` 一行;`SceneTransitionRunner.Teleport()` 只 `SnapYawToTarget()` 沒 `cam.enabled = true`;玩家對 boss 的鎖定(`cameraDistanceMultiplier` 2.4)從未解除。修:①`SceneTransitionRunner.Teleport()` 加 `cam.enabled = true`(所有回程咽喉點)②新 `TargetLockController.ForceRelease()` ③新 `YuanpeiEncounter.HandCameraBackToPlayer()`(重開控制器 + snap yaw + 放鎖定),`Victory()`/`Defeat()` 各呼叫 ④新 `YuanpeiEncounter.RunGuarded()`,`Victory()` 用它包 `DeathDissolve` 使例外不中止交還。EditMode 338/338。

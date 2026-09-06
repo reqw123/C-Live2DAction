@@ -440,6 +440,300 @@ namespace Live2DAction.AI.Boss.Yuanpei
             Destroy(core);
         }
 
+        // ---------------------------------------------------------------- 下馬威 開場齊射（續183e→183h）
+        // A one-shot "show of force" the boss fires the instant it enters combat (end of the intro).
+        // ONE hard telegraph (boss DESCENDS + looms + camera shake), then THREE attack types on THREE
+        // clearly-separated STRAIGHT lanes on the player's body (續183h - user: "每種攻擊的軌跡直線對其 /
+        // 不要看到三種攻擊重疊在一起"):
+        //   player-LEFT   = 長矛  - a straight volley of 2×-size Crimson Void Spears, spaced `windupSeconds`s
+        //   player-CENTRE = 雷射  - track during charge, then a LOCKED straight kill beam (no sweep)
+        //   player-RIGHT  = 六連彈 - a straight orb stream in two waves
+        // Each lane locks a point `number4` m perpendicular to the boss->player line. No fan, no homing.
+        // A stationary player eats all three (bullets are fat enough to bridge the offset); a sidestep
+        // clears whichever lane you leave. All connecting ≈ n1*spears + n2*ticks + n3*count >> ~100 HP.
+        // Numbers on `def` (YuanpeiAttackDef, id = OpeningBarrage) - see YuanpeiAttackDef.cs.
+        public IEnumerator RunOpeningBarrage(YuanpeiAttackDef def, Transform player, YuanpeiBoss boss)
+        {
+            _boss = boss;
+            _cfg = boss != null ? boss.Config : null;
+            if (def == null || player == null) { Debug.LogWarning("[YuanpeiAttacks] 下馬威 abort - def/player null"); yield break; }
+
+            _majorHazardActive = true;
+
+            Transform vis = boss != null ? boss.VisualRoot : null;
+            Vector3 visBase = vis != null ? vis.localScale : Vector3.one;
+            Quaternion visRotBase = vis != null ? vis.rotation : Quaternion.identity;
+            var shake = Camera.main != null ? Camera.main.GetComponent<Live2DAction.CameraSystem.CameraShake>() : null;
+
+            float spearDmg     = def.number1 > 0 ? def.number1 : 40f;
+            float laserTickDmg = def.number2 > 0 ? def.number2 : 18f;
+            float orbDmg       = def.number3 > 0 ? def.number3 : 20f;
+            float laneOffset   = def.number4 > 0 ? def.number4 : 0.6f;    // 續183h - L/R lane separation (m); big enough to see 3 distinct lines, small enough all 3 still hit a stationary player
+            float projSpeed    = def.number5 > 0 ? def.number5 : 21f;
+            float spearGap     = def.windupSeconds > 0 ? def.windupSeconds : 0.2f;   // spacing between spears in the volley
+            int   orbs         = Mathf.Max(3, def.count);
+            int   spears       = Mathf.Max(4, Mathf.CeilToInt(orbs * 0.5f));
+            float tele         = Mathf.Max(0.2f, def.telegraphSeconds);
+            float window       = Mathf.Max(0.5f, def.activeSeconds);
+
+            _laserHits = 0;
+            Debug.Log($"[YuanpeiAttacks] 下馬威 START  spears={spears}({spearDmg}) orbs={orbs}({orbDmg}) laserTick={laserTickDmg} laneOffset={laneOffset} boss@{transform.position} player@{PlayerCenter(player)}");
+
+            Vector3 Muzzle() => projectileOrigin != null ? projectileOrigin.position : transform.position;
+
+            // --- 下馬威 telegraph: the disc DESCENDS + leans toward the player (looms over them),
+            //     spins up hard, 3 thick pulsing warn beams, rising camera shake, red screen pulses. ---
+            if (boss != null) boss.SuspendHover(tele + window + 1.4f);
+            Vector3 bossStart = transform.position;
+            Vector3 pcTele = PlayerCenter(player);
+            float floorY = ProjectToGround(player.position, player).y;
+            // loom point: ~35% of the way in horizontally, dropped to ~4m above the player's floor
+            Vector3 loomPos = new Vector3(
+                Mathf.Lerp(bossStart.x, pcTele.x, 0.35f),
+                Mathf.Max(floorY + 4f, bossStart.y - 3.5f),
+                Mathf.Lerp(bossStart.z, pcTele.z, 0.35f));
+
+            var warn = new LineRenderer[3];
+            for (int i = 0; i < 3; i++)
+            {
+                var g = new GameObject("YuanpeiBarrageWarn");
+                g.transform.SetParent(transform, false);
+                _spawned.Add(g);
+                var lr = g.AddComponent<LineRenderer>();
+                lr.material = SimpleUnlit();
+                lr.positionCount = 2;
+                lr.numCapVertices = 3;
+                lr.startWidth = lr.endWidth = 0.06f;
+                lr.startColor = lr.endColor = new Color(1f, 0.35f, 0.2f, 0.5f);
+                lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                warn[i] = lr;
+            }
+            float tt = 0f, nextFlash = 0f;
+            while (tt < tele)
+            {
+                tt += Time.deltaTime;
+                float k = tt / tele;
+                float e = Mathf.SmoothStep(0f, 1f, k);
+                transform.position = Vector3.Lerp(bossStart, loomPos, e);   // descend + close in
+                if (tt >= nextFlash) { YuanpeiScreenFlash.Flash(0.16f + 0.3f * k, 0.14f, new Color(1f, 0.16f, 0.12f)); nextFlash = tt + 0.28f; }
+                shake?.Shake(0.04f + 0.14f * k, 0.2f);
+                if (vis != null)
+                {
+                    vis.localScale = visBase * (1f + Mathf.Sin(tt * 18f) * 0.07f * Mathf.Clamp01(k + 0.25f));
+                    vis.Rotate(0f, (140f + 760f * k) * Time.deltaTime, 0f, Space.Self);
+                    Vector3 aimD = (PlayerCenter(player) - transform.position).normalized;
+                    Vector3 aimUp = Vector3.Cross(aimD, Vector3.up);
+                    if (aimUp.sqrMagnitude > 1e-4f)
+                        vis.rotation = Quaternion.Slerp(visRotBase,
+                            Quaternion.LookRotation(aimUp.normalized, aimD), 0.6f * k);
+                }
+                Vector3 pc = PlayerCenter(player);
+                Vector3 axisT = BarrageAxis(pc);
+                for (int i = 0; i < 3; i++)
+                {
+                    if (warn[i] == null) continue;
+                    Vector3 aim = pc + axisT * ((i - 1) * laneOffset);   // player body left / centre / right - 3 SEPARATE lanes
+                    warn[i].SetPosition(0, Muzzle());
+                    warn[i].SetPosition(1, aim);
+                    warn[i].startWidth = warn[i].endWidth = 0.06f + 0.18f * k * (0.7f + 0.3f * Mathf.Sin(tt * 22f));
+                    warn[i].startColor = warn[i].endColor =
+                        Color.Lerp(new Color(1f, 0.4f, 0.2f, 0.45f), new Color(1f, 0.06f, 0.05f, 1f), k);
+                }
+                yield return null;
+            }
+            if (vis != null) vis.localScale = visBase;
+            for (int i = 0; i < 3; i++) if (warn[i] != null) Destroy(warn[i].gameObject);
+            YuanpeiScreenFlash.Flash(0.7f, 0.18f, new Color(1f, 0.06f, 0.06f));
+            shake?.Shake(0.35f, 0.4f);
+            FaceDiscAlong((PlayerCenter(player) - transform.position).normalized);
+            Debug.Log("[YuanpeiAttacks] 下馬威 FIRING streams");
+
+            // --- 續183h: THREE clearly-separated STRAIGHT lanes on the player's body (no fan, no
+            //     homing, no big sweep) so you can tell them apart instead of one converging blob:
+            //       player-left  = 長矛 volley   player-centre = 雷射   player-right = 六連彈
+            //     Each locks a point offset `laneOffset` m perpendicular to the boss->player line.
+            //     A stationary player eats all three (bullets are fat enough to cover the offset);
+            //     a sidestep clears whichever lane you leave. Staggered slightly so it still reads
+            //     as one combo. ---
+            StartCoroutine(BarrageSpearVolley(spears, projSpeed, spearDmg, spearGap, laneOffset, player));
+            StartCoroutine(BarrageLaser(laserTickDmg, window, player));
+            yield return new WaitForSeconds(0.12f);
+            yield return BarrageOrbs(orbs, projSpeed * 0.9f, orbDmg, laneOffset, window, player);
+
+            // punctuation: ground shockwave under the player + a hard flash + shake
+            YuanpeiScreenFlash.Flash(0.5f, 0.2f, new Color(1f, 0.1f, 0.08f));
+            shake?.Shake(0.3f, 0.35f);
+            Vector3 ring = ProjectToGround(player.position, player);
+            SpawnHazard(YuanpeiHazard.Kind.ExpandingRing, ring, 6f, 0f, 0.7f, 0f, player);
+
+            yield return new WaitForSeconds(0.5f);   // let the beam sweep finish
+
+            // ease the boss back up to its hover spot
+            Vector3 from = transform.position;
+            float rt = 0f;
+            while (rt < 0.6f)
+            {
+                rt += Time.deltaTime;
+                transform.position = Vector3.Lerp(from, bossStart, Mathf.SmoothStep(0f, 1f, rt / 0.6f));
+                if (vis != null) vis.rotation = Quaternion.Slerp(vis.rotation, visRotBase, 8f * Time.deltaTime);
+                yield return null;
+            }
+            transform.position = bossStart;
+            if (vis != null) vis.rotation = visRotBase;
+            _majorHazardActive = false;
+            Debug.Log("[YuanpeiAttacks] 下馬威 END");
+        }
+
+        // Horizontal axis 90° to the boss->`target` line - the L/R lane separation direction.
+        private Vector3 BarrageAxis(Vector3 target)
+        {
+            Vector3 raw = Vector3.Cross(Vector3.up, (target - transform.position).normalized);
+            return raw.sqrMagnitude > 1e-4f ? raw.normalized : Vector3.right;
+        }
+
+        // 下馬威 lane 1 (player-LEFT) - a straight VOLLEY of Crimson Void Spears, 2× size, spaced `gap`s
+        // apart, all locked on the left point. No fan, no homing - one distinct spear line.
+        private IEnumerator BarrageSpearVolley(int count, float speed, float damage, float gap, float laneOffset, Transform player)
+        {
+            const float tipOffset = 1.2f;   // CrimsonVoidSpearProjectile baked half-length × 2× scale
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 origin = projectileOrigin.position;
+                Vector3 pc = PlayerCenter(player);
+                Vector3 aim = pc - BarrageAxis(pc) * laneOffset;               // the LEFT lane point (re-read so slow drift is punished)
+                Vector3 dir = (aim - origin);
+                dir = dir.sqrMagnitude > 1e-5f ? dir.normalized : transform.forward;
+
+                GameObject go;
+                if (spearProjectilePrefab != null)
+                {
+                    go = Instantiate(spearProjectilePrefab, origin, Quaternion.LookRotation(dir, Vector3.up));
+                    go.transform.localScale *= 2f;                            // 續183h - user: 子彈放大 2 倍
+                }
+                else
+                {
+                    go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                    Destroy(go.GetComponent<Collider>());
+                    var cc = go.AddComponent<CapsuleCollider>();
+                    cc.direction = 2; cc.radius = 0.16f; cc.height = 1.25f; cc.isTrigger = true;
+                    go.transform.SetPositionAndRotation(origin, Quaternion.LookRotation(dir, Vector3.up));
+                    go.transform.localScale = new Vector3(0.52f, 1.6f, 0.52f);   // 2×
+                    Tint(go, spearGlowColor, 3.5f);
+                }
+                go.name = "YuanpeiBarrageSpear";
+
+                var trail = go.AddComponent<TrailRenderer>();
+                trail.material = SimpleUnlit();
+                trail.time = 0.24f; trail.startWidth = 0.5f; trail.endWidth = 0f;
+                trail.startColor = new Color(spearGlowColor.r, spearGlowColor.g, spearGlowColor.b, 0.95f);
+                trail.endColor = new Color(spearCoreColor.r, spearCoreColor.g, spearCoreColor.b, 0f);
+                trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+                var proj = go.GetComponent<YuanpeiProjectile>() ?? go.AddComponent<YuanpeiProjectile>();
+                proj.Launch(dir, speed, 0.9f, damage, 0f, 0f,
+                    player, _boss != null ? _boss.gameObject : gameObject, 6f, tipOffset);
+                _spawned.Add(go);
+
+                if (i + 1 < count) yield return new WaitForSeconds(gap);
+            }
+        }
+
+        // 下馬威 lane 2 (player-CENTRE) - a thick beam that briefly tracks the player during the
+        // charge, then LOCKS dead-centre and holds a straight kill beam, ticking `tickDmg`. No sweep.
+        private IEnumerator BarrageLaser(float tickDmg, float seconds, Transform player)
+        {
+            float length = 46f, radius = 1.0f, tick = 0.13f;
+            float trackSec = Mathf.Clamp(seconds * 0.3f, 0.15f, 0.4f);
+            float holdSec = Mathf.Max(0.35f, seconds - trackSec);
+
+            var beamGo = new GameObject("YuanpeiBarrageLaser");
+            _spawned.Add(beamGo);
+            var lr = beamGo.AddComponent<LineRenderer>();
+            lr.material = SimpleUnlit();
+            lr.positionCount = 2;
+            lr.numCapVertices = 5;
+            lr.startWidth = lr.endWidth = 0.06f;
+            lr.startColor = lr.endColor = castColor;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            Vector3 Origin() => laserOrigin.position;
+            Vector3 dir = ((PlayerCenter(player) + Vector3.up) - Origin()).normalized;
+
+            float t = 0f;
+            while (t < trackSec)   // follow the player, thicken from sighting line to kill beam
+            {
+                t += Time.deltaTime;
+                Vector3 want = ((PlayerCenter(player) + Vector3.up) - Origin()).normalized;
+                dir = Vector3.Slerp(dir, want, 8f * Time.deltaTime).normalized;
+                lr.SetPosition(0, Origin());
+                lr.SetPosition(1, Origin() + dir * length);
+                lr.startWidth = lr.endWidth = Mathf.Lerp(0.06f, radius * 2f, t / trackSec);
+                yield return null;
+            }
+            lr.startColor = lr.endColor = dangerColor;
+
+            Vector3 lockDir = ((PlayerCenter(player) + Vector3.up) - Origin()).normalized;   // LOCK centre
+            float s = 0f, tickT = 0f;
+            while (s < holdSec)
+            {
+                s += Time.deltaTime; tickT += Time.deltaTime;
+                lr.SetPosition(0, Origin());
+                lr.SetPosition(1, Origin() + lockDir * length);
+                lr.startWidth = lr.endWidth = radius * 2f * (0.92f + 0.08f * Mathf.Sin(Time.time * 30f));
+                if (tickT >= tick)
+                {
+                    tickT = 0f;
+                    if (RayHitsPlayer(Origin(), lockDir, length, radius, player))
+                    {
+                        DamagePlayer(player, tickDmg, lockDir);
+                        _laserHits++;
+                    }
+                }
+                yield return null;
+            }
+            if (_laserHits > 0) Debug.Log($"[YuanpeiAttacks] 下馬威 laser hit x{_laserHits}");
+            if (beamGo != null) Destroy(beamGo);
+        }
+        private int _laserHits;
+
+        // 下馬威 lane 3 (player-RIGHT) - `count` light orbs in a straight stream on the right point,
+        // two waves, no fan/homing - one distinct orb line.
+        private IEnumerator BarrageOrbs(int count, float speed, float damage, float laneOffset, float seconds, Transform player)
+        {
+            int wave = Mathf.Max(1, Mathf.CeilToInt(count / 2f));
+            float gap = seconds / Mathf.Max(1, count + 2);
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 origin = projectileOrigin.position;
+                Vector3 pc = PlayerCenter(player);
+                Vector3 aim = pc + BarrageAxis(pc) * laneOffset;              // the RIGHT lane point (re-read per orb)
+                Vector3 dir = (aim - origin);
+                dir = dir.sqrMagnitude > 1e-5f ? dir.normalized : transform.forward;
+
+                var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                go.name = "YuanpeiBarrageOrb";
+                Destroy(go.GetComponent<Collider>());
+                var sc = go.AddComponent<SphereCollider>();
+                sc.radius = 0.5f; sc.isTrigger = true;
+                go.transform.position = origin;
+                go.transform.localScale = Vector3.one * (0.45f * 2.6f);
+                Tint(go, burstColor, 4f);
+                var trail = go.AddComponent<TrailRenderer>();
+                trail.material = SimpleUnlit();
+                trail.time = 0.22f; trail.startWidth = 0.9f; trail.endWidth = 0f;
+                trail.startColor = new Color(castColor.r, castColor.g, castColor.b, 0.95f);
+                trail.endColor = new Color(burstColor.r, burstColor.g, burstColor.b, 0f);
+                trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                var proj = go.AddComponent<YuanpeiProjectile>();
+                proj.Launch(dir, speed, 0.55f, damage, 0f, 0f,
+                    player, _boss != null ? _boss.gameObject : gameObject);
+                _spawned.Add(go);
+
+                if (i + 1 < count)
+                    yield return new WaitForSeconds((i + 1) % wave == 0 ? gap * 4f : gap);
+            }
+        }
+
         // ---------------------------------------------------------------- 9.2 聚焦雷射
 
         private IEnumerator FocusLaser(YuanpeiAttackDef def, Transform player)

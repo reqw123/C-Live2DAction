@@ -110,7 +110,18 @@ namespace Live2DAction.World
             var cam = Camera.main != null
                 ? Camera.main.GetComponent<Live2DAction.CameraSystem.ThirdPersonCameraController>()
                 : null;
-            if (cam != null) cam.SnapYawToTarget();
+            if (cam != null)
+            {
+                // 2026-09-06 - every fight-end return (YuanpeiEncounter victory / defeat, including
+                // the ChargeCrush void-punt death that deliberately leaves the controller OFF) funnels
+                // through here. A boss death-dissolve / execution cinematic drives Camera.main directly
+                // with ThirdPersonCameraController disabled and hands it back on its own last line - if
+                // that coroutine faults partway, the camera stays frozen on the death angle ("視角沒有
+                // 回到玩家身上"). Re-asserting it here is the one guaranteed choke point on the way back;
+                // harmless for ordinary SceneGate transitions where it's already enabled.
+                cam.enabled = true;
+                cam.SnapYawToTarget();
+            }
         }
     }
 }

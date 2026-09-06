@@ -41,3 +41,6 @@ _catview/
 # 詳見 Docs/LARGE_ASSETS.md
 Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx
 Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx.meta
+
+# unrelated local tooling repo (has its own .git)
+/tools/
