@@ -5925,3 +5925,76 @@ Play 後三點回饋：
 4. **`YuanpeiIntroCinematic.SkipToFightStart`**：(a) `SettleToHoverPose()` 用到可能過期的 `_boss._arenaCenter` → 改先 `SnapToCombatPose(arenaCenter)`（帶參數）再 `SettleToHoverPose()`（後者負責重置圓盤旋轉/傾斜）。(b) 設 `player.position` 前先關 CharacterController，設完再開，避免 enabled CC 去穿插修正。
 
 另：`SoulBladeArmAndSnap` 移除沒用到的 `player` 參數。編譯無錯、Console 無錯、Play（凍幀 Step）驗 `SoulBladeArmAndSnap` 三拍 FX 建成 + 結束後全清（無洩漏）、lance 幾何修正後 root/head/shaft 位置正確。**待對焦 Play** 的項目不變。
+
+## 2026-09-11 — 新增領地「露營區」（場地優先，角色晚點做）
+
+使用者要求新增一個新地圖串流區域「露營區」，之後會用新角色「猜猜看」擴充、建築聚焦露營主題，這次只做場地。全程用 Unity MCP 的 `execute_code`/`SerializedObject` 現場改場景（比照學校/二次元/現世的既有做法），沒有用 Edit 工具直接動 `.unity` 檔。
+
+1. **連接方式**：既有三座區域（`Map_School`/`Map_Nijigen`/`Map_Xianshi`）都是從本地 `BoundaryWall_South`/`West`/`East` 的缺口直接沿原點輻射方向接出，但本地四面牆已經各自對應完，北牆又貼武士 boss 戰鬥區沒空間。改成**第一個 T 字型分岔**：從既有 `VehicleRoad_West`（x −15~−85）中段 x≈−50 分岔一條新支線 `VehicleRoad_Camp`（z 0~−70，7.42 寬、比照其他 `VehicleRoad_*` 的 Cube+`RoadSurface`），x=−50 離同一條路上的 `NijigenGate_Enter`（x=−82）與 `Map_School` 60×60 場地的世界座標邊界（x=−30）都留了安全距離。
+2. **`CampGate_Enter`**（本地，−50,0,−67）／**`CampGate_Exit`**（`Map_Camp` 內，−50,0,−71）：直接複製 `SchoolGate_Enter`/`SchoolGate_Exit`（同一顆 `SceneGate` 元件、`PortalSurface` 漩渦影片 quad + `Blocker`），改 `sceneToLoad`/`sceneToUnload`/`arrivalPosition`/`arrivalYaw`/`promptMessage`，各自配一組新的 `RT_CampGate_Enter`/`RT_CampGate_Exit`（duplicate 自 `RT_SchoolGate_*.renderTexture`）+ `Mat_CampGate_Enter`/`Mat_CampGate_Exit`（duplicate 自 `Mat_SchoolGate_*.mat`，重新指到各自的 RT，其餘沿用共用的 `PortalVortexVideo.mp4` + `Live2DAction/PortalVideoURP` shader）。
+3. **`Map_Camp.unity`**：新場景，`露營區` ground（60×60 Cube + `Ground_StoneFloor`，比照學校）+ `CampWall_South`/`East`/`West`/`NorthLeft`/`NorthRight`（複製自對應的 `SchoolWall_*`，沿用 `SchoolWall` 材質，北牆 Left/Right 中間留缺口對齊支線）。整組座標是把 `Map_School` 的 學校 + `SchoolWall_*` 平移 `(dx=-50, dz=+15)` 算出來的（含 `CampGate_Exit`），跟學校在世界座標裡有小範圍數字重疊，純屬不同場景不會同時載入的巧合、非 bug。已加進 Build Settings（build index 4）。
+4. **文件**：更新 `Docs/MAP_STREAMING.md`（區域場景表新增三筆、加一段說明 T 字分岔 vs. 牆缺口兩種連接方式）、`Docs/KNOWN_ISSUES.md`（其他待辦新增 6b）。
+
+**踩到的坑**：`manage_scene(action="save", name="GreyboxTest")` 沒有存到原本開啟的 `Assets/_Project/Scenes/GreyboxTest.unity`，而是在 `Assets/` 根目錄另存一份新檔 `Assets/GreyboxTest.unity`（把當時記憶體中的場景內容,含這次剛加的 `CampGate_Enter`/`VehicleRoad_Camp`,寫進錯誤路徑),導致原本路徑的檔案沒被更新、`git status` 一度看到一個位置不對的未追蹤新檔。發現後已刪除這個誤存的檔案、重新從正確路徑 `load` 回場景、重做兩個物件的修改，改用 `manage_scene(action="save", path="Assets/_Project/Scenes/GreyboxTest.unity")`（帶完整路徑而非只給 `name`）才存對地方。之後每次 `save` 一律帶完整 `path`。
+
+**待對焦 Play 驗證**（本次只做到：座標核對 + Scene View 定位截圖確認 T 字路口與牆體幾何、Console 無編譯/新錯誤；`execute_code` 進 Play Mode 時因編輯器缺 OS focus 導致 `Time.frameCount` 卡住不動、協程不跑，沒能跑完整個 `SceneTransitionRunner` 淡黑→載入→傳送流程）：沿 `VehicleRoad_West` 走到 x≈−50 左轉南下 → `CampGate_Enter` 前應出現「按下 F 進入露營區」→ 按 F → 淡黑「載入中…」→ 站在 `露營區` 內 (−50,1.1,−77) 面向南 → 走到 `CampGate_Exit` → 按 F → 淡黑 → 回到支線路上 (−50,1.1,−63) 面向北、`Map_Camp` 卸載、`sceneCount` 2↔1。
+
+### 2026-09-11 續 — 露營區新角色「猜猜看」佔位模型放置
+
+使用者提供 `猜猜看.zip`（Meshy AI 生成的人形 biped，含 Walking/Running 兩支 withSkin FBX ＋ BaseColor/Metallic/Normal/Roughness 四張貼圖），要求先放到露營區地上（角色邏輯仍晚點做）。
+
+- 匯入 `Assets/_Project/Characters/Placeholder/GuessWho/`（FBX×2 + 貼圖×4），Generic 骨架（非 Humanoid，因為這個模型不會跟其他角色共用 Animator），SkinnedMeshRenderer bounds 正常（不像十足蟲那次是退化 bounds）。
+- 新增 `Assets/Editor/Bootstrap/GuessWhoCharacterSetup.cs`（選單 `Tools/Live2DAction/Place GuessWho Placeholder On Camp Ground`）：手建 URP/Lit `GuessWho_Body.mat`（BaseColor+Normal，Metallic/Smoothness 走定值，比照 `Player5WeaponSetup` 的簡化做法）；建一個只有 `Walking` 單一循環 state 的 Animator Controller（`GuessWho_Animator.controller`）避免站著是死板的 T-pose；在 `Map_Camp.unity` 裡把角色實例化站在 `露營區` 地板上（貼地 Y、面向南＝背對 `CampGate_Exit`，離北牆缺口 19m 不擋傳送門視線）。
+- **純視覺佔位**：沒有 `CharacterController`／`Health`／AI／互動邏輯，之後角色設計定案再接。Running clip 已匯入但目前沒用到。
+- 已登記進 `Docs/ASSET_LICENSES.md`（Meshy 付費方案輸出，使用者確認商用權利，可進正式 Build）。
+- 驗證：編譯無錯、Console 無新錯誤、Scene View 截圖確認材質正常（無粉紅 shader）、角色可見站在地上、`Map_Camp.unity` 存檔乾淨（`isDirty=false`）。
+
+### 2026-09-11 續 — 「猜猜看」升級成第三個可附身角色（G 鍵，跟 player 一樣的移動/攻擊/F架勢/R必殺技）
+
+使用者要求：「給個按鍵 像t/c一樣給猜猜看攝影機視角，且他必須擁有跟player一樣的機制，包括移動、攻擊，f架勢 r必殺技等等」。先跟使用者確認範圍/風險（大改動，動到共用的 `CameraPossessionSwitcher`），使用者確認用 **G** 鍵。
+
+1. **`GuessWho_Walking.fbx` 改成 Humanoid 骨架**：骨頭命名很標準（Hips/LeftUpLeg/Spine/LeftArm/LeftHand…近似 Mixamo 命名），Unity 自動對應成功（`avatar.isValid=true, isHuman=true`）。這讓「猜猜看」可以直接共用 Player／中立者1／守望者現在用的同一個 `NewAnimator_PlayerImmersiveWalk` controller（含攻擊連段/防禦架勢/處決等全部動畫狀態），不用重新做任何動畫。
+2. **新增 `Assets/Editor/Bootstrap/GuessWhoPlayerParitySetup.cs`**（選單 `Tools/Live2DAction/Give GuessWho Full Player Parity (G possession)`）——策略是**整個複製 Player 再換皮**，不是從零手動組 20 個元件：
+   - 先逐一 dump Player 身上每個戰鬥元件的 SerializedObject 物件參照欄位，確認除了兩個攝影機欄位（`CharacterMovement.cameraYawSource`／`TargetLockController.viewOrigin`）跟 `PlayerGuard` 的兩個手臂骨頭參照（`swordArmBone`／`upperArmBone`）之外，其餘全部指向 Player 自己階層「內部」的物件（Animator 都指到 `Visual`、canvas/hurtbox/guard volume/攻擊音效都是子物件）——代表 `Object.Instantiate(player)` 整包複製時 Unity 會自動幫這些內部參照重新指向複製品，幾乎不用手動修。
+   - `Object.Instantiate(player)` → 改名「猜猜看」，放在 Player 旁邊 (-2.5,1.08,-2)。挖掉 `Visual` 底下舊的 lacrimosa 網格＋`Bip001` 骨架（先把武器 `WolfsGravestone` 從舊的 `Rhand_Weapon2` 骨頭底下拔出來暫放，免得被連坐刪除），塞進「猜猜看」自己的 Humanoid 骨架＋網格（`Visual.localScale` 從 lacrimosa 專用的 0.00728 重設回 1，`localPosition.y` 用「CC 膠囊底部 − 模型腳底 local Y」算出貼地高度）。
+   - **踩到的坑**：一開始用 `PrefabUtility.InstantiatePrefab` 生一份臨時模型再搬子物件過去，Unity 直接無聲失敗（Console 印 "Setting the parent of a transform which resides in a Prefab instance is not possible"）——prefab instance 的階層被鎖住不給重排。改成生出來後立刻 `PrefabUtility.UnpackPrefabInstance(..., PrefabUnpackMode.Completely, ...)` 解除 prefab 連結，才能自由搬動子物件。
+   - **踩到的坑 2**：模型裡混了一顆叫 `Icosphere` 的子物件（scale 100、半徑 ~1、灰色材質）——不是角色的一部分，是 Meshy 匯出流程留下的技術用邊界球，會把整個角色包在一顆巨大灰球裡，截圖整片死白/死灰看不清楚（鏡頭其實是從球內部往外拍）。兩支相關腳本（這支 + 之前的 `GuessWhoCharacterSetup.cs`）都補上刪除 `Icosphere` 這一步，並清掉場上兩份已存在的殘留（`Map_Camp` 的視覺佔位版 + 這次新建的可附身版）。
+   - 武器 `WolfsGravestone` 重新掛到「猜猜看」自己 Humanoid 骨架的 `RightHand` 骨頭（原本掛在 Player 專屬的 `Rhand_Weapon2`，這個骨頭名字在新骨架上不存在）；`PlayerGuard.swordArmBone`/`upperArmBone` 改指 `RightForeArm`/`RightArm`。**已知風險**：`RightHand` 的 `lossyScale` 是 100（Meshy/類 Mixamo 骨架常見的骨頭本地巨量縮放，跟 memory 記錄的「80x bone scale」是同一類問題），武器目前只是沿用 Player 那組手感縮放值（0.03）當起點，握把貼合度、劍身角度都還沒精修，需要之後對焦 Play 微調。
+   - 攝影機：複製「Main Camera」（保留全部已調校過的 distance/FOV/決鬥鏡頭等數值）成 `GuessWhoCamera`，只重新指向「猜猜看」自己的 `target`／`lockOnSource`／`inputSource`／`firstPersonHiddenAccessory`，SetActive(false) 直到按 G。
+3. **`CameraPossessionSwitcher.cs` 擴充成三方切換**（`Possessed` enum 加 `GuessWho`）：
+   - **C 鍵維持原本 Player↔Cat 的嚴格語意**——如果當下正在「猜猜看」身上按 C，直接切回 Player（不是三方輪替），跟現有「離開守望者 T 視角回到 Current」的既有模式一致。
+   - 新增 `guessWhoToggleKey`（**G**）：按下切到「猜猜看」，若已經在「猜猜看」身上再按一次則切回 Player。也吃「正在守望者視角時先退出」的邏輯（同 C 鍵）。
+   - `guessWhoControl` 陣列跟 `playerControl` 內容 1:1 對應（`CharacterMovement`/`PlayerCombat`/`TargetLockController`/`UltimateAbility`/`ExecutionAbility`/`PlayerGuard`），未被附身時全部停用，跟 Player/Cat 現有機制一致。
+   - `guessWhoHealth` 死亡自動交還控制權（同 `catHealth` 的既有邏輯）。載具邏輯（`VehicleEntrySystem`）目前只認 Player/Cat，「猜猜看」還不能上車，`whoIsDriver` 判斷已排除他這個分支。
+4. **驗證**：編譯無錯、Console 無新錯誤（僅有跟這次無關的既有 Live2D Cubism `IndexOutOfRangeException`）、`GreyboxTest.unity` 存檔乾淨（`isDirty=false`）、reflection 逐一核對所有重新接線的欄位（avatar/controller/bones/camera/switcher 陣列）數值都正確。**待對焦 Play 驗證**（本次 `execute_code` 進 Play Mode 時編輯器缺 OS focus，`Time.frameCount` 卡住不動，沒能實測移動/連段/彈反/必殺技手感）：G 鍵切換手感、武器握把貼合、攻擊/防禦動畫在新骨架上retarget 後的視覺效果、攝影機距離是否適合他的比例。
+
+### 2026-09-11 續 — 三項使用者回饋：拿掉背劍、alt 慢走手要放下、搬去露營區
+
+1. **拿掉背後的狼大劍裝飾**：「猜猜看」是整包複製 Player 來的，連 Player 身上純裝飾用的 `BackGreatswordDecor`（背後那把《原神》狼的末路仿製大劍，DoNotShip）也一起複製過去了，已刪除。**注意沒有動右手武器**（GameObject 內部仍叫 `WolfsGravestone`，但視覺其實是血刀 `BloodKatana`）——`UltimateAbility.FindWeapon()` 是用這個名字字串去場上找，如果拿掉，R 必殺技會整個變成按了沒反應（`Update()` 找不到武器就直接 `return`，不報錯也不會生效，坑很隱蔽），這把手持武器留著才能讓 R 繼續正常運作。
+2. **新增 `Assets/_Project/Game/Characters/HumanoidWalkArmsDown.cs`**：alt 切換成慢走時，手臂改用 **Humanoid 肌肉空間**（`HumanPoseHandler`）覆寫成「垂直下垂、手肘打直」，蓋掉共用走路動畫（跟 Player 共用、是照 Player 身材編排的擺臂）在他身上顯得不自然的擺動。用肌肉空間而非直接改骨頭 local rotation，是因為肌肉數值在所有 Humanoid 骨架上都是同一套正規化語意，不用管猜猜看自己骨架的 bind pose 朝向細節。只在 `CharacterMovement.IsWalking` 為真時生效（跑步/戰鬥/防禦姿勢不受影響），Player 完全沒被動到（元件只掛在猜猜看自己身上）。
+3. **新增 `Assets/Editor/Bootstrap/GuessWhoCampRelocateSetup.cs`**（選單 `Tools/Live2DAction/Relocate GuessWho To Camp + Drop Greatsword + Walk Pose`）：把猜猜看＋他的專屬攝影機從常駐的 `GreyboxTest` 移到 `Map_Camp.unity`，站在「露營區」地板上 (−50,1.0,−90)、面朝北（迎向大門方向）。同時刪掉先前 `GuessWhoCharacterSetup.cs` 建的那個純視覺佔位版本，避免場上同時有兩個「猜猜看」。
+   - **技術後果需要記錄**：`CameraPossessionSwitcher` activate 在常駐場景，但猜猜看現在只存在於**按需載入**的 `Map_Camp`（玩家人在露營區才會載入）——這代表原本存檔的 cross-scene 參照撐不過一次 unload/reload，所以改成把 switcher 上 `guessWhoCamera`/`guessWhoControl`/`guessWhoHealth` 清空，**執行期用名字重新找**（`CameraPossessionSwitcher.TryRelinkGuessWho()`，每秒節流掃描一次，就近沿用 `SceneGate`/`PortalVideoSurface` 既有的 `_nextScan` 節流慣例）。實際效果：**G 鍵要等玩家實際走到過露營區一次（`Map_Camp` 真的被載入）才會生效**，之前在別的地方按 G 不會有反應（不報錯，就是安靜地沒事發生）——這是設計上合理的結果（「要在他附近才能附身他」），但值得讓使用者知道，不是 bug。
+   - **意外發現，修正了先前的說法**：之前以為猜猜看下半身是「大圓裙」造型、擔心格擋/踢腿動作穿模——實際上那顆疑似大圓裙的東西就是**上一輪還沒清掉的 `Icosphere` 邊界球**（把整個角色包住造成的視覺錯覺）。這次搬家順便把場上兩份殘留（`Map_Camp` 的舊佔位版＋這次的新版）都重新截圖確認：拿掉 `Icosphere` 之後，猜猜看其實是正常比例的人形（灰色連帽衣＋黑褲＋黃靴），先前的「大圓裙穿模風險」判斷是誤判，撤回。
+4. **驗證**：編譯無錯、Console 無新錯誤、reflection 核對搬家後的場景歸屬（`gw.scene.name == "Map_Camp"`）、`BackGreatswordDecor` 已移除、`HumanoidWalkArmsDown` 已掛上且 `movement` 欄位指到位、右手武器仍在、switcher 的三個欄位已清空、兩個場景（`GreyboxTest`/`Map_Camp`）都存檔乾淨（`isDirty=false`）。Scene View 截圖確認站姿正常、無穿模、無白屏。**待對焦 Play 驗證**：alt 慢走時手臂覆寫的實際效果（肌肉值 `armDownUp=-0.9` 等是估的起始值，`HumanoidWalkArmsDown` 的 Inspector 上可直接調）、G 鍵在露營區內外的實際行為、R 必殺技手持武器揮動效果。
+
+### 2026-09-11 續 — 路線指引截圖 + G 鍵/雙重控制兩個真 bug + 開場改成 G 視角 + 走路姿勢重做
+
+使用者實際測試後回報「找到（露營區）」但「現在沒辦透過g切換到猜猜看視角 並且我控制player時猜猜看會受到影響」。
+
+1. **路線指引**：用 `RenderSettings.fog=false` 暫時關霧（原本 Linear 35~100，遠一點全灰）+ 在關鍵地標（本地/岔路口/露營區大門）放巨大自發光小球校準像素座標，拍一張置頂俯視截圖，再用 PowerShell `System.Drawing` 疊加箭頭與中文標籤存成 `camp_route_annotated.png`（本地→西邊岔路口→左轉往南→露營區大門，並標註「別跟二次元大門搞混」）。校準/關霧動作結束後都還原（markers 刪除、fog 設回原本數值），`GreyboxTest.unity` 全程 `isDirty=false`，沒有留下任何場景改動。
+2. **兩個真 bug**（`CameraPossessionSwitcher.cs`）：
+   - **Bug①G 切不過去**：`TryRelinkGuessWho()` 原本用 `GameObject.Find("GuessWhoCamera")` 找攝影機，但這顆攝影機預設是關閉狀態（按 G 才開）——**`GameObject.Find` 找不到已停用的物件**，永遠拿到 null，按 G 自然沒畫面可切。改成直接掃描所有已載入場景的 root 物件清單（不受物件開關狀態影響）。
+   - **Bug②控制 Player 時猜猜看也會動**：猜猜看的 `CharacterMovement`/`PlayerCombat` 等元件是複製 Player 來的，存檔時 `enabled=true`（因為 Player 本來就是預設被附身的那個）。`Map_Camp` 一載入，這些元件的 `enabled` 就照存檔的舊狀態原封不動生效，**沒有任何程式碼會去依照「目前是誰被附身」重新校正它**，於是猜猜看的 `PlayerInputProvider` 讀著同一份鍵盤輸入，跟 Player 同步動作。修法：`TryRelinkGuessWho()` 一找到他就立刻依照 `Current` 強制套用 `SetEnabled`/`SetActiveSafe`，不再相信存檔裡的舊 `enabled` 值。
+3. **開場改成 G 視角**（使用者：「我希望現在進入遊戲都從 g視角開始」）：`Possessed` 列舉裡 `GuessWho` 只是遊戲進行中的一個切換目標，但 `startPossessed` 若直接設成 `GuessWho`，遊戲一開場猜猜看根本不存在（`Map_Camp` 還沒載入）。新增 `Start()` 的特殊分支：偵測到 `startPossessed==GuessWho` 就先 `Apply(Player)` 墊著（避免載入那零點幾秒沒有任何 active 攝影機）、`SceneManager.LoadSceneAsync("Map_Camp", Additive)`、等載入完成 + 讓新場景自己的 `Awake`/`Start` 跑一輪、`TryRelinkGuessWho()`、最後 `Apply(GuessWho)`。`CameraPossession` 的 `startPossessed` 欄位已改成 `GuessWho` 並存檔。
+4. **重做走路姿勢**（使用者：「猜猜看 alt靜走狀態下的姿勢不對 你恢復成原模型的姿勢就行 然後隨著步伐緩慢擺動」）：上一版硬猜的 Humanoid 肌肉數值（`armDownUp=-0.9` 等）姿勢不對，且因為編輯器缺焦點沒辦法邊看邊調。`HumanoidWalkArmsDown.cs` 整個換掉猜肌肉值的做法：改成在 `Awake()`（Animator 都還沒跑過任何一幀之前，骨頭還停在匯入時的原始姿勢）**直接記錄猜猜看自己雙臂骨頭「相對於角色根節點」的原始朝向**，之後 alt 慢走時每幀把手臂還原回這個記錄值（不是猜的、是他自己模型真正的姿勢），再疊加一個繞著**角色目前世界空間右手邊方向**（`root.right`，跟著轉身走）的小幅正弦擺動（`swayCycleSeconds`＝一次完整擺動的秒數、`swayAmplitudeDegrees`＝擺動幅度，都在 Inspector 可調）模擬「隨著步伐緩慢擺動」。用 `root.right` 而非骨頭自己的 local 軸做擺動方向，是為了不用去猜這個骨架本地座標軸的方向慣例（跟 memory 記錄的「不要對每個骨架瞎猜 local 軸」同一個教訓）。
+5. **驗證**：編譯無錯、Console 無新錯誤、`GreyboxTest.unity` 存檔乾淨。**待使用者對焦 Play 驗證**（本次仍受限於編輯器缺 OS focus，沒能實際看動畫跑）：G 鍵能否正常切換＋控制 Player 時猜猜看是否真的靜止、開場是否直接以猜猜看視角開始（且 `Map_Camp` 有跟著自動載入）、alt 慢走的手臂姿勢與擺動節奏是否自然。
+
+### 2026-09-11 續 — 手腕也要打直 + 露營區木頭地板
+
+1. **`HumanoidWalkArmsDown.cs` 補上手掌**：使用者回報「alt時手往下伸直 不要手背彎曲」——上一版只還原了上臂＋前臂，手腕（`LeftHand`/`RightHand`）沒處理，還是被共用走路動畫掰彎。比照上臂/前臂的做法，一併在 `Awake()` 記錄手掌相對根節點的原始朝向，alt 慢走時還原（不加額外擺動，只還原姿勢）。
+2. **露營區木頭地板**（使用者提供 `營區地板.zip`，Meshy AI「Raised Wooden Platform」，「讓這個作為露營區的地基 讓他水平擴大填滿整個營地」）：
+   - 踩到熟悉的 Meshy 匯入陷阱（跟 VoidmoonGate/CrimsonVoidSpear 同一套）：`fileScale=0.01` 讓網格匯入後只有 0.02 單位大，`useFileScale=false` 解掉；解掉後量出網格用本地 **Z 軸當「上」**（非 Y-up），需要 `euler(270,0,0)` 立平，footprint 實測 ≈1.905×1.906、厚度≈0.256。
+   - 新增 `Assets/Editor/Bootstrap/CampFloorSetup.cs`（選單 `Tools/Live2DAction/Build Camp Floor Platform`）：手建 URP/Lit `CampFloor.mat`（base+normal 貼圖，metallic/roughness 貼圖略過用定值，同 `GuessWho_Body.mat` 的簡化做法）；把地板水平（世界 X/Z）縮放 60/1.905≈31.5 倍填滿 `露營區` 60×60 地基，**厚度（世界 Y）刻意不放大**（使用者原話「水平擴大」，只縮放 local X/Y 兩軸，local Z／厚度維持原始比例）。
+   - **碰撞面不換**：實際站立/物理碰撞仍交給原本 `露營區` Cube 的 `BoxCollider`（一個完美的平面碰撞比 223.8 萬頂點的複雜網格可靠很多），只是把它的 `MeshRenderer` 關掉，讓新地板網格變成看得到的那一層——比照 yuanpei 系列校園建築「隱形碰撞盒 + 上層裝飾網格」的既有慣例。
+   - 原始 FBX 127 MB，維持 `Meshy_AI_*_texture.fbx` 命名，依既有 `.gitignore` 規則自動排除版控，已登記進 `Docs/LARGE_ASSETS.md`；授權登記進 `Docs/ASSET_LICENSES.md`（Meshy 付費方案，可進正式 Build）。
+3. **驗證**：編譯無錯、Console 無新錯誤、Scene View 截圖確認地板填滿整個 60×60 地基、邊緣與圍牆無縫隙、`Map_Camp.unity` 存檔乾淨。**待對焦 Play 驗證**：alt 慢走手腕姿勢的實際效果、地板厚度/材質觀感、走在地板上的實際手感（碰撞面用的是底下的隱形 Cube，理論上不受地板網格影響，但仍待實測）。

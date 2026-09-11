@@ -16,8 +16,13 @@
   | 場景 | 內容 | 錨點 | 面數 |
   | --- | --- | --- | --- |
   | `Map_School.unity` | 學校 ground + `SchoolWall_*` ×5 + `yuanpei_*` ×4（MainBuilding / ModernGlassLibrary / PalmLinedLibrary / QuietCampusPlaza） | (0, 0, -115) | ~11.9M tris |
+  | `Map_Nijigen.unity` | 二次元 ground + `NijigenWall_*` ×5（西城，內容待補） | (-115, 0, 0) | greybox |
+  | `Map_Xianshi.unity` | 現世 ground（東城，空 greybox，含 Voidmoon Gate 傳送門裝飾）| (115, 0, 0) | greybox |
+  | `Map_Camp.unity` | 露營區 ground(60×60) + `CampWall_*` ×5，**續 2026-09-11**（本次任務）新增；純場地，角色「猜猜看」尚未建立 | (-50, 0, -100) | greybox |
 
   區域場景**不放自己的燈** —— 沿用常駐場景的 Directional Light + skybox ambient（本專案目前無 lightmap bake）。
+
+  **連接方式分兩種**：`Map_School`/`Map_Nijigen`/`Map_Xianshi` 從本地 `BoundaryWall_South`/`West`/`East` 的缺口直接向外接（沿原點輻射的三個方向）。`Map_Camp` 沒有新開牆缺口 —— 本地四面牆已各自對應學校/二次元/現世（北牆貼武士 boss 戰鬥區沒有空間），改成從既有 **`VehicleRoad_West`（x −15~−85）中段 x≈−50 分岔一條 T 字型支線 `VehicleRoad_Camp`（z 0~−70）往南**，`CampGate_Enter` 立在支線底端 (−50,0,−67)。這個 x 值離 `NijigenGate_Enter`（x=−82，同一條路上）與 `Map_School` 的 60×60 場地邊界（世界座標 x=−30）都有安全距離，避免同一顆常駐場景裡的視覺/collider 擠在一起。
 
 ## `SceneGate`（`Assets/_Project/Game/World/SceneGate.cs`）—— 現行進出方式（續 78）
 
@@ -79,6 +84,14 @@ API：`SetCovered(bool, fadeSeconds)`（用 `unscaledDeltaTime`，不受 hit-sto
 - **Player 還在常駐場景**：目前 本地/空島 也在常駐場景，尚未抽成獨立 `Core.unity`。
 - **跨場景引用**：目前學校是純景物（無腳本），零跨場景引用。之後區域場景放 AI／互動物件時，
   需要執行期角色註冊表（`GameRuntime.Player` 之類）或由 `MapStreamer` 在載入完成後接線。
+- **`Map_Camp` 純場地**：目前只有 greybox ground + 圍牆 + 一對門，沒有任何角色/建築/互動物件。新角色
+  「猜猜看」目前沒有素材，之後補上時比照 `Docs/ASSET_LICENSES.md` 追蹤授權（同人/來源不明素材要標
+  `DoNotShip`）；建築聚焦「露營主題」也待補。
+- **`CampGate_Enter`/`Exit` 的實機轉場尚未 focused-Play 走過一次**：本次是用 Unity MCP 在編輯器內建物件、
+  存檔、靜態座標比對 + Scene View screenshot 驗證幾何，`execute_code` 進 Play Mode 時編輯器缺 OS focus
+  （已知環境限制，見 `Docs/AGENT_NOTES.md`）導致 `Time.frameCount` 卡住、協程不跑，沒能跑完整個
+  `SceneTransitionRunner` 淡黑→載入→傳送流程。下次有人在前台盯著 Editor 玩，麻煩實際走一次驗證清單
+  （見下方「驗證」章節，路線改成沿 `VehicleRoad_West` 走到 x≈−50 再左轉南下）。
 
 ## 分階段藍圖
 
@@ -86,6 +99,8 @@ API：`SetCovered(bool, fadeSeconds)`（用 `unscaledDeltaTime`，不受 hit-sto
 2. ✅ **續 74**：`ScreenFader` 過場遮罩。
 2b. ✅ **續 75**：yuanpei MeshCollider → box proxy（cook 卡頓消除）＋ 遮罩期間鎖玩家輸入。
 3. ✅ **續 78**：轉向大門互動式 —— `SceneGate` 進入門（本地→學校）+ 離開門（學校→本地），載入畫面「載入中…」，跑完直接站在目標地圖。`MapStreamer_School` instance 移除（`.cs` 留磁碟）。
-4. spawn anchor 系統（多個出生點、由門指定 spawn id）；貓／載具也能用門。
-5. 抽 `Core.unity`（Player/Cat/Buggy/相機/HUD/managers），本地變 `Map_Bendi`，空島變 `Map_SkyIsland`。
-6. 每區域各自 NavMeshSurface + Lighting Settings；記憶體 profiling。
+4. ✅ **續 88 / 95**：`Map_Nijigen`（西城）、`Map_Xianshi`（東城）比照學校模式，從本地西/東牆缺口接出。
+5. ✅ **2026-09-11（本次任務）**：`Map_Camp`（露營區）—— 第一個**不從 BoundaryWall 缺口**、而是**從既有道路中段 T 字分岔**接出的區域場景。場地優先，角色「猜猜看」晚點做。
+6. spawn anchor 系統（多個出生點、由門指定 spawn id）；貓／載具也能用門。
+7. 抽 `Core.unity`（Player/Cat/Buggy/相機/HUD/managers），本地變 `Map_Bendi`，空島變 `Map_SkyIsland`。
+8. 每區域各自 NavMeshSurface + Lighting Settings；記憶體 profiling。

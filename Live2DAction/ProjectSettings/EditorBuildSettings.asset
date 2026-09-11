@@ -17,5 +17,8 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/_Project/Scenes/Map_Xianshi.unity
     guid: 240823b38e11eec4f8466b3bd62e671d
+  - enabled: 1
+    path: Assets/_Project/Scenes/Map_Camp.unity
+    guid: 993172bbe26f6644a824484081623df9
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0
