@@ -39,6 +39,14 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [SerializeField] private Color spearGlowColor = new Color(0.85f, 0.12f, 0.32f);    // crimson
         [SerializeField] private Color spearCoreColor = new Color(0.62f, 0.28f, 0.95f);    // void purple
 
+        [Header("魂刃劍氣 SoulBladeQi (續190→191, 重新生成魂類黑色刀刃劍氣的版本.mp4 → SoulBladeQi_Atlas.png)")]
+        [Tooltip("Live2DAction/VFX/SlashFlipbook material with SoulBladeQi_Atlas.png assigned. Wired by 'Setup Yuanpei Soul Blade Qi'. Falls back to a tinted primitive if unset.")]
+        [SerializeField] private Material soulBladeFlipbookMaterial;
+        [SerializeField] private int soulBladeFlipbookCols = 12;
+        [SerializeField] private int soulBladeFlipbookRows = 6;
+        [SerializeField] private int soulBladeFlipbookFrames = 72;
+        [SerializeField] private Color soulBladeGlowColor = new Color(0.60f, 0.32f, 0.95f);   // void purple
+
         private YuanpeiBoss _boss;
         private YuanpeiBossConfig _cfg;
         private readonly List<GameObject> _spawned = new List<GameObject>();
@@ -211,6 +219,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 case YuanpeiAttackId.ChargeCrush:     yield return ChargeCrush(def, player); break;
                 case YuanpeiAttackId.OrbitDash:       yield return OrbitDash(def, player); break;
                 case YuanpeiAttackId.SpearVolley:     yield return SpearVolley(def, player); break;
+                case YuanpeiAttackId.SoulBladeQi:     yield return SoulBladeQi(def, player); break;
             }
 
             onPhase?.Invoke(Phase.Recovery);
@@ -440,6 +449,229 @@ namespace Live2DAction.AI.Boss.Yuanpei
             Destroy(core);
         }
 
+        // ---------------------------------------------------------------- 魂刃劍氣 SoulBladeQi（續190 → 續191 重做）
+        // 續191（使用者：「不要做成子彈型，而是做成一次性爆發，將特效不斷延伸拉長然後遠距離攻擊到玩家，
+        // 相當於我把長矛伸縮自如站在原地攻擊」）：**不是投射物**。boss 站在原地凝聚一柄「魂類黑刃」劍氣，
+        // 然後把它**朝玩家的方向不斷延伸拉長**（video-baked flipbook 卡片沿槍口→玩家的世界軸線一路撐長，
+        // 繞著那條軸線 billboard 面向攝影機 → 仿3D 的伸縮長矛）直到刺穿玩家所在的距離，尖端到位後劍氣**爆散**。
+        // 一次性：延伸中連續做一次線段命中判定（`RayHitsPlayer`），玩家往側邊走可以躲開這條線。
+        // 跟 SpearVolley（一連串小型緋紅長矛連射）、ProjectileBurst（光粒子兩波齊射）、FocusLaser（掃射光束）
+        // 區隔：這是「站樁、單發、伸縮長矛」的遠程壓迫。
+        private IEnumerator SoulBladeQi(YuanpeiAttackDef def, Transform player)
+        {
+            float extendSeconds = def.number1 > 0 ? def.number1 : 0.5f;
+            float bladeWidth    = def.number2 > 0 ? def.number2 : 2.6f;
+            float holdSeconds   = def.number3 > 0 ? def.number3 : 0.28f;
+            float waitMin       = def.number4 > 0 ? def.number4 : 1.0f;   // 續191c - random armed-hold before it locks + fires
+            float waitMax       = waitMin + 2.0f;                          //           (使用者：「隨機等待1~3秒才鎖定玩家位置發射」)
+            float hitRadius     = def.number5 > 0 ? def.number5 : 1.0f;
+            int jabs = Mathf.Max(1, def.count);
+            float maxReach = (def.maxRange > 0 ? def.maxRange : 24f) + 4f;
+
+            for (int j = 0; j < jabs; j++)
+            {
+                // 續191c - a body-mounted "arming" tell on the boss disc, THEN a random 1~3s hold
+                // where it sits loaded (NOT locked), THEN a sharp muzzle snap. Only AFTER the snap
+                // does it lock the player's live position and fire - so the exact release moment is
+                // unpredictable and a mobile player can still spoil the line.
+                float charge = j == 0 ? 0.6f : 0.35f;
+                float hold   = j == 0
+                    ? UnityEngine.Random.Range(waitMin, waitMax)
+                    : UnityEngine.Random.Range(0.4f, 1.0f);
+                yield return SoulBladeArmAndSnap(charge, hold);
+
+                // --- LOCK (now) + FIRE ---
+                Vector3 origin = projectileOrigin.position;
+                Vector3 aim = PlayerCenter(player);
+                Vector3 dir = (aim - origin).normalized;
+                float reach = Mathf.Min(Vector3.Distance(origin, aim) + 2.2f, maxReach);
+
+                var lanceGo = new GameObject("YuanpeiSoulBladeLance");
+                var lance = lanceGo.AddComponent<YuanpeiSoulBladeLance>();
+                lance.Configure(soulBladeFlipbookMaterial, soulBladeFlipbookCols, soulBladeFlipbookRows,
+                    soulBladeFlipbookFrames, projectileOrigin, dir, reach, bladeWidth,
+                    extendSeconds, holdSeconds, soulBladeGlowColor);
+                _spawned.Add(lanceGo);
+
+                // extend + one-shot line hit window - the tip skewers the player as it grows past them;
+                // step aside off the line to dodge.
+                bool struck = false;
+                float t = 0f;
+                float window = extendSeconds + holdSeconds;
+                while (t < window)
+                {
+                    t += Time.deltaTime;
+                    if (_boss != null) _boss.SuspendHover(0.3f);   // 站樁 - no hover bob while the lance is out
+                    float k = Mathf.Clamp01(t / Mathf.Max(0.05f, extendSeconds));
+                    float len = reach * (1f - (1f - k) * (1f - k));   // ease-out extension
+                    if (!struck && len > 1.5f && RayHitsPlayer(origin, dir, len, hitRadius, player))
+                    {
+                        DamagePlayer(player, def.healthDamage, dir);
+                        struck = true;
+                    }
+                    yield return null;
+                }
+
+                if (j + 1 < jabs) yield return new WaitForSeconds(0.18f);
+            }
+        }
+
+        // SoulBladeQi's「凝聚劍氣」telegraph (續191c). THREE beats, all bright additive (LaneMat =
+        // Blend One One, so it actually reads on the sunlit plaza):
+        //   A) charge (chargeSeconds) - a halo balloons around the BOSS DISC + motes spiral in from the
+        //      rim + the disc spins up: "元培boss身體上的準備發射預警".
+        //   B) armed hold (holdSeconds, random 1~3s from the caller) - the halo holds an ominous slow
+        //      pulse, a loaded core sits at the muzzle, the disc loosely yaws toward the player. NOT
+        //      locked - the fire moment is unknown to the player.
+        //   C) snap (~0.16s) - halo + motes rush to the muzzle, a white flash, light spikes. The
+        //      caller locks the player's position and fires the instant this returns.
+        private IEnumerator SoulBladeArmAndSnap(float chargeSeconds, float holdSeconds)
+        {
+            chargeSeconds = Mathf.Max(0.15f, chargeSeconds);
+            holdSeconds = Mathf.Max(0.1f, holdSeconds);
+            const float snapSeconds = 0.16f;
+            var mat = LaneMat();
+            var mpb = new MaterialPropertyBlock();
+
+            Transform disc = _boss != null ? _boss.VisualRoot : transform;
+            float discR = _boss != null ? Mathf.Max(2f, _boss.VisualBottomOffset()) : 3.5f;
+
+            // halo around the disc
+            var halo = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            halo.name = "YuanpeiSoulBladeHalo";
+            Destroy(halo.GetComponent<Collider>());
+            var haloR = halo.GetComponent<Renderer>();
+            haloR.sharedMaterial = mat;
+            haloR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _spawned.Add(halo);
+
+            // motes that spiral in from the disc rim
+            const int moteCount = 9;
+            var motes = new Transform[moteCount];
+            for (int i = 0; i < moteCount; i++)
+            {
+                var m = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                m.name = "SoulMote";
+                Destroy(m.GetComponent<Collider>());
+                var mr = m.GetComponent<Renderer>();
+                mr.sharedMaterial = mat;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                motes[i] = m.transform;
+                _spawned.Add(m);
+            }
+
+            var glowGo = new GameObject("SoulArmGlow");
+            var glow = glowGo.AddComponent<Light>();
+            glow.type = LightType.Point; glow.color = soulBladeGlowColor; glow.range = 8f; glow.shadows = LightShadows.None;
+            _spawned.Add(glowGo);
+
+            // ---- beat A: charge (halo balloons at the disc) ----
+            float t = 0f;
+            while (t < chargeSeconds)
+            {
+                t += Time.deltaTime;
+                if (_boss != null) _boss.SuspendHover(0.3f);   // 站樁 - steady muzzle for the whole cast
+                float k = Mathf.Clamp01(t / chargeSeconds);
+                float pulse = 1f + Mathf.Sin(t * 20f) * 0.15f;
+                Vector3 dc = disc != null ? disc.position : transform.position;
+                halo.transform.position = dc;
+                float hs = discR * Mathf.Lerp(0.6f, 1.7f, k) * pulse;
+                halo.transform.localScale = new Vector3(hs, hs, hs);
+                mpb.SetColor(BaseColorId, soulBladeGlowColor * (0.25f + 0.6f * k));
+                haloR.SetPropertyBlock(mpb);
+                MoveMotes(motes, mpb, dc, Mathf.Lerp(discR * 1.4f, discR * 0.4f, k), t, 0.22f);
+                glowGo.transform.position = dc;
+                glow.intensity = Mathf.Lerp(1f, 4.5f, k) * pulse;
+                if (disc != null) disc.Rotate(0f, (60f + 260f * k) * Time.deltaTime, 0f, Space.Self);
+                yield return null;
+            }
+
+            // ---- beat B: armed hold (random) - loaded, disc loosely tracks the player, NOT locked ----
+            var muzzleCore = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            muzzleCore.name = "SoulLoadedCore";
+            Destroy(muzzleCore.GetComponent<Collider>());
+            muzzleCore.transform.SetParent(projectileOrigin, false);
+            muzzleCore.transform.localPosition = Vector3.zero;
+            var mcR = muzzleCore.GetComponent<Renderer>();
+            mcR.sharedMaterial = mat;
+            mcR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _spawned.Add(muzzleCore);
+
+            t = 0f;
+            while (t < holdSeconds)
+            {
+                t += Time.deltaTime;
+                if (_boss != null) _boss.SuspendHover(0.3f);
+                float pulse = 1f + Mathf.Sin(t * 6f) * 0.25f;   // slow, ominous
+                Vector3 dc = disc != null ? disc.position : transform.position;
+                halo.transform.position = dc;
+                float hs = discR * 1.45f * pulse;
+                halo.transform.localScale = new Vector3(hs, hs, hs);
+                mpb.SetColor(BaseColorId, soulBladeGlowColor * (0.5f * pulse));
+                haloR.SetPropertyBlock(mpb);
+                MoveMotes(motes, mpb, dc, discR * 0.35f, t * 0.6f, 0.18f);
+                float mcs = 0.3f * pulse;
+                muzzleCore.transform.localScale = new Vector3(mcs, mcs, mcs);
+                mpb.SetColor(BaseColorId, Color.Lerp(soulBladeGlowColor, Color.white, 0.25f) * 1.8f);
+                mcR.SetPropertyBlock(mpb);
+                glowGo.transform.position = dc;
+                glow.intensity = 3f * pulse;
+                // disc keeps spinning; YuanpeiBoss.Update()'s own FaceTarget already yaws the boss
+                // toward the player during an attack, so no extra rotation here (that fought FaceTarget).
+                if (disc != null) disc.Rotate(0f, 120f * Time.deltaTime, 0f, Space.Self);
+                yield return null;
+            }
+
+            // ---- beat C: snap - halo + motes rush to the muzzle, white flash ----
+            Vector3 haloStart = halo.transform.position;
+            float haloStartScale = halo.transform.localScale.x;
+            t = 0f;
+            while (t < snapSeconds)
+            {
+                t += Time.deltaTime;
+                if (_boss != null) _boss.SuspendHover(0.3f);
+                float k = Mathf.Clamp01(t / snapSeconds);
+                Vector3 muzzle = projectileOrigin.position;
+                halo.transform.position = Vector3.Lerp(haloStart, muzzle, k * k);
+                float hs = Mathf.Lerp(haloStartScale, 0.2f, k);
+                halo.transform.localScale = new Vector3(hs, hs, hs);
+                mpb.SetColor(BaseColorId, Color.Lerp(soulBladeGlowColor, Color.white, k) * (1.5f + 4f * k));
+                haloR.SetPropertyBlock(mpb);
+                MoveMotes(motes, mpb, muzzle, Mathf.Lerp(discR * 0.3f, 0.05f, k), t * 3f, 0.12f);
+                float mcs = Mathf.Lerp(0.3f, 0.8f, k);
+                muzzleCore.transform.localScale = new Vector3(mcs, mcs, mcs);
+                mpb.SetColor(BaseColorId, Color.white * (2f + 5f * k));
+                mcR.SetPropertyBlock(mpb);
+                glowGo.transform.position = muzzle;
+                glow.intensity = Mathf.Lerp(3f, 8f, k);
+                yield return null;
+            }
+
+            Destroy(halo);
+            for (int i = 0; i < moteCount; i++) if (motes[i] != null) Destroy(motes[i].gameObject);
+            Destroy(muzzleCore);
+            Destroy(glowGo);
+        }
+
+        // shared mote animation for SoulBladeArmAndSnap's 3 beats - `count` motes orbiting `centre` at
+        // `radius`, tinted bright void-purple, size `size`.
+        private void MoveMotes(Transform[] motes, MaterialPropertyBlock mpb, Vector3 centre, float radius, float t, float size)
+        {
+            for (int i = 0; i < motes.Length; i++)
+            {
+                if (motes[i] == null) continue;
+                float ang = (i / (float)motes.Length) * Mathf.PI * 2f + t * 8f;
+                motes[i].position = centre + new Vector3(
+                    Mathf.Cos(ang) * radius,
+                    Mathf.Sin(ang * 1.7f) * radius * 0.4f,
+                    Mathf.Sin(ang) * radius);
+                motes[i].localScale = new Vector3(size, size, size);
+                var r = motes[i].GetComponent<Renderer>();
+                mpb.SetColor(BaseColorId, soulBladeGlowColor * 3.5f);
+                r.SetPropertyBlock(mpb);
+            }
+        }
+
         // ---------------------------------------------------------------- 下馬威 開場齊射（續183e→183h）
         // A one-shot "show of force" the boss fires the instant it enters combat (end of the intro).
         // ONE hard telegraph (boss DESCENDS + looms + camera shake), then THREE attack types on THREE
@@ -482,7 +714,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
             Vector3 Muzzle() => projectileOrigin != null ? projectileOrigin.position : transform.position;
 
             // --- 下馬威 telegraph: the disc DESCENDS + leans toward the player (looms over them),
-            //     spins up hard, 3 thick pulsing warn beams, rising camera shake, red screen pulses. ---
+            //     spins up hard, 3 thick pulsing warn beams, red screen pulses. NO camera shake here
+            //     (續191) - shake starts only when the streams launch. ---
             if (boss != null) boss.SuspendHover(tele + window + 1.4f);
             Vector3 bossStart = transform.position;
             Vector3 pcTele = PlayerCenter(player);
@@ -516,7 +749,8 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 float e = Mathf.SmoothStep(0f, 1f, k);
                 transform.position = Vector3.Lerp(bossStart, loomPos, e);   // descend + close in
                 if (tt >= nextFlash) { YuanpeiScreenFlash.Flash(0.16f + 0.3f * k, 0.14f, new Color(1f, 0.16f, 0.12f)); nextFlash = tt + 0.28f; }
-                shake?.Shake(0.04f + 0.14f * k, 0.2f);
+                // 續191 (使用者：「技能還沒射出時不要震動效果」) - NO camera shake during the telegraph;
+                // it only kicks in when the streams actually launch (below) + the impact punctuation.
                 if (vis != null)
                 {
                     vis.localScale = visBase * (1f + Mathf.Sin(tt * 18f) * 0.07f * Mathf.Clamp01(k + 0.25f));

@@ -458,6 +458,7 @@ MonoBehaviour:
   shortClashTimeScale: 0.55
   shortDownedHoldSeconds: 0.9
   shortGetUpSeconds: 0.7
+  allowEscSkip: 1
 --- !u!1 &275365321
 GameObject:
   m_ObjectHideFlags: 0
@@ -1263,6 +1264,7 @@ MonoBehaviour:
   hideGraceSeconds: 0.6
   showInteractionUI: 1
   promptMessage: "\u6309\u4E0B {KEY} \u96E2\u958B\u5143\u57F9\u5927\u5B78"
+  useLoadingScreen: 0
 --- !u!65 &671840270
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -2484,6 +2486,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1e6b5168139b7a34f83230eaefc490df, type: 2}
   - {fileID: 11400000, guid: dabbb6da1df202f4d921d101183465b4, type: 2}
   - {fileID: 11400000, guid: 3eeecb42346ab5c4b86f2c4bb2d8e6f5, type: 2}
+  - {fileID: 11400000, guid: 998490942b3ef0f4180e96a33c4458cc, type: 2}
   openingBarrageDef: {fileID: 11400000, guid: 76f3ee07ae819c2409883bee0e193b02, type: 2}
   playOpeningBarrage: 1
   losBlockers:
@@ -2526,6 +2529,11 @@ MonoBehaviour:
   spearProjectilePrefab: {fileID: 3253124986367353766, guid: 28bab10d03dd2a047804d1fb15a437be, type: 3}
   spearGlowColor: {r: 0.85, g: 0.12, b: 0.32, a: 1}
   spearCoreColor: {r: 0.62, g: 0.28, b: 0.95, a: 1}
+  soulBladeFlipbookMaterial: {fileID: 2100000, guid: ee26f8ca4a3bd244bb587b36f99463d2, type: 2}
+  soulBladeFlipbookCols: 12
+  soulBladeFlipbookRows: 6
+  soulBladeFlipbookFrames: 72
+  soulBladeGlowColor: {r: 0.6, g: 0.32, b: 0.95, a: 1}
 --- !u!114 &607562221226281427
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using Live2DAction.Combat;
 
 namespace Live2DAction.AI.Boss.Yuanpei
@@ -168,8 +169,16 @@ namespace Live2DAction.AI.Boss.Yuanpei
         [SerializeField] private float shortDownedHoldSeconds = 0.9f;
         [SerializeField] private float shortGetUpSeconds = 0.7f;
 
+        [Header("Skip")]
+        [Tooltip("續191 - hold nothing, just tap: the player can ESC out of the whole opening cinematic. " +
+                 "The boss/sky/player snap straight to the fight-start state.")]
+        [SerializeField] private bool allowEscSkip = true;
+
         public bool IsRunning { get; private set; }
         public YuanpeiIntroLength Length { get => length; set => length = value; }
+
+        // ground height captured at the top of RunBeats, used by the ESC skip to re-plant the player
+        private float _groundY;
 
         // ---- restore caches ----
         // 續183d - effective (length-preset-resolved) timing, set at the top of Play()
@@ -207,6 +216,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             _getUp      = shortV ? shortGetUpSeconds      : getUpSeconds;
 
             _cam = Camera.main;
+            _groundY = player.position.y;
             AutoFillLists(player);
             LockActors(player);
 
@@ -219,6 +229,14 @@ namespace Live2DAction.AI.Boss.Yuanpei
             IEnumerator body = RunBeats(player, arenaCenter, deadline);
             while (true)
             {
+                // 續191c - ESC skip is polled ONLY here, inside the cutscene's own beat loop, so it
+                // is live *only while the cutscene is running* and can't clash with a future global
+                // ESC binding (pause menu etc). Once Play() returns, nothing here reads ESC again.
+                if (allowEscSkip && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+                {
+                    SkipToFightStart(player, arenaCenter);
+                    break;
+                }
                 object cur = null;
                 try
                 {
@@ -245,6 +263,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private IEnumerator RunBeats(Transform player, Vector3 arenaCenter, float deadline)
         {
             float groundY = player.position.y;
+            _groundY = groundY;
             Vector3 bossStartPos = arenaCenter + Vector3.down * bossStartDepthBelowArena;
             Vector3 skyScale = boss != null && boss.VisualRoot != null ? boss.VisualRoot.localScale : Vector3.one;
             Vector3 bossStartScale = skyScale * bossStartScaleFraction;
@@ -492,6 +511,54 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 _cam.fieldOfView = Mathf.Lerp(_cam.fieldOfView, baseFov, k);
                 yield return null;
             }
+        }
+
+        // 續191 - ESC skip: jump straight to the state RunBeats' last beat would have left things in,
+        // so UnlockActors + YuanpeiEncounter's BeginEncounter(playIntro:false) pick up cleanly.
+        private void SkipToFightStart(Transform player, Vector3 arenaCenter)
+        {
+            Time.timeScale = 1f;
+
+            // sky/domain: straight to full night + resident domain intensity
+            if (domainVfx != null)
+            {
+                domainVfx.SetNightRise(1f);
+                domainVfx.SetIntensity(1f);
+            }
+
+            // boss: straight to the combat pose. SnapToCombatPose (also what BeginEncounter(playIntro:
+            // false) calls next) does position + shrunk visual scale + refreshes _arenaCenter from the
+            // param; SettleToHoverPose then also undoes the cutscene's accumulated disc spin/tilt
+            // (visualRoot.localRotation -> the authored upright orientation).
+            if (boss != null)
+            {
+                boss.SnapToCombatPose(arenaCenter);
+                boss.SettleToHoverPose();
+            }
+
+            // player: plant on the ground near the arena, facing the boss, out of any fall/leap state.
+            // CC off while we set the transform so an enabled controller can't depenetrate/fight it.
+            bool ccWasEnabled = _playerCC != null && _playerCC.enabled;
+            if (_playerCC != null) _playerCC.enabled = false;
+            Vector3 p = player.position;
+            Vector3 toArena = arenaCenter - p; toArena.y = 0f;
+            if (toArena.sqrMagnitude < 4f) p = arenaCenter - new Vector3(0f, 0f, 6f);   // was too close/on top
+            p.y = _groundY;
+            player.position = p;
+            Vector3 face = new Vector3(arenaCenter.x, 0f, arenaCenter.z) - new Vector3(p.x, 0f, p.z);
+            if (face.sqrMagnitude > 1e-4f) player.rotation = Quaternion.LookRotation(face.normalized, Vector3.up);
+            if (_playerCC != null) _playerCC.enabled = _playerCCWas || ccWasEnabled;
+            if (_playerAnim != null)
+            {
+                _playerAnim.speed = 1f;
+                _playerAnim.ResetTrigger("AttackComboSword");
+                _playerAnim.SetBool("Jump", false);
+                _playerAnim.SetBool("Grounded", true);
+                _playerAnim.SetFloat("Speed", 0f);
+                if (_playerAnim.HasState(0, Animator.StringToHash("Locomotion")))
+                    _playerAnim.CrossFade("Locomotion", 0.1f, 0);
+            }
+            if (_stance != null && _stance.IsStaggered) _stance.EndStagger();
         }
 
         // ---------------------------------------------------------------- helpers

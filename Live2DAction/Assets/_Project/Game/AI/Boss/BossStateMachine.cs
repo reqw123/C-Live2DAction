@@ -249,6 +249,69 @@ namespace Live2DAction.AI.Boss
         // this method only ever touches the stance bar, never BossState directly.
         public void AddPostureDamage(float amount) => stance?.AddPostureDamage(amount);
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // ---- dev-only hooks for BossAnimationDebugMode (F7) -------------------------------------
+        // 2026-09-06, user request ("把元培boss f8模式裡面的機制設計 用同樣形式修改武士boss的f7模式") -
+        // mirror YuanpeiAttackDebugMode (F8): while the debug tool owns the boss, its own AI stops
+        // deciding/moving (DebugDirectControl) and the tool fires real pool attacks on demand
+        // (DebugFireAttack), bypassing cooldown/range/angle/rest gates. The attack playout itself
+        // (UpdateAttack, hit windows, root motion) still runs through this FSM - only the DECISION
+        // states are frozen.
+        public System.Collections.Generic.IReadOnlyList<BossAttackDefinition> DebugAttackPool => normalAttackPool;
+
+        // When set, Update() skips the whole priority cascade + every decision state; the boss
+        // just holds in Idle (facing the target, zero velocity) unless a debug-fired attack is
+        // playing out.
+        public bool DebugDirectControl { get; set; }
+
+        // Retarget the boss at a debug dummy instead of the real player, so attacks aim there.
+        public Transform DebugTarget
+        {
+            get => target;
+            set { target = value; _targetCombat = value != null ? value.GetComponent<Live2DAction.Combat.PlayerCombat>() : null; }
+        }
+
+        // Move the leash "guard post" with a repositioned boss so exiting debug doesn't yank it home.
+        public void DebugSetHome(Vector3 pos, Quaternion rot) { _homePosition = pos; _homeRotation = rot; }
+        public Vector3 DebugHomePosition => _homePosition;
+
+        // The too-close kick circle radius (private AttackStandoffFloor's basis) - for range rings.
+        public float DebugStandoffFloor => AttackStandoffFloor;
+        public float DebugLeashRange => leashRange;
+
+        // Snap to Idle, drop any queued follow-up, clear the rest window.
+        public void DebugForceIdle()
+        {
+            _pendingDerivedAttack = null;
+            _globalRestUntil = -999f;
+            if (CurrentState != BossState.Idle && CurrentState != BossState.Dead) ChangeState(BossState.Idle);
+        }
+
+        // Fire a specific pool attack right now, past cooldown / repeat-limit / range / angle / rest.
+        public void DebugFireAttack(BossAttackDefinition attack)
+        {
+            if (attack == null) return;
+            _cooldownUntil.Remove(attack);
+            _lastUsedTime.Remove(attack);
+            _lastNormalAttack = null;
+            _lastNormalAttackConsecutiveCount = 0;
+            _globalRestUntil = -999f;
+            _sweepUsedThisCombo = true;   // one clean attack per keypress - no auto sweep-derivation
+            _pendingDerivedAttack = null;
+            BeginAttack(attack);
+        }
+
+        private static readonly BossState[] AttackPlayoutStates =
+        {
+            BossState.Attack, BossState.DodgeCounter, BossState.Breakdance,
+            BossState.LeapSlamWindup, BossState.LeapSlam,
+            BossState.UltimateReposition, BossState.UltimatePrepare, BossState.UltimateAttack,
+            BossState.Vanishing, BossState.DiveAttack,
+            BossState.HitReaction, BossState.PostureBroken,
+        };
+        private bool DebugIsPlayoutState => System.Array.IndexOf(AttackPlayoutStates, CurrentState) >= 0;
+#endif
+
         // ICharacterSpeedSource - lets CharacterAnimatorLink-equivalent drive a Locomotion blend
         // tree the same way it already does for Player/Enemy, if this boss's own Animator
         // Controller wires MovementSpeed through a blend tree instead of discrete clip states.
@@ -479,6 +542,28 @@ namespace Live2DAction.AI.Boss
         private void Update()
         {
             _stateTimer += Time.deltaTime;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (DebugDirectControl && CurrentState != BossState.Dead)
+            {
+                // BossAnimationDebugMode (F7) owns the boss: no cascade, no deciders, no leash.
+                // A debug-fired attack (and its own derived follow-ups) still plays out fully;
+                // otherwise hold in Idle facing the target.
+                if (DebugIsPlayoutState)
+                {
+                    RunCurrentState();
+                }
+                else
+                {
+                    if (CurrentState != BossState.Idle) ChangeState(BossState.Idle);
+                    _horizontalVelocity = Vector3.zero;
+                    FaceTarget(0.5f);
+                }
+                ApplyMotion();
+                WriteAnimatorParameters();
+                return;
+            }
+#endif
 
             UpdatePhaseLock();
             UpdatePostureOverride();

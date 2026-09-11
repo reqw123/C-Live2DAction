@@ -11,7 +11,7 @@
 - **常駐場景** `GreyboxTest.unity`：整個遊玩過程都在。包含 本地（Ground + BoundaryWall_*）、
   空島（SkyIsland_*、傳送門、中立者1~3、時間試煉）、以及所有跨地圖物件
   （Player / Cat / Buggy / 相機群 / CameraPossession / HUD Canvas / GameManager / ViewDirector /
-  BossIntro 管理物件 / DevTools / BossAnimationDebugMode）。`VehicleRoad` 也留在這裡當「往南有路」的常駐視覺連接。
+  BossIntro 管理物件 / DevTools / BossAttackDebugMode）。`VehicleRoad` 也留在這裡當「往南有路」的常駐視覺連接。
 - **區域場景**（按需 `LoadSceneAsync(Additive)` / `UnloadSceneAsync`）：
   | 場景 | 內容 | 錨點 | 面數 |
   | --- | --- | --- | --- |

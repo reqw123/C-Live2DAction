@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.InputSystem;
 using UnityEngine.Playables;
 
 namespace Live2DAction.Cutscene
@@ -57,6 +58,11 @@ namespace Live2DAction.Cutscene
                  "so the boss commits to the fight the instant the cutscene ends.")]
         [SerializeField] private UnityEvent onIntroComplete;
 
+        [Header("Skip")]
+        [Tooltip("續191 - tap ESC to skip the cutscene: the Timeline jumps to its end pose, then " +
+                 "control hands back and the fight starts exactly as it would have.")]
+        [SerializeField] private bool allowEscSkip = true;
+
         private bool _started;
         private bool _subscribed;
         private bool _finished;
@@ -97,10 +103,32 @@ namespace Live2DAction.Cutscene
 
         private void Update()
         {
+            // 續191c - ESC only skips WHILE the cutscene is actually running (_started && !_finished).
+            // Before the trigger fires or after control has been handed back, ESC is ignored here, so
+            // this can't clash with a future global ESC binding (pause menu etc).
+            if (allowEscSkip && _started && !_finished
+                && Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+            {
+                SkipIntro();
+                return;
+            }
+
             if (_failsafeArmed && Time.realtimeSinceStartupAsDouble >= _failsafeAt)
             {
                 RestoreControl();
             }
+        }
+
+        // 續191 - jump the Timeline to its final pose, then hand control back the normal way.
+        private void SkipIntro()
+        {
+            if (introTimeline != null && introTimeline.playableAsset != null)
+            {
+                introTimeline.time = introTimeline.duration;
+                introTimeline.Evaluate();      // apply the end-of-cutscene pose before stopping
+                introTimeline.Stop();          // raises 'stopped' -> OnIntroStopped -> RestoreControl
+            }
+            RestoreControl();                  // guarded by _finished, safe if Stop already fired it
         }
 
         private void OnIntroStopped(PlayableDirector _)

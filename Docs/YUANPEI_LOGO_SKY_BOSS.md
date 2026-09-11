@@ -5,7 +5,7 @@
 
 ## 一句話
 
-空中遠距法術型 Boss：升空保持射程、9 種招式逼玩家走位（追加94 續 119：MultiAoE 多重光爆已移除、含 3 種肉身衝撞變體；續 136 新增遠距離連續發射 SpearVolley/長矛型光彈）、玩家攻擊削 HP＋累積架勢 → 架勢滿 → 墜地 →
+空中遠距法術型 Boss：升空保持射程、10 種招式逼玩家走位（追加94 續 119：MultiAoE 多重光爆已移除、含 3 種肉身衝撞變體；續 136 新增遠距離連續發射 SpearVolley/長矛型光彈；續190 新增 SoulBladeQi/魂刃劍氣 —— 仿3D 影片 flipbook 飛劍，phase 2+）、玩家攻擊削 HP＋累積架勢 → 架勢滿 → 墜地 →
 5 秒 F 處決窗口 → 20~22% 最大 HP 傷害 →（未死）重新升空。**只有 HP 歸零才勝利。**
 
 ## 檔案
@@ -257,3 +257,61 @@ barrage 有觸發了。183f/g 的扇形+homing 把 27 顆彈散開又全彎回�
 ### 續 184 修:boss 戰結束相機沒回到玩家(勝利/失敗)
 
 收尾每條路徑都靠某個過場協程的最後一行 `camCtrl.enabled = true`,無保底:`Victory()` 全靠 `DeathDissolve` 末行(中間丟例外就卡死亡運鏡);ChargeCrush 秒殺靠 `Defeat()` 一行;`SceneTransitionRunner.Teleport()` 只 `SnapYawToTarget()` 沒 `cam.enabled = true`;玩家對 boss 的鎖定(`cameraDistanceMultiplier` 2.4)從未解除。修:①`SceneTransitionRunner.Teleport()` 加 `cam.enabled = true`(所有回程咽喉點)②新 `TargetLockController.ForceRelease()` ③新 `YuanpeiEncounter.HandCameraBackToPlayer()`(重開控制器 + snap yaw + 放鎖定),`Victory()`/`Defeat()` 各呼叫 ④新 `YuanpeiEncounter.RunGuarded()`,`Victory()` 用它包 `DeathDissolve` 使例外不中止交還。EditMode 338/338。
+
+## 魂刃劍氣 SoulBladeQi（2026-09-06，續190）
+
+使用者：「讓元培boss新增攻擊技能 `重新生成魂類黑色刀刃劍氣的版本.mp4` 仿3d」。攻擊池第 10 招，**進 `attackPool`**（跟 OpeningBarrage 不同，是排程器正常抽選）。
+
+**造型／仿3D**：boss 在身前凝聚一柄「魂類黑刃」劍氣（虛空紫、鋸齒火焰邊）→ 朝玩家飛擊 → 命中處爆散成放射狀紫色光刺。「仿3D」= 一張**永遠面向攝影機的 flipbook 卡片**在世界空間裡朝玩家飛行 + 短暫追蹤 + 透視縮放，讀起來像 3D 飛劍。與貓 R 大招「黑暗劍氣」同一支影片的重新生成版、同一套 `Live2DAction/VFX/SlashFlipbook` 做法；與 SpearVolley（一連串小型緋紅長矛、密集連射）、ProjectileBurst（光粒子兩波齊射、完全鎖定）刻意區隔為「少量、巨大、緩速、帶追蹤」的遠程壓力型態。
+
+**VFX pipeline**：`重新生成魂類黑色刀刃劍氣的版本.mp4`（1280×720/24fps/10s、純黑背景）→ ffmpeg 取單一 cycle 幀 48–119（成形→刀刃→爆散）、`drawbox` 塗掉右下角生成器四角星浮水印、luma-key（floor 40 / range 150）→ `Assets/_Project/VFX/Boss/SoulBladeQi/SoulBladeQi_Atlas.png`（12×6 / 72 幀、1920×540）。material `SoulBladeQiFlipbook.mat`（premult One/OneMinusSrcAlpha、Brightness 2.1）。ffmpeg 配方在 `YuanpeiSoulBladeSetup.cs` 檔頭。
+
+### 續191 重做 —— 不是子彈，是「站樁伸縮長矛」
+
+使用者：「不要做成子彈型，而是坐成一次性爆發，將特效不斷延伸拉長然後遠距離攻擊到玩家，相當於我把長矛伸縮自如站在原地攻擊」。續190 的 `YuanpeiProjectile` 飛劍版整個換掉。
+
+**造型**：boss 站在原地凝聚劍氣，然後把它**朝鎖定方向不斷延伸拉長**（ease-out）。伸縮長矛 = `Shaft`（一條細亮 additive 光桿，`Live2DAction/VFX/AdditiveUnlit`，槍口→刀頭下方）+ `Head`（**固定長度**的 flipbook 卡片騎在最前端尖點，不拉伸 → 鋸齒黑刃 art 不變形），整體繞劍氣軸線 billboard 面向攝影機。flipbook 用 material 的 `_MainTex` Tiling/Offset 逐格推（`SlashFlipbookURP` 有 `TRANSFORM_TEX` → plain MeshRenderer 不需 ParticleSystem）：延伸中播成形→刀刃幀，尖端到位後在 `holdSeconds` 內播爆散幀。
+
+**流程**（`YuanpeiAttacks.SoulBladeQi(def, player)` 協程，`switch` 第 10 case）：
+1. `Run()` 共用前搖 + `SoulBladeCoalesce`（槍口凝聚成尖點）。
+2. 依 `count` 連續刺（預設 1 = 一次性）：鎖 `PlayerCenter`、`dir`、`reach = min(dist + 2.2, maxRange + 4)`。
+3. 建 `YuanpeiSoulBladeLance`（純視覺）→ 延伸 `extendSeconds` + 停留 `holdSeconds`。
+4. **命中**：協程每幀 `RayHitsPlayer(origin, dir, currentLen, hitRadius, player)` 線段判定，延伸中連續檢查、命中一次；玩家往側邊離開這條線就閃過（同 FocusLaser）。非「特效存在就扣血」。
+
+**數值** 全在 `YuanpeiAttack_SoulBladeQi.asset`（規則 7，number 語意已改）：requiredPhase 2、energyCost 22、cd 8s、minRange **5** / maxRange **28**、`number1`=延伸時長 0.5s、`number2`=刀身寬 2.6m、`number3`=尖端到位後爆散時長 0.28s、`number5`=線段命中半徑 1.0m、`number4` 未用、count 1、healthDamage 46。`YuanpeiScheduler.Matches` `case SoulBladeQi: playerDistance >= 8f`。
+
+**選單 `Tools/Live2DAction/Setup Yuanpei Soul Blade Qi (魂刃劍氣)`**（`YuanpeiSoulBladeSetup.cs`）：atlas 匯入 + material + SO + 加進 pool + 掛 `soulBladeFlipbookMaterial`。可重複執行。
+
+**檔案**：`YuanpeiAttackDef.cs`（+enum、number 註解）、`YuanpeiScheduler.cs`、`YuanpeiAttacks.cs`（+`soulBladeFlipbook*` 欄位 +case +`SoulBladeQi`/`SoulBladeCoalesce`；刪 `BuildSoulBladeFlipbook`）、`Map_School.unity`、新 `YuanpeiSoulBladeLance.cs` / `YuanpeiSoulBladeSetup.cs` / `SoulBladeQi_Atlas.png` / `SoulBladeQiFlipbook.mat` / `YuanpeiAttack_SoulBladeQi.asset` / `Source/SoulBladeQiSource.mp4`。
+
+**驗證**：編譯無錯、選單跑成功。Play（失焦凍幀 → `EditorApplication.Step()` 手動推進）建 lance → shaft/head 沿軸線正確延伸、head 固定騎尖端、flipbook 逐格、billboard 正常；截圖確認鋸齒紫刃頭 + 光桿在延伸。**待對焦 Play**（F8 數字鍵 0）：延伸速度 / 刀身寬 / **shaft 亮度顏色（目前偏白偏淡）** / 爆散讀感 / 命中線寬。
+
+#### 續191b 修（Play 後）
+
+- **「我沒有在正式boss戰 看到凝聚劍氣」**：`SoulBladeCoalesce` 舊版是 plain lit sphere + `Tint`（emission 走 MPB，keyword 沒開 → 陽光廣場看不見）。重寫成 bright additive（`LaneMat` = `Live2DAction/VFX/AdditiveUnlit`）：脈動核心 + 7 顆 mote 螺旋收束 + 點光源；前搖 0.35→0.55s。`requiredPhase` 2→**1**（正式戰真的抽得到）。
+- coalesce 目前偏白（`_BaseColor` * 高倍率），要更紫就減 white-lerp。
+
+
+#### 續191b — 前搖不要震動
+
+使用者：「技能還沒射出時不要震動效果」。`RunOpeningBarrage` telegraph 迴圈裡每幀的 `shake?.Shake(0.04 + 0.14*k, 0.2)` 移除。震動只剩：streams 發射瞬間（`shake?.Shake(0.35, 0.4)`）+ 打完地面衝擊波標點（`shake?.Shake(0.3, 0.35)`）。
+
+#### 續191b — ESC 跳過開場動畫
+
+`YuanpeiIntroCinematic.Play()` 的 beat 迴圈查 `Keyboard.current.escapeKey` → `SkipToFightStart()`（timeScale 1、domain 切滿夜、`boss.SettleToHoverPose()`、玩家平放地面面向場地、清 fall/leap 動畫）→ `break` → `UnlockActors` → 照常 `BeginEncounter(playIntro:false)`。開關 `allowEscSkip`（預設 on）。武士 Timeline cutscene 的 `BossIntroManager` 同樣加了 ESC（`SkipIntro()`：`time=duration; Evaluate(); Stop()`）。
+
+#### 續191c — 準備發射預警 + 隨機 1~3s 才鎖定發射
+
+使用者：「凝聚劍氣 不要馬上丟出 先做一個元培boss身體上的準備發射預警，然後隨機等待1~3秒才鎖定玩家位置發射 增加趣味性」。`SoulBladeCoalesce` → `SoulBladeArmAndSnap(charge, hold, player)` 三拍：
+
+- **A 充能**（~0.6s）：additive halo 在 **boss 圓盤本體**上撐大（`discR` 由 `YuanpeiBoss.VisualBottomOffset()` 量）+ 9 顆 mote 從盤緣螺旋收進來 + 圓盤轉速拉高。
+- **B 待命 hold**：`Random.Range(number4, number4+2)` = **1~3s**。halo 陰森慢脈動、槍口 loaded core、圓盤**鬆散地**朝玩家轉（軟提示，不鎖定）。
+- **C snap**（0.16s）：halo + mote 衝向槍口 + 白閃。
+- **C 結束後**才 `PlayerCenter(player)` 鎖定 + 發射 lance。移動中的玩家仍可破壞這條線。
+
+`number4` = 最小待命秒數（預設 1.0）。SO `telegraphSeconds` 1.0→0.4、`windupSeconds` 0.2→0.1（真正前搖 = `SoulBladeArmAndSnap`）。
+
+#### 續191c — ESC 跳過只在開場動畫中有效（確認）
+
+本來就是：`YuanpeiIntroCinematic` 的 ESC 只在 `Play()` 的 beat 迴圈裡查（協程 = cutscene 進行中）；`BossIntroManager.Update()` 被 `_started && !_finished` 夾住。兩處加了註解防止日後搬到全域 Update。
+

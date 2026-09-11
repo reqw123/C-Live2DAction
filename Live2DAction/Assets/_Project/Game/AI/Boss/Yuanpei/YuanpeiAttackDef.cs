@@ -15,6 +15,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         OrbitDash,         // 肉身衝撞：繞玩家轉圈，某一瞬間突然直衝
         SpearVolley,       // 長矛型光彈：遠距離連續發射（續 136，Crimson Void Spear）
         OpeningBarrage,    // 下馬威：開戰瞬間 長矛＋雷射＋六連彈 三線齊射玩家左/中/右（續183e，不進 attackPool，由 YuanpeiBoss 腳本觸發）
+        SoulBladeQi,       // 魂刃劍氣：凝聚一柄魂類黑刃劍氣朝玩家飛擊，命中處爆開（重新生成魂類黑色刀刃劍氣的版本.mp4 → 仿3D flipbook）
     }
 
     // Per-attack data (spec §9, §14.1). Every timing/number lives here, not in code.
@@ -58,6 +59,12 @@ namespace Live2DAction.AI.Boss.Yuanpei
         // small enough all 3 still hit a stationary player. number5 = projectile speed. windupSeconds =
         // spacing between spears in the volley. count = 六連彈 orb count (長矛 volley = ceil(count/2)).
         // telegraphSeconds = 下馬威 wind-up, activeSeconds = total volley / beam window.
+        //
+        // SoulBladeQi (魂刃劍氣，續191 伸縮長矛，NOT a projectile): number1 = extend duration (s, the
+        // blade telescopes from 0 to reach over this), number2 = blade width (m), number3 = hold-at-
+        // full-extension duration (s, the burst plays over this), number4 = MIN armed-hold before it
+        // locks + fires (s; the boss sits loaded for a random number4 .. number4+2 s after the body
+        // charge - 續191c), number5 = line-hit radius (m). count = consecutive jabs (1 = one-shot).
         public float number1;   // meaning per attack - see YuanpeiAttacks.cs
         public float number2;
         public float number3;
