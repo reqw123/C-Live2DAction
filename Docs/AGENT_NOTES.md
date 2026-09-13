@@ -403,6 +403,192 @@ System.Type.GetType("MCPForUnity.Editor.Services.EditorStateCache, MCPForUnity.E
 
 ---
 
+## 露營區（Map_Camp）場景素材
+
+- 圍牆內部 x[-79,-21] z[-129,-71]，大門在北牆缺口 (-50,-71)，`猜猜看` NPC 站 (-50,-90) 面朝大門。
+- 2026-09-12 把 5 個已建好材質的 Meshy 素材（CampTent/CampCanopy/CampFenceTree/CampYellowTree/CampLawnMower）
+  ＋新匯入的 `摩托超載.glb`（→`CampMotorcycle`）擺進場景，細節/座標見 CHANGELOG 同日條目。
+- **用 `manage_gameobject(action=create, prefab_path=...)` 具現化 Meshy FBX 時的坑**：這批 FBX 原始結構是
+  根節點（scale=1）→ 跟檔名同名的子節點（`localScale=100`，把公尺級網格頂點吃掉的必要換算，跟「80x bone
+  scale」同一類 Meshy 匯出習慣）→ Mesh。但 `manage_gameobject` 的具現化會把整個階層拍扁成單一 GameObject
+  （只留 Transform+MeshFilter+MeshRenderer），子節點的 100 倍不見了。若照著具現化「之前」用完整階層
+  `renderer.bounds` 量出的巨大數字（~190 單位）去反推 scale，會小了 100 倍（幾公分，肉眼幾乎看不見）——
+  正確做法是具現化「之後」直接讀 `MeshFilter.sharedMesh.bounds`（已經是拍扁後的合理公尺級數字）。
+  **同時**具現化後 `MeshRenderer.sharedMaterial` 會指向 FBX 內嵌的預設材質（`Material.001`，URP/Lit 但貼圖
+  全空、灰色 0.8），不是資料夾裡已經做好貼圖的 `CampXxx.mat`，要手動 `execute_code` 重新指回去。
+  驗證擺放結果建議用 `manage_camera` 的 positioned screenshot（`view_position`/`view_target`），
+  這次 `manage_scene(scene_view_frame)` 對著拍扁後的具現化物件沒能正確框選/縮放。
+- **另一個坑：這批 Meshy FBX 是 Z-up，不是 Unity 的 Y-up**——跟 2026-09-11 `CampFloor`（露營區木頭地板）
+  踩到的是同一個問題（"量出網格用本地 Z 軸當『上』，需要 euler(270,0,0) 立平"），但一開始擺上面那 5 個
+  素材（帳篷/遮雨棚/柵欄樹/黃樹/除草機）時沒套用同一個修正，於是全部 `eulerAngles=(0,0,0)` 卻視覺上側躺
+  在地上。**單一角度截圖很容易誤判**（躺平的物體湊巧從某個角度看還是像那麼回事，這次因此走了一次冤枉路：
+  試了 `(270,0,0)` 後只看一個角度覺得「更扁更矮」就以為方向錯了改回 `(0,0,0)`，後來拿除草機驗證同一個
+  旋轉值——四個角度看起來幾乎一樣、輪子攤平、手把橫向伸出，一眼就能看出「這是躺平的特徵」——才確認
+  `(270,0,0)` 才是對的，問題出在旋轉後沒有重新用 `renderer.bounds.min.y` 校正貼地（不是旋轉方向錯）。
+  **診斷用 `manage_camera(batch="surround", view_target=<物件名>)`** 一次拿 6 面 contact sheet
+  （front/back/left/right/top/bird_eye）比逐一單角度截圖可靠很多。修正後這批素材同時也全部放大了
+  ~2～2.3 倍（圍牆高達 6m，原本的 scale 相對太小氣），細節與最終數值見 CHANGELOG 2026-09-12 續條目。
+- **`RenderSettings.skybox` 是全域單一值，不是逐場景的**——露營區同一天稍後又加了全景圖天空盒
+  （`Assets/_Project/Environment/Skyboxes/CampPanorama.exr` + `.mat`，`Skybox/Panoramic` shader），
+  直接設在 `Map_Camp` 自己的場景資料上，Edit 模式單獨開這個場景看起來完全正確，但 `Map_Camp` 實際
+  永遠是用 additive 疊加進常駐 `GreyboxTest`（見 `Docs/MAP_STREAMING.md`），Unity 不會因為多疊了一個
+  scene 就套用它存檔時的 RenderSettings——真正用 `SceneGate` 按 F 走一次才發現天空根本沒變。
+  修法：新增可重複使用的 `Assets/_Project/Game/World/RegionSkyboxOverride.cs`（`OnEnable` 存舊值換新的
+  `skyboxMaterial`＋`DynamicGI.UpdateEnvironment()`，`OnDisable`/`OnDestroy` 換回舊值），掛在該場景一個
+  物件上即可，不用動 `SceneGate`/`SceneTransitionRunner`。**驗證這類跨場景視覺設定，必須實際跑一次
+  Play 模式的場景轉換，只在 Editor 裡單獨打開該場景看不出這個問題。** 同時把 `CampWall_*` 這 5 個物件的
+  `Visual` 子物件（實際牆面 `MeshRenderer`）`SetActive(false)`，只留根物件的 `BoxCollider` 當看不見的
+  邊界——露營區外圍其實已經是常駐 `GreyboxTest` 的連續地形在撐著，拆牆後不會露空。
+- **使用者偏好「密集可探索」勝過「場地開闊」**——看到全景圖版本的露營區後，使用者說地本身有點太大了
+  （沒關係不用改地形），但要求把 4 個露營建築（帳篷/遮雨棚/柵欄樹/黃樹，不含已確認合適的除草機/摩托超載）
+  再放大兩倍、集中成一個聚落，讓「猜猜看」用第三人稱走進來、轉鏡頭時能近距離看到好幾個建築，不要「一眼
+  望去很空曠」。這次把 4 個建築的 scale 都乘 2、全部集中到「猜猜看」原本站的 (-50,-90) 附近半徑
+  ~15m 內（犧牲了原本柵欄樹/黃樹「框住大門入口」的設計，改成優先滿足這次的近距離探索需求）。
+  **驗證這類「空間感」問題不能只看空拍/俯視截圖**——用 `SceneTransitionRunner.Begin` 進場景＋
+  `CameraPossessionSwitcher.FocusGuessWho()` 切到他自己的第三人稱攝影機，站在原地轉 4 個方向截圖，
+  才能真的確認「轉頭有東西看」的效果成立。這是本專案第一次遇到「密度」而非「有沒有東西/擺對沒」的
+  美術指示，之後其他區域（學校/二次元/現世……）如果也有類似「太空曠」的回饋，可以套用同一套驗證方法。
+- **露營區第四輪：從開放全景場地逆轉回「環抱式中庭要塞」**——使用者貼了別的 AI（只看截圖、沒真實參數）
+  寫的需求文件，明講數字是猜的、要用本專案真實參數判斷。這次任務量體很大，先用 `EnterPlanMode` 分析＋
+  寫計畫核准後才動手（計畫檔案在 `~/.claude/plans/`，事後沒留在 repo 裡）。量到的真實比例：**玩家身體
+  實際高度只有 ≈1.28m**（排除翅膀/劍等裝飾，這是嬌小體型設計不是量錯，之後任何跟「玩家高度」相關的
+  比例計算都該用這個數字，不要用文件常見的 1.7~1.9 通用假設）、`GuessWhoCamera` 垂直 FOV=65°。
+  地板過曝的具體成因是 `CampFloor.mat` 的 `_BaseColor=(1,1,1,1)` 純白，且全域共用 `PostProcessingVolume`
+  完全沒有 Tonemapping/Exposure——修法是**只調材質色調 + 另外掛一個 `isGlobal=false` 的局部 Volume**
+  （靠 trigger BoxCollider 涵蓋露營區範圍），不動全域資產（會影響全遊戲每張地圖/Boss 戰）。
+  地板/圍牆從 60×60 縮到 38×38、圍牆重新啟用但降到 2.6m（人體比例矮牆），新增 `MainLodge`/`Workshop`/
+  入口門架都是純 Cube 灰盒（先驗證空間，不做細節模型）；上一輪放大到 6.8~7.7 倍的帳篷/遮雨棚/柵欄樹/
+  黃樹這次縮回 2.7~3.7 倍——兩輪設計前提不同（開放場地要跟真實照片遠景大樹比大小 vs. 緊湊要塞要人體
+  比例正確），不是自相矛盾。
+  **踩到的坑**：`ThirdPersonCameraController` 的攝影機朝向（`_yaw`/`_pitch` 私有欄位）不會跟著角色
+  `transform.rotation` 走，`enableAutoCenter=true` 還會在 ~0.8 秒後把用 reflection 硬塞的 `_yaw` 拉回去，
+  導致「轉 4 個方向截圖」透過這顆攝影機元件本身做不出穩定結果。改用 `manage_camera` 的 positioned
+  screenshot（自己指定 view_position/view_target，站在真實站立高度 ~1.6m）繞過這個問題；某個建築在
+  隨機掃描角度沒出現時，直接瞄準它的已知座標確認「它真的在那裡、只是沒轉到那個角度」，不要誤判成
+  擺錯位置或消失。
+- **「猜猜看」／`GuessWhoCamera` 必須留在場景根層級**——`CameraPossessionSwitcher.TryRelinkGuessWho()`
+  （`Assets/_Project/Game/Camera/CameraPossessionSwitcher.cs:81-97`）只用
+  `SceneManager.GetSceneAt(i).GetRootGameObjects()` 掃描每個已載入場景的**根層級**物件比對名字，不是
+  `GameObject.Find`（刻意避開 Find 找不到未啟用物件的問題）。上面那次露營區 Hierarchy 整理把「猜猜看」
+  重新掛到 `CentralYard` 底下，這支腳本第一行 `if (gw == null) return;` 直接提前結束——**同一個根因
+  一次炸兩個 bug**：G 鍵切不過去（`guessWhoCamera` 欄位永遠 null）＋操控 Player 時「猜猜看」仍受影響
+  （後面「依 Current 強制停用他自己元件」那段也在同一個 early return 之後，永遠不會執行），全程無
+  Console 錯誤，只有使用者實際玩過才發現。**之後對任何物件做 Hierarchy 重新歸類父物件之前，先搜尋
+  該物件名字有沒有腳本用 `GetRootGameObjects()` 之類的方式依賴根層級位置**，不能假設「换父物件只是
+  視覺分類」。
+- **`SkinnedMeshRenderer.bounds` 不可信任來反推貼地高度**——摩托超載（`CampMotorcycle`，glTF 骨架模型）
+  過去每次搬動都用 `renderer.bounds.min.y` 反推 Y，這個做法對靜態網格（帳篷/樹/地板）沒問題，但對這種
+  **骨架驅動的 SkinnedMeshRenderer 會悄悄回報錯誤的最低點**（跟 memory 記錄的「Meshy 角色 glb 常有
+  degenerate SkinnedMeshRenderer bounds」同一個根因），多輪搬動下來誤差累積到浮空 0.87m 才被使用者
+  抓到。修法：用 `SkinnedMeshRenderer.BakeMesh(mesh, true)` 烘焙目前姿勢的真實頂點去算最低點（這次
+  發現這個模型的骨架根節點本來就對齊在接地點，直接把 Y 設成地板頂面高度即可），並且**一定要截圖
+  肉眼確認**，不要只看數字打勾。
+- **「所有營地建築物放大 3 倍」踩到的兩個坑**：(1) 第一次只把場地從 38×38 擴大到 64×64 就直接把每個
+  建築乘 3，結果建築本身量體變成 15~27m 級，入口兩側柵欄樹/黃樹的緩衝空間不夠，實測進 Play 用「猜猜看」
+  攝影機一看，鏡頭直接卡進樹冠裡——**光看俯視截圖檢查「有沒有重疊」不夠可靠**，一定要用第一/第三人稱
+  實際站進去（尤其重生點/入口這種近距離位置）才看得出來。後來把場地再擴大到 80×80 才解決。
+  (2) 這次重進 Play 測試時，移動 `Player` 的 transform 完全沒讓畫面變化——因為
+  `CameraPossessionSwitcher.startPossessed=GuessWho`（2026-09-11 既有設計，開場自動先進「猜猜看」
+  視角），一進 Play 就自動把鏡頭焦點切到「猜猜看」身上，跟呼叫 `SceneTransitionRunner.Begin(...,
+  player,...)` 完全是兩回事，鏡頭跟拍的其實是站著不動的「猜猜看」。**之後在全新 Play session 裡驗證
+  運鏡效果，要嘛直接移動「猜猜看」本人，要嘛先呼叫 `FocusPlayer()` 明確切回 Player 視角，不要預設
+  移動 `Player` 就會反映在畫面上。**
+- **`SceneGate.cs` 過去寫死只認名字叫「Player」的角色**——`WalkToPlayer()`／`ScanForPlayer()`
+  都是比對 `t.name == "Player"`，導致「猜猜看」（根物件名字是「猜猜看」）走到**全遊戲任何一個
+  傳送門**都不會被偵測到、互動提示 UI 不會跳出來、按 F 沒反應，而且完全沒有 Console 錯誤。
+  2026-09-12 使用者回報「露營區裡的傳送門好像有兩個、其中一個無法對話」，查證後**沒有重複物件**
+  （`find_gameobjects` 確認 `Map_Camp` 只有一個 `SceneGate`），真正原因就是這個名字寫死的問題——因為
+  「猜猜看」現在是開場預設角色，這個潛藏很久的 bug 才第一次被踩到。修法：`SceneGate.cs` 新增
+  `PossessableRootNames = {"Player","Cat","猜猜看"}` 陣列，兩個方法改成比對清單而非單一字串，一次修好
+  全遊戲所有傳送門對他（以及 Cat）的互動。**之後如果專案再新增第四個可操控角色，記得也要把名字補進
+  這個陣列。**
+- **「猜猜看」腳邊常駐的粉紅色漩渦特效是 `UltimateReadyAura`（R 技能能量滿時的常駐光環），不是傳送門
+  也不是 bug**——這個特效在能量滿的時候會一直顯示，這幾輪露營區截圖幾乎張張都看得到。使用者要求拿掉
+  特效但保留機制時，是分別把 `UltimateReadyAura`／`UltimateActivationBurst`（兩個純視覺元件）在
+  「猜猜看」**自己這個實例**上 `enabled=false`，`UltimateEnergy`／`UltimateAbility`（能量與 R 鍵機制）
+  完全沒動，也沒有動到 Player／Cat 身上的同名元件。
+- **不要用「固定中心點、整體等比例擴大」的方式放大一個有外部固定錨點的區域**——露營區連續三輪
+  （38×38→64×64→80×80）都是保持中心 (-50,-100) 不變、只放大半邊長來塞下越變越大的建築，結果北側
+  入口牆的座標（= 中心 z − 半邊長）每次都跟著往北飄（-81→-68→-60），完全沒注意到 `CampGate_Enter`
+  （固定在常駐 `GreyboxTest`、玩家從外面按 F 進場的大門本體，`transform.position` 從頭到尾都沒動過，
+  在 z=-67）——飄到第三輪，營地自己的入口牆已經比這個固定大門還要**北邊 7m**，兩個大門距離只剩幾公尺，
+  互動範圍互相干擾，使用者就回報「傳送做了兩道，卡在中間」。修法是把露營區全部 24 個物件整體往南
+  平移 12m，讓入口牆落在固定大門南邊 5m 處，`CampGate_Enter.arrivalPosition` 也跟著平移同樣的量。
+  **教訓**：之後這類「入口對齊外部固定大門」的區域如果還要再擴大，不能整體等比例縮放，要先認定哪一邊
+  跟外部錨點對齊（這裡是北側入口），把那一邊的世界座標釘死不動，只往沒有外部依賴的那一側（這裡是
+  南側）擴張。
+- **`CampFloor`（視覺網格）跟「露營區」（實際碰撞方塊）是兩個獨立物件，不會自動連動**——露營區地板從
+  2026-09-11 建立時就是「隱形 `BoxCollider` 負責碰撞 + `CampFloor` 純視覺網格疊在上面」的分工（跟
+  yuanpei 校園建築同一套模式）。連續三輪改場地大小（38×38→64×64→80×80）都只記得改 `CampFloor` 的
+  `localScale`，完全忘了「露營區」這個真正負責碰撞的物件也要跟著改——它的 `localScale` 一路停在最初的
+  `(60,1,60)` 沒動，導致視覺地板早就長到 80×80，實際碰撞卻永遠只有 60×60，入口那一帶（超出碰撞範圍
+  但視覺上是實心地板）一踩就掉進虛空。**教訓**：以後只要改 `CampFloor` 的大小，一定要同時檢查並改
+  「露營區」，而且驗證方式要用「真的把角色從空中丟下去看會不會接住」，不能只看截圖覺得地板看起來是
+  滿的就當作沒事。
+- **`CameraPossessionSwitcher.Update()` 原本只防「猜猜看死亡」，沒有防「猜猜看的場景被卸載」**——
+  `guessWhoHealth != null && guessWhoHealth.IsDead` 這個判斷式，一旦 `guessWhoHealth` 本身變成 null
+  （不是死亡，是玩家操控他時走出露營區出口傳送門，`Map_Camp` 整個被卸載，他跟他的專屬攝影機一起被
+  摧毀）就直接短路跳過，沒有任何東西會自動切回 Player，於是變成沒有任何啟用中的攝影機，畫面顯示 Unity
+  內建的「No cameras rendering」。修法：在既有死亡檢查之後，另外加一段「`Current==GuessWho` 但
+  `guessWhoCamera` 或 `guessWhoHealth` 已經是 null」就自動 `FocusPlayer()`（不會誤觸發開場載入中的
+  正常空窗期，因為 `Current` 只有在 `TryRelinkGuessWho()` 成功連上 `guessWhoCamera` 之後才會被設成
+  `GuessWho`）。**教訓**：這類「可能會消失的被附身角色」保護，要同時防「狀態變了」（死亡）跟「參照本身
+  變成 null 了」（場景卸載/物件被摧毀）兩種情況，只寫 `ref != null && ref.SomeState` 會悄悄漏掉後者。
+
+## 猜猜看觸發元培 boss 戰 + 摩托超載可駕駛化（2026-09-12）
+
+- **讓猜猜看能真的打 boss、走完整個勝負流程，一次挖出 5 個真 bug**：觸發/鎖定本身是共用
+  `Live2DAction.Input.PossessableCharacter`（新檔案，`SceneGate`/`YuanpeiEncounter`/`YuanpeiBoss`/
+  `YuanpeiIntroCinematic` 四處各自的「只認 Player 名字」土砲邏輯收斂成一個）解決的。剩下 4 個都是
+  **這場戰鬥以前只被 Player 觸發過，沒人踩過的既有邏輯死角**：
+  1. 猜猜看在 `GameManager` 上**沒有 `RespawnController`**（Player/Enemy/中立者/屁孩王/Cat 各自有
+     一份），死亡後 `Health.ApplyDamage` 把他 `SetActive(false)` 就永遠沒人救回來了。補一份，
+     `showGameOverScreen=false`（比照 Cat，不是 Player 的「你菜完了」）。
+  2. `YuanpeiIntroCinematic.LockActors()` 會把 `CameraPossessionSwitcher` 整個關掉，這個元件的
+     `OnDisable()` 只要 `Current != Player` 就強制切回 Player——這條保險以前從沒被踩到過（一直是
+     Player 觸發），第一次 `Current==GuessWho` 時整個開場動畫鏡頭瞬間跳走、之後也回不去。修法：
+     乾脆不要在開場動畫期間關掉這個元件（它 Update() 沒有東西真的需要停下來）。
+  3. `CameraPossessionSwitcher` 「猜猜看死亡自動切回 Player」的保護，套用在**由 `YuanpeiEncounter`
+     主導的戰鬥**裡會在血量歸零瞬間就把鏡頭搶走（Player 可能站在完全無關的地方），看不到死亡/復活/
+     傳送整個過程。新增 `SuppressDeathAutoFallback`，開戰時設 true、`Victory()`/`Defeat()`
+     **兩條路徑都要**在 `HandControlBackToPlayer()` 後設回 false（漏掉哪一條，贏/輸那條路徑之後
+     Cat/猜猜看的日常死亡保護就會永久失效）。
+  4. `Map_Camp`（x[-90.5,-9.5] z[-152.5,-69.5]，開場常駐不卸載）跟 `Map_School`
+     （x[-31,31] z[-146,-83.5]，走 `SchoolGate` 才 additive 疊上）地皮在 x[-31,-10] 這條 21.5m 寬帶
+     完全重疊，只有兩者同時載入才看得到——boss 觸發線剛好在附近。使用者選擇「縮小露營區東側」
+     （`CampWall_East` x=-10→x=-36，留 5m 緩衝），不是整塊搬家。
+  - 用真實 Play 模式（讓猜猜看真的走過觸發線，不是直接呼叫 `StartEncounter`）測過 Defeat 路徑：
+    下馬威齊射正確打中猜猜看、死亡→5 秒後正確復活滿血、G 切得回去。**Victory（贏）路徑的死亡震動/
+    碎裂演出還沒測過**（Editor 反覆拿不到真正的 OS 焦點，Play 模式卡在第 2 幀）。
+- **跨場景的 `[SerializeField]` 參照存不進場景檔**——`CameraPossessionSwitcher`（常駐
+  `GreyboxTest`）跟這台摩托車（`Map_Camp`）不同場景，Inspector 裡指定、`ApplyModifiedProperties`、
+  存檔，看起來都正常，**但關掉場景重新載入後全部變回 null**——Unity 根本不會把跨場景物件參照序列化
+  進任一個場景檔，Editor session 內「看起來有效」只是還沒重新載入而已。跟
+  `CameraPossessionSwitcher.guessWhoCamera` 當初踩的是同一個坑。修法：不要標 `[SerializeField]`，
+  改成執行期用 `FindFirstObjectByType`/掃描已載入場景根物件名字解析（`Awake()` 存一次，
+  `Update()`/`LateUpdate()` 發現還是 null 就重試）。
+- **摩托超載可駕駛化**：新增獨立腳本 `IntegratedRiderVehicleEntry.cs`，沒有擴充既有 buggy 的
+  `VehicleEntrySystem`（那支腳本的雙座/部分身體隱藏是專門配合「看得到人坐進車體」設計的，這台車
+  網格本身就內建了騎士+雜物，硬套雙座系統風險比另開一支高）。F 鍵解析「目前操控的角色」
+  （Player/Cat/猜猜看）上車：整個人隱形＋停用控制腳本、reparent 進車身、切到剛性掛載的「行車
+  紀錄器」攝影機（純 `Camera` 子物件，無任何跟隨/彈簧邏輯）；physics 沿用 buggy 的
+  `VehicleController`（4 顆 `WheelCollider` 假裝兩顆輪子，故意比視覺車身寬一點增加側傾穩定性，
+  反正是純物理不渲染看不出來）。下車時 unparent 用 `SetParent(null)` 只會留在物件目前所在場景
+  （這台車在 `Map_Camp`），**沒有自動搬回騎士原本的場景**，得用 `SceneManager.
+  MoveGameObjectToScene` 顯式搬回去，不然騎士會被靜靜移進 `Map_Camp`、之後場景一卸載就被摧毀
+  （跟猜猜看之前住 `Map_Camp` 裡被摧毀是同一個坑）。**物理調校數值（輪子位置/半徑/懸吊/扭力）全部
+  是估的，還沒有真正 Play 模式測過**，需要使用者實際上車開開看再回饋。
+
+## 摩托超載 bug 修復 + 露營區續擺 + 小牛搬運車匯入（2026-09-12 續）
+
+- **腳本用程式加上去的 MonoBehaviour 預設 `enabled=true`**——`IntegratedRiderVehicleEntry` 只在按 F 上下車時切換 `VehicleController.enabled`，沒有在 `Awake()` 明確設初始值為 `false`，導致場景一載入車子就在讀 WASD 自己亂動（跟角色走路同一組鍵）。**教訓**：任何「應該保持關閉直到被啟動」的元件（尤其是直接讀 `Keyboard.current` 這種全域輸入的），初始 OFF 狀態要在 `Awake()` 明確設，不能只在切換事件（上下車）處理，會漏掉「場景載入到第一次真正切換之間」這段空窗期。
+- **判斷剛匯入/剛放大物件的正確旋轉，鏡頭要拉遠、對準 `Renderer.bounds.center`**——匯入「小牛搬運車」時貼近巨大物體拍照，把正確的旋轉（FBX 原生的 `(270,0,0)`）連續誤判成錯的三次（試了 0°/90°/180° 全部更差），拉遠鏡頭＋對準當下重新讀出的 bounds 中心才發現原本就是對的。跟 [[oblique-screenshot-perspective-misleads-position-judgment]] 是同一類陷阱。
+- **Play 模式手動擺的位置不會自動存檔**——使用者兩次在 Play 模式親自把猜猜看/摩托超載拖到想要的位置，都需要我讀出 Play 模式當下的即時座標、退出 Play 後手動套回編輯模式的正式場景物件再存檔，否則退出 Play 時 Unity 會把這些物件還原回存檔前的狀態，使用者的擺放全部消失。
+- **柵欄樹放大 2 倍貼牆**：只加 Y 軸（Unity Euler 是 ZXY 外部合成順序，Y 分量繞真正世界垂直軸轉，不受既有 X=270 的 Z-up 修正影響），放大後用當下重新算出的 bounds 校正貼地高度，X 位置也要重新置中到目標牆段範圍內（放大到 ~30m 見方後，原本的 X 會讓它伸出大門缺口）。
+- **移除 `MainLodge_*`／`Workshop_*` 灰盒佔位建築**（一直是純 Cube + 灰色 `Lit` 材質，「環抱式中庭要塞」那輪說好先驗證空間、之後換真模型，一直沒換）。
+- **匯入 Meshy FBX 時，貼圖 sRGB 旗標預設全部是 `true`**——法線/金屬/粗糙度三張要手動改成 `sRGB=false`（法線圖另設 `textureType=NormalMap`），只有 diffuse 該留 `true`。仿照既有 Meshy 材質的做法（`_BaseMap`+`_BumpMap`+固定 `_Metallic`/`_Smoothness` 純量，不接 metallic/roughness 貼圖——URP Lit 沒有獨立的粗糙度貼圖欄位，要接上得先把兩張圖打包成一張 `_MetallicGlossMap`，這次沒做）建材質。
+- **「必須超大」跟「營地本身空間有限」會直接衝突**——小牛搬運車要求做到「全部建築物裡最大」+「猜猜看初始位置看得到」，反推的目標尺寸（~48m）已經接近營地本身的總寬度（54m），貼著遮雨棚放的結果是有一大截（~43m）伸出西側圍牆外。這種情況沒有兩全其美的擺法，選擇忠於「超大」而不是遷就圍牆範圍，明確跟使用者說清楚這個取捨，讓他決定要不要接受。
+
 ## 維護
 
 這份檔案是 `~/.claude/projects/C--Live2DAction/memory/` 的版控化副本。

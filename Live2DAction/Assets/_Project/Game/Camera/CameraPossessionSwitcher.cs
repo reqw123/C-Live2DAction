@@ -69,12 +69,14 @@ namespace Live2DAction.CameraSystem
         // while possessed.
         [SerializeField] private Health guessWhoHealth;
 
-        // 2026-09-11 follow-up: 猜猜看 moved to stand in 露營區 (Map_Camp.unity, additive - only
-        // loaded while the player is physically at the camp), so guessWhoCamera/guessWhoControl/
-        // guessWhoHealth above go null (destroyed, not just unassigned) every time that scene
-        // unloads and must be found again once it streams back in - a plain serialized reference
-        // captured once wouldn't survive the first unload/reload cycle. Throttled scan (once a
-        // second while unresolved) rather than every frame; costs nothing once found.
+        // 2026-09-11 follow-up: these are looked up at runtime rather than wired as a plain
+        // serialized reference because 猜猜看 didn't exist yet the first time this component's own
+        // fields were saved (he was added to 露營區/Map_Camp afterward). 2026-09-12: he and
+        // GuessWhoCamera are now permanent residents of this persistent scene (moved out of
+        // Map_Camp specifically so leaving the camp no longer destroys him - see Start() above),
+        // so relinking is effectively a one-time bootstrap now rather than something that keeps
+        // re-happening across every camp unload/reload. Kept as a throttled scan (once a second
+        // while unresolved) rather than every frame regardless; costs nothing once found.
         [SerializeField] private float guessWhoRelinkIntervalSeconds = 1f;
         private float _nextGuessWhoRelinkScan;
 
@@ -143,23 +145,45 @@ namespace Live2DAction.CameraSystem
         // Optional / null-safe.
         [SerializeField] private Health catHealth;
 
+        // 2026-09-12, user report ("發現猜猜看被元培boss壓死後 攝影機視角會回到player") - a scripted
+        // fight (YuanpeiEncounter) owns showing its possessed fighter's own death and revival start
+        // to finish, then explicitly calls FocusPlayer()/FocusGuessWho() itself once it knows who
+        // actually fought (see HandControlBackToPlayer there). The plain Health.IsDead auto-fallback
+        // below fires the instant IsDead flips - before that encounter's own Defeat() coroutine gets
+        // to do anything - yanking the view to Player (who could be standing anywhere, e.g. still
+        // back at 露營區) mid-fight instead of staying on 猜猜看 through his own death beat like
+        // Player's own death already does. Was never a problem for the auto-fallback's original
+        // casual-wander use case (Cat dying to a stray hazard with nothing else watching the
+        // moment), only once a scripted encounter needed to own that moment itself. Set true for the
+        // duration of such an encounter; the auto-fallback resumes for ordinary (non-scripted)
+        // deaths regardless.
+        public bool SuppressDeathAutoFallback { get; set; }
+
         public Possessed Current { get; private set; } = Possessed.Player;
 
         private bool _applied;
 
-        [Tooltip("Scene 猜猜看 lives in (additive, not loaded by default) - only consulted when " +
-                 "startPossessed is GuessWho, to load it before the game can start possessing him.")]
+        [Tooltip("露營區's scene - loaded (additive) at game start so his home is visually present " +
+                 "when startPossessed is GuessWho. 2026-09-12: he himself is now a persistent " +
+                 "GreyboxTest resident (see below), not scoped to this scene - loading it here is " +
+                 "just so the camp exists around him at boot, same as any other region.")]
         [SerializeField] private string guessWhoHomeSceneName = "Map_Camp";
 
         private void Start()
         {
             if (startPossessed == Possessed.GuessWho)
             {
-                // 2026-09-11, user request ("我希望現在進入遊戲都從 g視角開始") - 猜猜看 only exists in
-                // Map_Camp (additive, not part of the normal single-scene start), so starting
-                // possessed as him means loading that scene first. A synchronous Apply() here
-                // would find nothing (TryRelinkGuessWho only scans ALREADY loaded scenes) and
-                // leave both playerCamera and guessWhoCamera off - no active camera at all.
+                // 2026-09-11, user request ("我希望現在進入遊戲都從 g視角開始"). 2026-09-12 update:
+                // 猜猜看 and GuessWhoCamera used to live inside Map_Camp and get destroyed whenever
+                // it unloaded (walking out the exit gate while possessing him left zero active
+                // cameras - see the null-check a bit below). User request: let him leave the camp
+                // for real, camera following, like Player/Cat. Fix was moving both his GameObject
+                // and GuessWhoCamera permanently into this persistent scene
+                // (Assets/_Project/Scenes/GreyboxTest.unity) - they're no longer Map_Camp-scoped at
+                // all, just start out positioned inside its world-space footprint. Camp still gets
+                // loaded here so the environment is visually present at boot; a synchronous Apply()
+                // would otherwise find nothing yet since his components' Awake/Start hasn't run
+                // before the scene streams in.
                 StartCoroutine(LoadCampAndPossessGuessWho());
             }
             else
@@ -211,13 +235,33 @@ namespace Live2DAction.CameraSystem
                 TryRelinkGuessWho();
             }
 
-            // Cat/猜猜看 died while possessed -> hand control/view back to the player.
-            if (Current == Possessed.Cat && catHealth != null && catHealth.IsDead)
+            // Cat/猜猜看 died while possessed -> hand control/view back to the player. Skipped while
+            // a scripted encounter is showing that death itself - see SuppressDeathAutoFallback.
+            if (!SuppressDeathAutoFallback)
             {
-                FocusPlayer();
-                return;
+                if (Current == Possessed.Cat && catHealth != null && catHealth.IsDead)
+                {
+                    FocusPlayer();
+                    return;
+                }
+                if (Current == Possessed.GuessWho && guessWhoHealth != null && guessWhoHealth.IsDead)
+                {
+                    FocusPlayer();
+                    return;
+                }
             }
-            if (Current == Possessed.GuessWho && guessWhoHealth != null && guessWhoHealth.IsDead)
+
+            // 2026-09-12, user report ("跟傳送互動後變成[No cameras rendering]") - back when 猜猜看
+            // lived inside Map_Camp, leaving via CampGate_Exit unloaded that scene and destroyed
+            // guessWhoCamera/guessWhoControl/guessWhoHealth out from under us. The IsDead check
+            // above couldn't catch it - guessWhoHealth was null, not dead, so it short-circuited
+            // false and nothing fell back to Player. Fixed properly the same day by making him a
+            // permanent GreyboxTest resident (see Start()'s comment) so leaving the camp no longer
+            // destroys him at all - this check is now a defensive fallback for the unexpected case
+            // (e.g. he gets destroyed some other way) rather than something that fires in normal
+            // play. Current==GuessWho only happens after a successful relink left guessWhoCamera
+            // non-null, so seeing it null here is never a startup race.
+            if (Current == Possessed.GuessWho && (guessWhoCamera == null || guessWhoHealth == null))
             {
                 FocusPlayer();
                 return;

@@ -110,9 +110,23 @@ namespace Live2DAction.AI.Boss.Yuanpei
             "Live2DAction.Combat.PlayerGuard",
             "Live2DAction.Combat.ExecutionAbility",
         };
+        // 2026-09-12 - CameraPossessionSwitcher USED to be in this list too, but its own
+        // OnDisable() forces an immediate snap-to-Player whenever it's disabled while someone else
+        // is possessed (a defensive "component was torn down mid-swap" guard - see its own
+        // comment). Every cutscene run before 猜猜看 could trigger this fight had Current==Player
+        // already, so that guard was a no-op and nobody noticed LockActors' blanket `.enabled =
+        // false` was quietly relying on it staying inert. The first time Current==GuessWho, this
+        // fired for real: the immediate disable snapped the view to Player's camera for the WHOLE
+        // cutscene (not just after it), because SetActiveSafe(guessWhoCamera, false) turns off the
+        // very camera Play() is driving via SetCam() every frame, and the newly-activated
+        // playerCamera is never touched by any of that math. Restoring Current afterward (see
+        // _switcher/_switcherWasCurrent below) only fixed the tail end, not this. Simplest correct
+        // fix: never disable it in the first place - nothing in CameraPossessionSwitcher.Update()
+        // needs to stop running during the cutscene (G/C presses would be a harmless no-op here
+        // since k_PlayerControlTypes already holds the actual control scripts inert), so leaving it
+        // enabled avoids the whole class of problem instead of trying to out-guess its side effects.
         static readonly string[] k_CameraControlTypes =
         {
-            "Live2DAction.CameraSystem.CameraPossessionSwitcher",
             "Live2DAction.CameraSystem.ViewFocusDirector",
         };
         private System.Collections.Generic.List<Behaviour> _resolvedControls;
@@ -198,6 +212,21 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private Behaviour _bossWas;
         private float _prevTimeScale = 1f;
         private StancePoise _stance;
+
+        // 2026-09-12, real bug found once 猜猜看 could trigger this fight (user: "一旦猜猜看觸發boss開場
+        // 動畫 攝影機視角會瞬間回到player 然後視角永遠回不去"). CameraPossessionSwitcher is one of the
+        // k_CameraControlTypes LockActors blanket-disables for the cutscene's duration - fine for
+        // every possession this cutscene had ever run under before (Player), because
+        // CameraPossessionSwitcher.OnDisable() only forces a snap-to-Player when Current != Player,
+        // which was never true. The instant 猜猜看 could reach this fight, LockActors' `.enabled =
+        // false` on the switcher fired that OnDisable() for real mid-cutscene - an immediate,
+        // unwanted possession change - and UnlockActors' `.enabled = true` afterward only resumes
+        // its Update() loop, it doesn't undo what OnDisable() already did, so Current stayed Player
+        // forever. Capture the real Current before disabling it and explicitly re-apply it after
+        // re-enabling, instead of trusting the component's own re-enable to restore state it never
+        // owned restoring in the first place.
+        private Live2DAction.CameraSystem.CameraPossessionSwitcher _switcher;
+        private Live2DAction.CameraSystem.CameraPossessionSwitcher.Possessed _switcherWasCurrent;
 
         // -----------------------------------------------------------------------------------------
 
@@ -610,14 +639,22 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (_cam != null)
                 _camController = _cam.GetComponent(typeof(Live2DAction.CameraSystem.ThirdPersonCameraController)) as Behaviour;
 
+            // 2026-09-12 (user: "讓猜猜看也能觸發元培boss") - was hardcoded to "Player" only; walking
+            // up from a non-"Player" possessed character (猜猜看, or a vehicle-seated Cat) with no
+            // "Player"-named ancestor used to run off the top of the hierarchy to null and only
+            // survive via the `root == null` fallback below - harmless by accident, not by design.
             Transform root = player;
-            while (root != null && root.name != "Player") root = root.parent;
+            while (root != null && !Live2DAction.Input.PossessableCharacter.IsPossessableRoot(root.name)) root = root.parent;
             if (root == null) root = player;
             _playerCC = root.GetComponent<CharacterController>();
             _playerAnim = root.GetComponentInChildren<Animator>();
             _stance = root.GetComponentInChildren<StancePoise>(true);   // 續182 - force the posture-break kneel on landing
             if (boss == null) boss = FindFirstObjectByType<YuanpeiBoss>();
             if (domainVfx == null) domainVfx = FindFirstObjectByType<BossDomainScreenVFX>();
+
+            // capture BEFORE LockActors disables it - see this field's own comment for why.
+            _switcher = FindFirstObjectByType<Live2DAction.CameraSystem.CameraPossessionSwitcher>();
+            _switcherWasCurrent = _switcher != null ? _switcher.Current : Live2DAction.CameraSystem.CameraPossessionSwitcher.Possessed.Player;
 
             // resolve the control scripts by type at runtime (they're in a different scene, so they
             // can't be serialized here). Inspector `playerControlScripts` is merged on top as extras.
@@ -711,6 +748,19 @@ namespace Live2DAction.AI.Boss.Yuanpei
 
             if (_playerCC != null) _playerCC.enabled = _playerCCWas;
             if (_bossWas != null) _bossWas.enabled = true;   // YuanpeiEncounter re-drives it via BeginEncounter next
+
+            // re-assert whoever was actually possessed - re-enabling the switcher above only resumes
+            // its Update(), it does NOT undo the snap-to-Player its own OnDisable() may have forced
+            // the instant LockActors disabled it (see _switcher's field comment).
+            if (_switcher != null)
+            {
+                switch (_switcherWasCurrent)
+                {
+                    case Live2DAction.CameraSystem.CameraPossessionSwitcher.Possessed.Cat: _switcher.FocusCat(); break;
+                    case Live2DAction.CameraSystem.CameraPossessionSwitcher.Possessed.GuessWho: _switcher.FocusGuessWho(); break;
+                    default: _switcher.FocusPlayer(); break;
+                }
+            }
 
             if (_camController != null)
             {

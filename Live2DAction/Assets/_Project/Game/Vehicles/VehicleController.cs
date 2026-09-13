@@ -38,6 +38,18 @@ namespace Live2DAction.Vehicles
         [Header("Drive type - switchable in Inspector (spec 四)")]
         [SerializeField] private VehicleDriveType driveType = VehicleDriveType.AWD;
 
+        // 2026-09-13, user request (CampGardenHauler specifically: "前後移動控制又顛倒了 請只調整w/s
+        // 移動") - the hauler's driving camera ended up mounted at the FRONT of the body looking back
+        // (the user's own explicit, confirmed choice - see MotorcycleFlyOverHaulerCutscene/
+        // IntegratedRiderVehicleEntry session history), so driving in the vehicle's real forward
+        // direction (+Z, unchanged - see the wheel/nose-alignment fixes earlier this session) now
+        // visually moves TOWARD that camera instead of away from it, reading as "W drives backward".
+        // Rather than touch the camera again (explicitly asked not to) or the shared forward-axis
+        // convention every other vehicle relies on, this flag swaps which key means which THROTTLE
+        // direction for just this one instance - off by default so buggy/motorcycle are untouched.
+        [Tooltip("Swap W/S throttle direction (S accelerates forward, W reverses) without touching which physical direction is 'forward' for anything else - steering, transform.forward, camera setup all stay exactly as they are. For a vehicle whose driving camera ended up mounted facing backward relative to its own travel direction.")]
+        [SerializeField] private bool invertThrottleInput = false;
+
         [Header("Motor / brake torque")]
         [SerializeField] private float motorTorque = 3500f;
         [SerializeField] private float reverseTorque = 2200f;
@@ -313,7 +325,7 @@ namespace Live2DAction.Vehicles
             float throttle = 0f;
             if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) throttle += 1f;
             if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) throttle -= 1f;
-            _throttleInput = throttle;
+            _throttleInput = invertThrottleInput ? -throttle : throttle;
 
             float steer = 0f;
             if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed) steer -= 1f;

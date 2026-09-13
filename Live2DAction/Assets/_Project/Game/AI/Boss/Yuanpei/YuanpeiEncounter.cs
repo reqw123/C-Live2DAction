@@ -76,12 +76,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (c != null) c.isTrigger = true;
         }
 
+        private Live2DAction.CameraSystem.CameraPossessionSwitcher _switcher;
+
         private void Awake()
         {
             if (boss == null) boss = FindFirstObjectByType<YuanpeiBoss>();
             if (hud == null && boss != null) hud = boss.GetComponent<YuanpeiBossHUD>();
             if (domainVfx == null) domainVfx = FindFirstObjectByType<BossDomainScreenVFX>();
             if (introCinematic == null) introCinematic = FindFirstObjectByType<YuanpeiIntroCinematic>();
+            _switcher = FindFirstObjectByType<Live2DAction.CameraSystem.CameraPossessionSwitcher>();
         }
 
         private Transform _zonePlayer;   // the player character while it's inside the trigger volume
@@ -99,20 +102,13 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (ResolvePlayerFrom(other) != null) _zonePlayer = null;
         }
 
-        // The player character, whether they walked in OR drove in (VehicleEntrySystem re-parents
-        // the seated character under the vehicle, so the "Player" GameObject rides in as a child
-        // of whatever collider enters the trigger). Cat-only vehicles resolve to null.
-        private Transform ResolvePlayerFrom(Collider other)
-        {
-            if (other == null) return null;
-            var root = other.transform.root;
-            foreach (var pip in root.GetComponentsInChildren<PlayerInputProvider>(true))
-            {
-                for (var t = pip.transform; t != null; t = t.parent)
-                    if (t.name == "Player") return t;
-            }
-            return null;
-        }
+        // The character who walked in, whether on foot OR driving (VehicleEntrySystem re-parents
+        // the seated occupant under the vehicle, so their GameObject rides in as a child of
+        // whatever collider enters the trigger). 2026-09-12 (user: "讓猜猜看也能觸發元培boss") -
+        // used to only recognize a transform literally named "Player", so 猜猜看 (and Cat) could
+        // walk straight through the activation line without ever arming the fight. Now delegates
+        // to the shared Live2DAction.Input.PossessableCharacter.
+        private Transform ResolvePlayerFrom(Collider other) => PossessableCharacter.ResolveFrom(other);
 
         public void StartEncounter() => StartEncounter(null);
 
@@ -120,6 +116,13 @@ namespace Live2DAction.AI.Boss.Yuanpei
         {
             if (Started || _teardown || boss == null) return;
             Started = true;
+            // 2026-09-12, user report ("發現猜猜看被元培boss壓死後 攝影機視角會回到player") - this
+            // encounter owns showing its fighter's death/revival and hands control back itself via
+            // HandControlBackToPlayer once it knows who actually fought (Victory/Defeat below); the
+            // switcher's own auto-fallback would otherwise yank the view away the instant Health.
+            // IsDead flips, well before Defeat() gets a chance to do anything. Cleared once
+            // HandControlBackToPlayer runs in both Victory() and Defeat().
+            if (_switcher != null) _switcher.SuppressDeathAutoFallback = true;
             // 續 124 (user "boss 不該把車輛當成目標物件"): if the player drove in, get everyone out of
             // the vehicle first - the fight is on foot, and while seated the Player GameObject is
             // re-parented under the car so `.root` (what the boss targets) would be the car.
@@ -153,13 +156,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // domainVfx.BeginDomain() already ran inside the cinematic's first beat.
         }
 
-        private Transform ResolvePlayerTransform()
-        {
-            foreach (var pip in FindObjectsByType<PlayerInputProvider>(FindObjectsSortMode.None))
-                for (var t = pip.transform; t != null; t = t.parent)
-                    if (t.name == "Player") return t;
-            return null;
-        }
+        private Transform ResolvePlayerTransform() => PossessableCharacter.FindAny();
 
         // 續 134 - six invisible collider-only panels (4 walls + ceiling + floor) sealing the fight
         // area the moment the encounter starts. Reuses the existing BoundaryBlockEffect/BoundaryBlockHud
@@ -228,11 +225,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
         private void ApplyNoDefenceRule(Transform player)
         {
             Transform root = player != null ? player.root : null;
-            if (root == null)
-            {
-                foreach (var pip in FindObjectsByType<PlayerInputProvider>(FindObjectsSortMode.None))
-                    if (pip.transform.root.name == "Player") { root = pip.transform.root; break; }
-            }
+            if (root == null) root = PossessableCharacter.FindAny();
             if (root == null) return;
             _playerGuard = root.GetComponentInChildren<PlayerGuard>();
             if (_playerGuard != null)
@@ -338,6 +331,7 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // controller OFF (the player is dead in the void). Re-assert camera + full player control
             // (+ drop any lock-on onto the dead boss) now so the returned player can actually move.
             HandControlBackToPlayer(player);
+            if (_switcher != null) _switcher.SuppressDeathAutoFallback = false;
 
             if (SceneTransitionRunner.Instance != null)
                 SceneTransitionRunner.Instance.Begin("", returnUnloadScene, player,
@@ -369,6 +363,10 @@ namespace Live2DAction.AI.Boss.Yuanpei
             // DeathDissolve re-enables the controller on its own last line; re-assert camera + full
             // player control here so a mid-dissolve fault still hands everything back before the hold.
             HandControlBackToPlayer(player);
+            // cleared here too (not just Defeat()) - StartEncounter() always sets this true regardless
+            // of outcome, so Victory must clear it as well or a WIN would leave Cat/猜猜看's ordinary
+            // (non-scripted) death auto-fallback permanently disabled for the rest of the session.
+            if (_switcher != null) _switcher.SuppressDeathAutoFallback = false;
 
             // 2. centre-screen "戰鬥勝利"
             YuanpeiVictoryBanner.Show(victoryMessage);
@@ -417,11 +415,15 @@ namespace Live2DAction.AI.Boss.Yuanpei
                 (tpc as Live2DAction.CameraSystem.ThirdPersonCameraController)?.SnapYawToTarget();
             }
 
+            // 2026-09-12, real bug found while adding 猜猜看 support: this used to re-search and
+            // OVERWRITE a perfectly valid `root` any time its name wasn't exactly "Player" - so a
+            // fight correctly fought and won as 猜猜看 would silently hand control back to Player
+            // (or nothing) at the end instead of to whoever actually fought. Now only re-searches
+            // when the passed root isn't a recognized possessable character at all.
             Transform root = player != null ? player.root : null;
-            if (root == null || root.name != "Player")
-                foreach (var pip in FindObjectsByType<PlayerInputProvider>(FindObjectsSortMode.None))
-                    if (pip.transform.root.name == "Player") { root = pip.transform.root; break; }
-            if (root == null) { Debug.LogWarning("[YuanpeiEncounter] HandControlBackToPlayer - no Player root"); return; }
+            if (root == null || !PossessableCharacter.IsPossessableRoot(root.name))
+                root = PossessableCharacter.FindAny();
+            if (root == null) { Debug.LogWarning("[YuanpeiEncounter] HandControlBackToPlayer - no possessable root"); return; }
 
             var stuck = new System.Collections.Generic.List<string>();
 

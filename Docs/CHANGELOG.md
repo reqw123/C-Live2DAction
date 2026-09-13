@@ -5998,3 +5998,261 @@ Play 後三點回饋：
    - **碰撞面不換**：實際站立/物理碰撞仍交給原本 `露營區` Cube 的 `BoxCollider`（一個完美的平面碰撞比 223.8 萬頂點的複雜網格可靠很多），只是把它的 `MeshRenderer` 關掉，讓新地板網格變成看得到的那一層——比照 yuanpei 系列校園建築「隱形碰撞盒 + 上層裝飾網格」的既有慣例。
    - 原始 FBX 127 MB，維持 `Meshy_AI_*_texture.fbx` 命名，依既有 `.gitignore` 規則自動排除版控，已登記進 `Docs/LARGE_ASSETS.md`；授權登記進 `Docs/ASSET_LICENSES.md`（Meshy 付費方案，可進正式 Build）。
 3. **驗證**：編譯無錯、Console 無新錯誤、Scene View 截圖確認地板填滿整個 60×60 地基、邊緣與圍牆無縫隙、`Map_Camp.unity` 存檔乾淨。**待對焦 Play 驗證**：alt 慢走手腕姿勢的實際效果、地板厚度/材質觀感、走在地板上的實際手感（碰撞面用的是底下的隱形 Cube，理論上不受地板網格影響，但仍待實測）。
+
+### 2026-09-12 — 露營區場景素材擺放（帳篷/遮雨棚/柵欄樹/黃樹/除草機/摩托超載）
+
+1. **新匯入**：`摩托超載.glb`（使用者提供，堆滿雜物的摩托車+騎士，含骨架但無動畫）→ `Assets/_Project/Environment/Meshy/CampMotorcycle/CampMotorcycle.glb`（glTFast 匯入，無需另外調 scale，原生就是合理的公尺級大小）。
+2. **放置既有 5 個 Meshy 素材**（帳篷/遮雨棚/柵欄樹/黃樹/除草機，全部之前已建好材質只差擺放）+ 上述摩托車，共 6 個物件到 `Map_Camp.unity` 圍牆內（x[-79,-21] z[-129,-71]，`猜猜看` NPC 旁）：帳篷 (-62,-95) 當住處、遮雨棚 (-62,-108) 緊鄰帳篷、柵欄樹 (-40,-78)／黃樹 (-68,-75) 分立大門東西兩側框住入口、除草機 (-30,-120) 東牆角落雜物區、摩托超載 (-35,-75) 面朝南（剛騎進大門的樣子）。
+3. **踩到兩個新坑**（跟 `manage_gameobject(action=create, prefab_path=...)` 這個路徑第一次拿來擺這批 FBX 有關，之前 `CampFloorSetup.cs` 走的是手寫 SerializedObject 流程沒踩到）：
+   - **坑①：巢狀 100 倍 scale 被拍扁**——這 5 個 Meshy FBX 原始結構是「根節點（scale=1）→ 子節點（跟檔名同名，`localScale=100`）→ Mesh」，子節點的 100 倍縮放是把公尺級網格頂點吃掉的必要換算（跟 memory 記錄的「80x bone scale」是同一類 Meshy 匯出習慣）。但 `manage_gameobject` 的 prefab 具現化把整個階層拍扁成單一 GameObject（只留 Transform+MeshFilter+MeshRenderer，子節點的 100 倍不見了），照著先前用「完整階層 renderer.bounds」量出的巨大數字（~190 單位）去反推 scale，結果全部小了 100 倍，擺出來的東西只有幾公分大、螢幕上幾乎看不見。改用當場直接讀已具現化物件的 `MeshFilter.sharedMesh.bounds`（真正拍扁後的網格本地尺寸，本來就已經是合理的公尺級數字），重新算 scale/Y 軸貼地偏移，5 個物件全部改用 1.157～2.372 之間的 scale（而非原本以為的 0.009～0.032）。
+   - **坑②：材質沒對到**——拍扁具現化後 `MeshRenderer.sharedMaterial` 指向的是 FBX 內嵌的預設材質（`Material.001`，URP/Lit 但貼圖欄位全空、灰色 0.8），不是各自資料夾裡已經做好、貼圖齊全的 `CampXxx.mat`。5 個物件的材質手動 `execute_code` 重新指回各自資料夾下的 `.mat`。
+4. **驗證**：`import_model_file`／材質修正後 Console 皆無新錯誤或警告；用一系列 `manage_camera` positioned screenshot（非 scene_view_frame——後者這次對著具現化的扁平 GameObject 沒能正確框選/縮放，改走直接指定 view_position/view_target 的路徑）逐一核對 6 個物件：帳篷/遮雨棚形狀、比例、貼圖顏色正確；柵欄樹其實是一段鋅字形木柵欄配兩叢灌木（不是單棵大樹），適合當入口造景；黃樹有明顯黃綠色樹冠；除草機外形/比例像一台小型騎乘割草機；摩托超載從背後看到騎士戴安全帽、車後堆滿五顏六色雜物，朝向大門內部（南）符合「剛騎進來」的敘事。`Map_Camp.unity` 存檔後 `isDirty=false`。
+5. **待辦**：帳篷從近距離看是偏方正的箱型（可能是這顆 Meshy 網格本身的低多邊形風格，未進一步修改造型），如果使用者實際 Play 逛過覺得太生硬可以再考慮換角度/換模型；除草機、摩托超載目前朝向都是估的，尚未有使用者本人在互動式 Editor 內對焦 Play 確認實際觀感。
+6. **後續補做的 Play 模式驗證**：這次編輯器確實拿到 OS 焦點（`Time.frameCount` 在 Play 中正常往前跑，非卡幀），於是額外走了一次完整流程：`GreyboxTest`（常駐場景）進 Play → 直接呼叫 `SceneTransitionRunner.Instance.Begin("Map_Camp", ...)`（跟 `CampGate_Enter` 按 F 觸發的是同一個方法，等同模擬玩家在本地大門按 F）→ Player 正確傳送到 (-50,1.1,-77) 並附加載入 `Map_Camp`。用 Player 本人的 Main Camera（含正式 HUD：生命/必殺/架勢/飛行條、Sekiro 彈反除錯列）在大門內、以及走到帳篷/遮雨棚旁分別截圖：摩托超載＋柵欄樹在大門進來左手邊清楚可見、帳篷（金屬浪板質感牆面）＋遮雨棚（白/淺藍多角造型）＋遠處柵欄樹排列比例都正常，玩家角色站在帳篷旁的相對高度合理（帳篷牆面比玩家高約 1.3～1.5 倍）。驗證完 `manage_editor(stop)` 退出 Play，`GreyboxTest.unity` 存檔狀態乾淨（`isDirty=false`，Play 模式的暫時位移不會寫回場景）。
+
+### 2026-09-12 續 — 修正露營區 5 個素材「側倒在地」+ 全部太小
+
+使用者本人在拿到 OS 焦點後親自檢視，回報：這幾個模型的大小都不符合建築物的規範（連摩托超載、除草機都過小），而且它們都側倒在地上放。
+
+1. **診斷用 `manage_camera(batch="surround")`**：對每個物件拍 6 面contact sheet（front/back/left/right/top/bird_eye）而不是單一角度截圖，才看清楚問題——單角度截圖很容易被巧合角度騙過去（跟 memory 記錄的「oblique screenshot 誤判位置」是同一類陷阱，這次是誤判朝向）。除草機是最明顯的案例：四個側面看起來幾乎一樣、輪子攤平在四周、手把橫向伸出——這是物體整個躺平的特徵，不是正常割草機該有的樣子。
+2. **根因**：`CampTent`／`CampCanopy`／`CampFenceTree`／`CampYellowTree`／`CampLawnMower` 這 5 個 Meshy 素材，跟本專案這批「露營區」素材裡最早修好的 `CampFloor`（見 2026-09-11 條目）是同一個匯出習慣——網格本地座標用 **Z 軸當「上」**，而不是 Unity 的 Y-up，匯入時沒做座標轉換。當時只修了 `CampFloor`，另外這 5 個沒套用同一個修正，於是全部躺平（`eulerAngles=(0,0,0)` 但視覺上等於側躺）。統一改成 `eulerAngles=(270,0,0)`（跟 `CampFloor` 完全同一個修正值）後，5 個全部立刻變成正常站立的樣子（除草機明顯是四輪推草機、帳篷變成有雨遮的圓頂帳配木柵欄小院子、遮雨棚變成標準四腳棚架+長椅、柵欄樹/黃樹變成柵欄圍著的一叢真樹）。旋轉後每個物件的 Y 位置都要重新用 `renderer.bounds.min.y` 校正貼地（旋轉會改變 bounds 在世界空間的分佈，沿用舊 Y 會浮空或埋進地板）。**踩過一次彎路**：一開始只試了 `(270,0,0)` 沒同步修正 Y，結果帳篷看起來更扁更矮，誤判「這個旋轉方向是錯的」改回 `(0,0,0)`；後來拿除草機（旋轉後一眼就能看出是正常割草機）驗證同一個旋轉值才發現真正問題是沒重新貼地，不是旋轉方向錯。`CampMotorcycle`（glTF 匯入、非同一批 FBX 管線）本來就是正常 Y-up，不受影響。
+3. **放大到符合「建築物規範」**：圍牆高達 6m（`CampWall_*` 的 `BoxCollider` 量出來的），相較之下這批素材原本的 1.157～2.372 倍 scale 太小氣（帳篷只有 1.24m 高）。全部再放大約 2～2.3 倍：`CampTent` 1.55→**3.74**（高 3.0m）、`CampCanopy` 1.157→**3.424**（高 2.6m）、`CampFenceTree` 2.372→**3.471**（高 5.5m）、`CampYellowTree` 2.316→**3.828**（高 5.0m）、`CampLawnMower` 1.0→**1.366**（長 2.6m）、`CampMotorcycle` 1.0→**1.3**（高 3.46m，含雜物堆）。放大後同樣要重新貼地。
+4. **驗證**：`manage_camera(batch="surround")` 逐一重新確認 6 個物件外觀正確（不再側倒）；另外用實際 Play 模式（`GreyboxTest` 進 Play → `SceneTransitionRunner.Instance.Begin("Map_Camp",...)` 模擬按 F 進大門 → Player 本人 Main Camera 截圖）站在帳篷旁邊比對，帳篷牆面明顯比玩家角色高、比例正常，遮雨棚/柵欄樹/黃樹在背景清晰可辨。`Map_Camp.unity` 存檔後 `isDirty=false`。**待辦**：目前的放大倍率是相對 6m 圍牆估的，沒有精確的「建築規範」數字可對，如果使用者實際逛過覺得比例還要再調（尤其柵欄樹/黃樹到 5～5.5m 是否太誇張），可以再微調。
+
+### 2026-09-12 續 — 全景圖天空盒 + 拆掉圍牆（露營區不該有城牆）
+
+使用者提供 `露營區全景圖.exr`（4096×2048 等距柱狀投影，OpenEXR PIZ 壓縮，21MB，用 ffmpeg 轉出來看是一片真實草地空地+地平線樹林+土路的空拍/廣角實景照片），要求當露營區全景圖；並指出「摩托超載和除草機大小都合適」（維持不動），但其他 4 個建築（帳篷/遮雨棚/柵欄樹/黃樹）大小要重新想過，而且「露營區通常周圍也不是用圍牆圍起來」。
+
+1. **天空盒**：`.exr` 複製進 `Assets/_Project/Environment/Skyboxes/CampPanorama.exr`（`TextureImporter`：`textureShape=Texture2D`、`sRGBTexture=false`、`Uncompressed`，因為是線性 HDR 環境圖不是一般 sRGB 貼圖），建立 `CampPanorama.mat`（`Skybox/Panoramic` shader，`_Mapping=1` 對應等距柱狀投影）。
+2. **踩到一個坑：`RenderSettings.skybox` 是全域單一值，不是逐場景的**——`Map_Camp` 是用 additive 疊加進常駐 `GreyboxTest` 的（見 `Docs/MAP_STREAMING.md`），Unity 不會因為多疊了一個 scene 就自動套用那個 scene 存檔時的 Lighting/RenderSettings。一開始直接在 `Map_Camp` 的 `RenderSettings.skybox` 設定新天空盒，Edit 模式單獨開這個場景看起來完全正確，但實際用 `SceneTransitionRunner` 走真正的「按 F 進大門」流程進去，天空還是 `GreyboxTest` 原本的 `Skybox_Procedural`，直到我另外做了驗證才抓到這個問題。
+   - **修法**：新增 `Assets/_Project/Game/World/RegionSkyboxOverride.cs`——`OnEnable` 記住目前的 `RenderSettings.skybox` 存起來、換成自己的 `skyboxMaterial`（`DynamicGI.UpdateEnvironment()` 刷新環境光）；`OnDisable`/`OnDestroy` 換回存起來的舊值。掛在 `Map_Camp` 場景一個新物件 `CampSkyboxOverride` 上，`skyboxMaterial` 指到 `CampPanorama.mat`。這樣進露營區天空自動換、（透過 `CampGate_Exit`）離開時卸載 `Map_Camp` 自動換回去，不用改 `SceneGate`/`SceneTransitionRunner` 本身。這是本專案第一個「單一場景自己的天空盒」需求，之前的 `Map_School`/`Map_Nijigen`/`Map_Xianshi` 都沒做過這件事——如果之後其他地圖也要各自的天空，同一個元件可以直接重複掛。
+3. **拆牆**：`CampWall_{North Left,North Right,South,East,West}` 這 5 個物件本來就是「根物件只掛 `BoxCollider`＋一個叫 `Visual` 的子物件掛實際的牆面 `MeshRenderer`（材質共用學校那邊的 `SchoolWall`）」的結構，直接把 5 個 `Visual` 子物件 `SetActive(false)`——牆體 `BoxCollider` 保留、繼續當看不見的邊界（避免玩家/滑翔直接飄出這塊區域太遠），只是不再有視覺上的城牆方塊。順帶發現：`Map_Camp` 外圍其實已經是常駐 `GreyboxTest` 那塊連續地形在撐著（拆牆後不會露出懸空邊緣或虛空——之前用 `manage_camera` 從牆外往回拍就看到牆外已經有連續的綠地，這塊地本來就是本地地形的一部分，露營區只是在上面疊了一層木頭地板＋城牆殼），所以這次沒有另外做延伸地面。
+4. **重新想帳篷/遮雨棚/柵欄樹/黃樹的大小**：上一條目是照 6m 高的假城牆去估比例（結果偏大：帳篷寬達 7.1m），現在城牆拆了、天空換成真實照片，比例基準也該跟著換。實際套上全景圖後用 `manage_camera` 截圖直接比對，發現原本（為了配合假城牆而放大的）尺寸站在真實照片背景前其實意外地好看——樹的高度跟全景圖地平線上的真樹相近、帳篷比例跟旁邊的角色/除草機/摩托車放在一起也算合理，所以**這次沒有再縮小，維持 2026-09-12 稍早那次調好的 scale**（帳篷 3.74／遮雨棚 3.424／柵欄樹 3.471／黃樹 3.828）。除草機／摩托超載完全沒動。
+5. **驗證**：`Skybox_Procedural`↔`CampPanorama` 兩個方向都用實際 Play 流程測過——`SceneTransitionRunner.Instance.Begin("Map_Camp",...)` 模擬按 F 進大門後 `RenderSettings.skybox.name=="CampPanorama"`，再模擬 `CampGate_Exit`（卸載 `Map_Camp`）後變回 `RenderSettings.skybox.name=="Skybox_Procedural"`，確認 override/restore 都正常。Console 沒有新錯誤（只有跟這次無關的既有影片色域警告）。`Map_Camp.unity` 存檔 `isDirty=false`。**待辦**：使用者本人尚未親眼看過全景圖版本的露營區；如果實際逛過覺得某個建築比例還要調，可以再細修（這次沒有精確公式，是拿全景圖裡的真樹當視覺對照組估的）。
+
+### 2026-09-12 續 — 場地太空曠：4 個建築放大兩倍＋集中成一個聚落
+
+使用者看完全景圖版本後回饋：場地本身有點太大了（沒關係，不用改地形），但要求把露營建築物（帳篷/遮雨棚/柵欄樹/黃樹——不含使用者已經確認合適的除草機、摩托超載）再放大兩倍，並且挑一個區塊集中擺放，讓「猜猜看」用第三人稱視角走進營地、轉動鏡頭時能近距離看到這些建築，不要有一眼望去很空曠的感覺，要有 3D 第三人稱視覺探索感。
+
+1. **放大兩倍**：4 個建築的 scale 直接乘 2——帳篷 3.74→**7.48**（寬 14.3m／高 6.0m／深 12.3m）、遮雨棚 3.424→**6.848**（寬 12.9m／高 5.2m／深 13.0m）、柵欄樹 3.471→**6.942**（樹叢寬 13.1m／高 11.0m／深 13.2m）、黃樹 3.828→**7.656**（寬 14.6m／高 10.0m／深 12.6m）。放大後同樣重新用 `renderer.bounds.min.y` 貼地。
+2. **集中成一個聚落**：原本 4 個建築散在露營區各處（帳篷/遮雨棚在南邊，柵欄樹/黃樹在北邊大門兩側，彼此相距 20m 以上），改成全部集中到「猜猜看」原本站立點 (-50,-90) 附近、半徑約 12～17m 的一個聚落：帳篷 (-60,-88)、遮雨棚 (-60,-104，帳篷正南方 16m)、柵欄樹 (-72,-96，西側)、黃樹 (-48,-96，東側，離猜猜看只有約 8m)。這個決定犧牲了原本「柵欄樹/黃樹框住大門入口」的設計（大門在更北邊的 (-50,-71)，離這個聚落有 20 幾公尺），改成優先滿足這次「近距離探索感」的新需求。
+3. **驗證方式**：先在 Editor 用 `manage_camera` 站在聚落中心 4 個方向（0°/90°/180°/270°）直接截圖確認「轉頭就能看到不同建築」的效果成立；再用真正的 Play 模式（`GreyboxTest` 進 Play → `SceneTransitionRunner.Begin` 模擬按 F 進大門 → `CameraPossessionSwitcher.FocusGuessWho()` 切到「猜猜看」自己的第三人稱攝影機 `GuessWhoCamera`）分別在（a）聚落正中央、（b）「猜猜看」原本站立的 (-50,-90) 兩個位置拍他自己攝影機的實際畫面——兩個位置轉頭都能同時看到帳篷／遮雨棚／柵欄圍籬／黃樹其中好幾個，沒有「往任何方向看都是空地」的情況。驗證完把「猜猜看」座標還原回 (-50,-90)（原本沒有要求移動他，過程中的位移只是為了截圖測試）。`Map_Camp.unity` 存檔 `isDirty=false`，Console 無新錯誤。
+4. **待辦**：使用者尚未親自進場驗收；柵欄樹放大後（樹叢寬深都到 13m）跟帳篷/黃樹的間距偏緊，實際走位時可能會擦到邊緣碰撞（這幾個裝飾物目前都沒有另外加 Collider，只有視覺網格，理論上不影響移動，但畫面上可能會有輕微穿模，需要使用者實際看過再判斷要不要微調間距）。
+
+### 2026-09-12 續 — 露營區重構：從開放全景場地改回「環抱式中庭營地／小型要塞內院」（方向逆轉）
+
+使用者貼了一份請另一個 AI（只看過截圖、沒有真實遊戲參數）寫的需求文件，要求把露營區改成有包覆感的中庭要塞；並在訊息裡明講文件的具體公尺數字是用截圖用猜的，要我用這個專案的真實參數自行判斷。**這是方向逆轉**：上一輪才把圍牆拆掉做成開放式全景營地，這輪要求重新圍起來——已在計畫階段跟使用者確認過這個逆轉，不是誤解。
+
+執行前用 `EnterPlanMode` 先分析、寫計畫、取得使用者核准，計畫檔存在 `~/.claude/plans/cryptic-meandering-candy.md`。
+
+1. **真實參數量測（推翻文件猜測值）**：玩家身體實際渲染高度（排除翅膀/劍等裝飾）≈**1.28m**（文件猜 1.7~1.9，明顯偏高——這是嬌小體型設計，不是量錯）；「猜猜看」的 `GuessWhoCamera` 垂直 FOV=**65°**；`CampFloor.mat` `_BaseColor=(1,1,1,1)` 純白＋`Smoothness=0.35` 是地面過曝的具體成因；全域 `PostProcessingVolume`（`isGlobal=true`，全遊戲共用）完全沒有 Tonemapping/Exposure override。派 Explore 子代理確認 NavMesh 烘焙工具（`Tools/Live2DAction/Bake Navigation Mesh`）用 `OpenSceneMode.Single` 只涵蓋 `GreyboxTest`、從不涵蓋 `Map_Camp`，且露營區沒有 AI 需要 NavMesh，這次不適用；`SceneGate.cs`/`SceneTransitionRunner.cs` 都沒有寫死露營區座標，縮小地板/圍牆安全。
+2. **縮小可遊玩範圍**：`CampFloor` 從 60×60 縮到 **38×38**（`localScale` 31.4961→19.948，中心不變 (-50,-100)）；5 面 `CampWall_*` 的 `BoxCollider`＋`Visual` 一起改成新範圍（x[-69,-31] z[-119,-81]），入口留 5m 縫（x[-52.5,-47.5]，在 z=-81 北側）；**重新啟用**上一輪關掉的牆面 `Visual`，高度從原本 6m 降到 **2.6m**（人體比例矮牆而非巨牆）。同步更新 `CampGate_Enter`（GreyboxTest 內，`arrivalPosition` 從 (-50,1.1,-77) 改到 (-50,1.1,-79)）與把 `CampGate_Exit`（Map_Camp 內）本體移到新入口線 (-50,0,-81)；`CampGate_Exit` 自己的離場 `arrivalPosition`（GreyboxTest 側 (-50,1.1,-63)）不受影響。
+3. **灰盒新建主體建築**（全部用 Cube 基本體＋簡單屋頂蓋，先做空間驗證不做細節模型）：
+   - `MainLodge_Body`(9×4.8×6m)+`MainLodge_RoofCap`(9.6×1×6.6m)+兩根 `MainLodge_Post{Left,Right}` 立柱，(-50,-112)，正對入口的視覺焦點。
+   - `Workshop_Body`(5×2.8×4m)+`Workshop_RoofCap`，(-37,-101)，搭配既有 `CampLawnMower` 當工坊意象。
+   - `Entrance_Post{Left,Right}`+`Entrance_Crossbeam`，(-50,-81)，5m 門架。
+4. **既有素材重新歸位＋縮小**：這輪同時把上一輪「放大到 6.8~7.7 倍」的 4 個建築（帳篷/遮雨棚/柵欄樹/黃樹）**縮小回約 2.7~3.7 倍**（帳篷 7.48→**3.74**、遮雨棚 6.848→**3.425**、柵欄樹 6.942→**2.713**、黃樹 7.656→**3.063**）——上一輪放大是為了在「開放全景場地」裡不被真實照片的遠景大樹比下去；這輪改成緊湊要塞內院，優先滿足人體比例正確而不是跟遠景照片比大小，兩輪的設計前提不同，不是互相矛盾。帳篷+遮雨棚移到西側當生活區 (-62,-95)/(-62,-104)；柵欄樹/黃樹移到入口兩側框景 (-58,-84)/(-42,-84)（找回更早一輪「框住入口」的設計意圖）；除草機併入工坊區 (-38,-108)；摩托超載留在入口附近 (-44,-87)（「剛騎進來」敘事不變）；NPC「猜猜看」站位挪到中庭邊緣 (-56,-96)，生活區前方。
+5. **曝光/材質修正**：`CampFloor.mat` `_BaseColor` 從純白調成 (0.62,0.56,0.47) 木色調＋`Smoothness` 0.35→0.18；新增局部曝光 `CampLocalVolumeProfile.asset`（Tonemapping=Neutral + ColorAdjustments postExposure=-0.6, contrast=+5）掛在新物件 `CampLocalVolume`（`isGlobal=false`＋40×8×40 的 trigger BoxCollider，`blendDistance=4`），**只在玩家人在露營區範圍內生效**，完全不動全域共用的 `PostProcessingVolume`，其他地圖/Boss 戰不受影響。
+6. **Hierarchy 整理**：新建 8 個父物件 `MainBuilding`/`LivingArea`/`WorkshopArea`/`Entrance`/`Perimeter`/`CentralYard`/`Props`/`Lighting`，把所有既有＋新建物件依功能 re-parent 進去（`SetParent(..., worldPositionStays:true)`，世界座標不變、無刪除任何物件）。
+7. **驗證踩到的坑**：`ThirdPersonCameraController` 的攝影機朝向（`_yaw`/`_pitch` 私有欄位）**不是**直接跟著角色 `transform.rotation` 走，且 `enableAutoCenter=true` 會在約 0.8 秒後把 `_yaw` 慢慢拉回去，用 reflection 硬塞 `_yaw` 也會被下一次讀取時的自動置中/其他系統覆蓋掉、無法穩定重現特定朝向做「前後左右四方位」截圖。改用 `manage_camera` 的 positioned screenshot（真實站立高度 1.6m、貼近真人第三人稱視角，但由我指定 view_position/view_target，不受攝影機控制器內部狀態影響）驗證，並且額外對著已知座標直接鎖定確認每棟建築本身確實存在且會正確渲染（例如直接瞄準 `MainLodge` 座標確認它真的在那裡、只是先前的方位截圖剛好沒轉到那個角度，不是建築消失或蓋錯位置）。從入口朝中庭看的最終截圖：工坊、主營舍、帳篷、遮雨棚、圍牆、樹木同時入鏡，地面不再死白，曝光正常。
+8. **驗證**：Console 無新錯誤；`Map_Camp.unity` 存檔 `isDirty=false`；NavMesh 依上述分析本次不適用（露營區無 AI），未重新烘焙。
+9. **範圍聲明**：這次交付到「空間配置＋灰盒驗證＋曝光修正＋既有素材歸位＋Hierarchy 整理」為止，`MainLodge`/`Workshop`/圍牆目前都是灰盒量體（簡單方塊+平頂屋簷蓋），還沒有二樓陽台、真正木造建模、守望台等細節美術——這是刻意先做空間驗證、細節留待使用者看過灰盒空間感之後再決定要不要繼續。
+
+### 2026-09-12 續 — 使用者實測回報 4 個真 bug，其中 3 個是上一輪重構造成的迴歸
+
+使用者實際 Play 過後回報：(1) 摩托超載浮在空中、(2) 用傳送門進營地仍被擋在門外、(3) 無法用 G 切換到「猜猜看」視角、(4) 操控 Player 時「猜猜看」不應該受影響（但受影響了）。
+
+1. **摩托超載浮空**：`CampMotorcycle` 用的是 `SkinnedMeshRenderer`（glTF 匯入的骨架模型），過去每次搬動都是用 `renderer.bounds.min.y` 反推貼地高度——這次發現這個做法對這個模型不可靠（跟 memory 記錄的「Meshy 角色 glb 常有 degenerate SkinnedMeshRenderer bounds」是同一類問題）：`renderer.bounds` 回報的最低點沒有正確反映實際姿勢，導致每次「重新貼地」的計算結果都悄悄偏高，多輪搬動下來累積出約 0.87m 的浮空。改用 `SkinnedMeshRenderer.BakeMesh()` 直接烘焙目前姿勢的頂點，確認這個模型的骨架根節點本身就對齊在輪胎接地點（local Y≈0），直接把物件 Y 設成地板頂面高度（0.5）即可，不再靠 bounds 反推。**教訓**：這個模型類型以後搬動/貼地一律用 BakeMesh 驗證或直接截圖確認，不要相信 `renderer.bounds`。
+2. **傳送門進去被擋在門外**：上一輪縮小圍牆範圍時，把 `CampGate_Enter`（GreyboxTest 內，按 F 觸發）的 `arrivalPosition` 改成 `(-50,1.1,-79)`，原意是「入口線 z=-81 往內縮 2m」，但**符號搞反了**——新範圍內部是 z ≤ -81（更負＝更南＝營地內側），z=-79 其實在入口線的**外側**（北側，圍牆外），玩家一進來就卡在牆體 collider 附近。修正成 `(-50,1.1,-84)`（入口線往南 3m，確認在新牆內側）。用真正的 `SceneTransitionRunner.Begin` 走一次進場流程＋等待物理穩定，確認玩家落地後座標沒有被推回，問題解決。
+3. **G 鍵切不到「猜猜看」視角**／**4. 操控 Player 時「猜猜看」仍受影響**：兩個 bug 同一個根因——上一輪做 Hierarchy 整理時，把「猜猜看」重新掛到新建的 `CentralYard` 父物件底下，但 `CameraPossessionSwitcher.TryRelinkGuessWho()`（`Assets/_Project/Game/Camera/CameraPossessionSwitcher.cs:81-97`）**只掃描每個已載入場景的「根層級」物件**（`SceneManager.GetSceneAt(i).GetRootGameObjects()`，比對 `root.name=="猜猜看"`），這是 2026-09-11 就寫好、刻意避開 `GameObject.Find` 找不到未啟用物件的做法——但沒想到「重新掛父物件」也會讓同一個掃描找不到他。「猜猜看」一旦不是根物件，整個 relink 直接在第一行 `if (gw == null) return;` 提前結束，導致 `guessWhoCamera` 欄位永遠是 null（G 鍵沒反應）、也永遠不會執行後面「依 `Current` 強制套用 `SetEnabled`」那段（Player 時期他自己的 `CharacterMovement`/`PlayerCombat` 沒被停用，繼續吃鍵盤輸入）。修法：把「猜猜看」從 `CentralYard` 移出、改回場景根層級（`SetParent(null, true)`，世界座標不變）。`GuessWhoCamera` 本來就沒被我重新掛父物件，不受影響。**教訓**：這個專案至少有一支腳本（`TryRelinkGuessWho`）依賴特定物件必須留在場景根層級，之後再做 Hierarchy 整理／歸類父物件時，要先搜尋該物件名稱是否有腳本用 `GetRootGameObjects()` 或類似方式依賴根層級位置，不能假設「換父物件只是視覺分類、沒有行為影響」。
+4. **驗證**：全部用真實 Play 模式驗證（`SceneTransitionRunner.Begin` 模擬按 F 進門、`TryRelinkGuessWho`/`FocusGuessWho`/`FocusPlayer` 直接呼叫確認狀態機行為，而非只看 Console）：進門後玩家座標穩定不被推回；`TryRelinkGuessWho()` 執行後 `guessWhoCamera` 欄位成功填入；`FocusGuessWho()` 後 `Current==GuessWho`；`FocusPlayer()` 後「猜猜看」的 `CharacterMovement.enabled`／`PlayerCombat.enabled` 都是 `false` 且等待 2 秒後座標未飄移；摩托超載在 Play 模式截圖確認輪胎貼地無縫隙。Console 無新錯誤，兩個場景（`Map_Camp`／`GreyboxTest`）存檔皆 `isDirty=false`。
+
+### 2026-09-12 續 — 所有露營建築物再放大 3 倍（連帶擴大場地到 80×80）
+
+使用者：「所有營地建築物都幫我放大3倍」。範圍認定為建築/裝飾結構本體：`MainLodge`／`Workshop`／`CampTent`／`CampCanopy`／`CampFenceTree`／`CampYellowTree`；不含使用者已確認合適的除草機／摩托超載（尺寸不變，只重新歸位）。
+
+1. **第一次嘗試（64×64）失敗**：直接把每個建築的 `localScale`／量體尺寸乘 3、原地保留上一輪 38×38 的相對佈局比例只小幅擴大到 64×64，結果實測進 Play 用「猜猜看」自己攝影機一看，鏡頭直接卡進柵欄樹的樹冠裡（樹放大到 15m 級之後，入口兩側能塞的緩衝空間不夠）。**教訓**：純靠俯視截圖檢查「有沒有重疊」不夠，一定要用真人第一/第三人稱視角實際站進去看，尤其角色重生點/大門入口這種近距離會被摃到的位置。
+2. **改到 80×80 重新佈局**：`CampFloor` `localScale` 63.596→41.995（60 基準→80m）；5 面圍牆改到新邊界 x[-90,-10] z[-140,-60]，高度維持 7.8m，入口縫隙加寬到 8m（x[-54,-46]，在新的 z=-60 北側）；入口門架兩根柱子＋橫樑跟著放寬移到 z=-60。`MainLodge`（27×14.4×18m）+`Workshop`（15×8.4×12m）都往南／東挪出更多退縮空間；`CampTent`(scale 11.22)/`CampCanopy`(10.275)/`CampFenceTree`(8.139)/`CampYellowTree`(9.189) 重新攤開位置，彼此間至少留 1~4m 淨空（這個尺度下的物件本身就有 15~27m 量體，无法像之前一樣寬鬆分佈，但已避免真正的網格重疊）。除草機／摩托超載／NPC／`CampGate_Exit` 都跟著挪到新入口線與新建築群附近；`CampGate_Enter`（GreyboxTest 內）`arrivalPosition` 同步改到 `(-50,1.1,-63)`。
+3. **驗證方式踩到的另一個坑**：這次重新進 Play 測試時，發現移動 `Player` 的 transform 完全沒有讓畫面產生變化——因為這個專案的 `CameraPossessionSwitcher` 設定 `startPossessed=GuessWho`（2026-09-11 的既有設計，開場自動先進「猜猜看」視角），一進 Play 就自動把攝影機焦點切到「猜猜看」身上，跟我直接呼叫的 `SceneTransitionRunner.Begin(...,player,...)` 完全是兩回事——鏡頭跟拍的其實是站著不動的「猜猜看」，不是被搬動的 `Player`。改成直接移動「猜猜看」本人來驗證運鏡效果，才看到正確畫面：入口處清楚看到石造門框、柵欄樹叢、黃樹，站到中庭深處能看到帳篷、遮雨棚同時入鏡，站到中庭中央面向南方能完整看到主營舍龐大的量體撐滿畫面。
+4. **驗證**：Console 無新錯誤；`Map_Camp.unity`／`GreyboxTest.unity` 存檔皆 `isDirty=false`。
+
+### 2026-09-12 續 — 移除「猜猜看」R 技能特效（機制不動）＋修正 SceneGate 認不出他導致「無法對話」的真 bug
+
+使用者：「1.移除猜猜看r技能特效 但機制還在 2.門口有傳送門，但裡面又有一個 而且無法對話 請修正」。
+
+1. **R 技能特效**：`UltimateReadyAura.cs`（能量滿時常駐顯示一個 `flameAura` 子物件，本輪之前每一張截圖裡「猜猜看」腳邊那圈粉紅色漩渦特效就是這個）＋`UltimateActivationBurst.cs`（按下 R 瞬間的一次性爆閃）——兩個都是純視覺元件。只在「猜猜看」自己身上把這兩個元件 `enabled=false`（沒有動 `UltimateEnergy`／`UltimateAbility`，能量累積、R 鍵觸發技能的機制完全不變），順便把當時已經 On 的 `flameAura` 子物件關掉避免殘留。**沒有動 Player 或 Cat 身上的同名元件**，只影響「猜猜看」這個實例。
+2. **「門口有傳送門，裡面又有一個，無法對話」= 一個真 bug，不是重複物件**：先用 `find_gameobjects` 확인 `Map_Camp` 裡確實只有一個 `SceneGate`（`CampGate_Exit`）、一個 `PortalVideoSurface`（是 `CampGate_Exit` 自己的子物件，不是另一個獨立傳送門）——沒有重複的傳送門物件。真正的問題出在 `SceneGate.cs` 的 `WalkToPlayer()`／`ScanForPlayer()`：這兩個方法**寫死只認名字剛好叫「Player」的角色**（`t.name == "Player"`），「猜猜看」的根物件名字是「猜猜看」，永遠比對不到——也就是說**只要玩家當下操控的是「猜猜看」（而 2026-09-11 的設計正是遊戲一開場就預設用他的視角），走到任何一個 `SceneGate`（不只露營區，全遊戲每個場景轉換大門都一樣）都不會被偵測到、互動提示 UI 永遠不會跳出來、按 F 沒有反應**——這正是使用者看到「有個傳送門但無法對話」的根因，而不是真的有第二個傳送門。修法：`Assets/_Project/Game/World/SceneGate.cs` 新增 `PossessableRootNames = {"Player","Cat","猜猜看"}`，`WalkToPlayer`／`ScanForPlayer` 改成比對這個清單而不是寫死單一名字，一次修好所有場景的所有傳送門對「猜猜看」（以及 Cat）都能正常互動。
+3. **驗證**：編譯無新錯誤（僅既有 warning）。真實 Play 模式測試（開場預設走 GuessWho 流程，把「猜猜看」搬到 `CampGate_Exit` 前方）：截圖確認腳邊粉紅漩渦特效完全消失；用 reflection 讀 `SceneGate` 內部欄位確認 `_player` 正確抓到「猜猜看」、`_near=True`、`_uiShown=True`（互動提示 UI 真的有顯示，不是只有理論上該顯示）。Console 無新錯誤，`Map_Camp.unity` 存檔 `isDirty=false`。**待辦**：這次沒有連 Player／Cat 一起做完整互動流程重跑一遍（改動只是把單一角色名字檢查換成清單比對，邏輯上不影響 Player/Cat 原本能運作的路徑，但沒有另外對這兩個角色重新跑一次真實 Play 驗證）。
+
+### 2026-09-12 續 — 「傳送門變成兩道，卡在中間，也去不了其他城市」：真正的根因是入口幾何位置算錯
+
+使用者：「你把傳送做了兩道 並且傳送後會卡在兩個傳送門之間，也無法通往其他城市」。
+
+1. **根因排查**：`CampGate_Enter`（固定在常駐 `GreyboxTest`，玩家從外面走過去按 F 進場的那個大門本體）的 `transform.position` 其實從頭到尾都沒有動過，一直是 `(-50,0,-67)`。問題出在 `Map_Camp` 自己的入口牆／`CampGate_Exit`／門架——過去幾輪為了塞下越放越大的建築，反覆把露營區整體用「同一個中心點 (-50,-100) 往外等比例擴大」的方式處理（38×38→64×64→80×80），而**北側入口牆的座標剛好等於「中心 z - 半邊長」**，每擴大一次半邊長就變大，北側入口牆的 z 值就跟著往北（往 -67 那個方向、變得比較不負）飄——一路從 -81 飄到 -68、最後飄到 **-60**，已經飄到比固定不動的 `CampGate_Enter`（-67）還要北邊 7m！等於「營地自己的入口」蓋到「玩家從外面走進來要按 F 的那個大門」的**外側**去了，兩個大門實際上只相距幾公尺甚至互相超車，難怪使用者覺得「做了兩道」、傳送進去之後人正好卡在兩者中間的窄縫。
+2. **修正**：把 `Map_Camp` 全部物件（地板／5 面圍牆／入口門架／`CampGate_Exit`／主營舍／工坊／帳篷／遮雨棚／柵欄樹／黃樹／摩托超載／除草機／NPC／曝光 Volume／地板標示牌，共 24 個物件）整體往南（z 減少）平移 12m，讓露營區自己的入口牆落在 z=-72——**在固定不動的 `CampGate_Enter`（-67）南邊 5m**，兩個大門之間留出足夠的緩衝空間，不再互相干擾。`CampGate_Enter` 的 `arrivalPosition` 同步從 `(-50,1.1,-63)` 改成 `(-50,1.1,-75)`（在新入口牆再往南 3m，確保落地時人在牆內側）。**這次記取教訓**：以後如果還要再放大營地，不能用「中心點不變、整體等比例擴大」的做法，因為北側入口牆的位置會被半邊長牽著跑；應該固定入口牆的世界座標（跟外部固定大門對齊），只往南／往兩側擴張需要更多空間的方向。
+3. **驗證**：真實 Play 模式測試——把「猜猜看」放在兩個大門正中間（z=-69.5，各距 2.5m），確認兩個 `SceneGate` 都沒有進入 `_near` 狀態（不會互相搶互動、也不會兩個提示同時跳出來）；分別站到各自 1m 內，確認各自獨立正確觸發 `_near=True`／`_uiShown=True`、另一個維持不觸發。另外把 Player 移到 `SchoolGate_Enter` 附近確認學校大門依然正常偵測 Player、互動提示照常顯示——**確認上一輪修 `SceneGate.cs` 認不出「猜猜看」的那個改動沒有連帶弄壞其他城市的大門**，使用者說的「也無法通往其他城市」單純是被卡在營地門口動不了的連帶結果，不是另一個獨立的程式碼問題。Console 無新錯誤，`Map_Camp.unity`／`GreyboxTest.unity` 存檔皆 `isDirty=false`。
+
+### 2026-09-12 續 — 傳送門附近掉入虛空 + 互動後畫面變成「No cameras rendering」，兩個真 bug
+
+使用者附截圖回報：(1) 傳送門附近地板有碰撞穿透，會掉入虛空；(2) 跟傳送互動後畫面變成 Unity 內建的
+「Display 1 / No cameras rendering」黑畫面。
+
+1. **地板碰撞穿透**：露營區實際站立用的碰撞面，一直是另一個叫「露營區」的獨立物件（只有 `BoxCollider`，`CampFloor` 本身只是純視覺網格，這個「隱形碰撞方塊 + 上層裝飾網格」的分工從 2026-09-11 建地板那次就是這樣設計）。前幾輪反覆調整場地大小（38×38→64×64→80×80）時，`CampFloor` 的視覺網格跟著每次都正確縮放，**但「露營區」這個碰撞方塊的 `localScale` 從頭到尾都沒有跟著改，一直卡在最初的 (60,1,60)**——等於實際能走的地板永遠停在 60×60，跟越變越大的視覺地板（現在 80×80）對不起來，尤其入口那一帶（z=-72 到 -82 這段）視覺上是實心地板，底下卻完全沒有碰撞，一踩上去就直接掉進虛空。修法很單純：把「露營區」的 `localScale` 補改成跟目前視覺地板一致的 `(80,1,80)`。**教訓**：以後改動 `CampFloor` 的視覺網格大小時，一定要同時檢查並更新「露營區」這個真正負責碰撞的物件，兩個是分開的、不會自動連動。
+2. **互動後畫面全黑（No cameras rendering）**：`CameraPossessionSwitcher.Update()` 裡本來就有「`猜猜看` 死亡時自動切回 Player」的保護（`guessWhoHealth.IsDead`），但**沒有對應「`猜猜看` 所在的 `Map_Camp` 被卸載、導致 `guessWhoCamera`／`guessWhoHealth` 這些參照直接變成 null（不是死亡，是整個被摧毀）」的保護**——`guessWhoHealth != null && guessWhoHealth.IsDead` 這個判斷式一旦 `guessWhoHealth` 是 null 就直接短路跳過，不會觸發任何回退。玩家操控「猜猜看」時如果走出露營區的出口傳送門（`CampGate_Exit`，會卸載 `Map_Camp`），他專屬的攝影機跟著整個場景一起被摧毀，但 `CameraPossessionSwitcher` 完全不知道要切回 Player，於是變成沒有任何啟用的攝影機——這正是使用者截圖裡 Unity 內建的「No cameras rendering」畫面。修法：`Assets/_Project/Game/Camera/CameraPossessionSwitcher.cs` 的 `Update()` 在既有死亡檢查之後，新增一段「`Current==GuessWho` 但 `guessWhoCamera` 或 `guessWhoHealth` 已經是 null」就自動 `FocusPlayer()` 的保護（不會誤觸發：`Current` 只有在 `TryRelinkGuessWho()` 成功把 `guessWhoCamera` 連上之後才會被設成 `GuessWho`，所以看到這裡是 null 一定代表場景剛被卸載，不會跟開場載入中的正常空窗期搞混）。
+3. **驗證**：真實 Play 模式測試——先確認 `Current==GuessWho`，直接呼叫 `SceneTransitionRunner.Begin("", "Map_Camp", ...)` 模擬走出出口傳送門，等待場景卸載完成後檢查：`Current` 自動變回 `Player`、場上有且僅有 `Main Camera` 處於啟用狀態，截圖確認畫面正常顯示遊戲內容而非黑畫面。碰撞修正則是把「猜猜看」分別丟到入口一帶（z=-74、z=-68）跟南側主營舍一帶（z=-148）從空中落下，確認都能正常被地板接住停在 y≈1.08，不再掉入虛空。Console 無新錯誤，`Map_Camp.unity` 存檔 `isDirty=false`。
+
+### 2026-09-12 續 — 讓猜猜看也能觸發元培 boss 戰，牽出 5 個真 bug（全部修好）
+
+使用者要求確保猜猜看能真的觸發元培 boss 戰，並且跟 Player 一樣可以完整走完整個流程（勝利/失敗/進場/退場/動畫）。上次談話已經把 `SceneGate`／`YuanpeiEncounter`／`YuanpeiBoss` 對「只認名字叫 Player」的檢查改成共用的 `Live2DAction.Input.PossessableCharacter`（新檔案，見上一輪），這次是實測 + 補完整條流程。
+
+1. **新增 `Assets/_Project/Game/Input/PossessableCharacter.cs`**：靜態工具類別，`IsPossessableRoot`／`ResolveFrom(Collider/Transform)`／`FindAny()`／`FindNearest(Vector3)`，一次收斂 `SceneGate`／`YuanpeiEncounter`／`YuanpeiBoss`／`YuanpeiIntroCinematic` 四處各自土砲的「往上找到名字是 Player 的祖先」邏輯。
+2. **真實 Play 模式實測**（用 `manage_gameobject` 直接把猜猜看丟進元培的觸發線 `activationLineZ`，而不是用代碼硬呼叫 `StartEncounter`，確保走的是真正的 `OnTriggerEnter` 路徑）：
+   - 開場下馬威齊射正確鎖定猜猜看（console: `[YuanpeiBoss] 下馬威 OpeningBarrage FIRING (player=猜猜看)`），確認觸發＋鎖定沒問題。
+   - 猜猜看被 boss 打死後發現**真的沒有復活機制**——`Health.ApplyDamage` 死亡時預設 `SetActive(false)`，要靠獨立的 `RespawnController`（掛在 `GameManager` 上，Player/Enemy/中立者1-3/屁孩王/Cat 各自一份實例）幾秒後救回來，但猜猜看沒有這份實例，於是他死亡後永久卡在關閉狀態，`YuanpeiEncounter.Defeat()` 的等復活迴圈 15 秒逾時後照樣把一具空殼傳送回校門口。**修法**：在 `GameManager` 上新增一份 `RespawnController`，`target`/`targetHealth`/`targetStance` 指到猜猜看，`respawnDelaySeconds=5`（同 Player），`showGameOverScreen=false`（比照 Cat/Enemy/中立者，只有 Player 自己跳「你菜完了」）。實測死亡→5 秒後物件重新啟用、血量回滿、可用 G 切回操控。
+3. **開場動畫觸發瞬間鏡頭跳走、之後永遠回不去**（使用者實測回報）：`YuanpeiIntroCinematic.LockActors()` 會把一批「玩家/攝影機控制」腳本整批關閉，其中包含 `CameraPossessionSwitcher` 本身；但這個元件的 `OnDisable()` 有一條保險——只要被關閉時 `Current != Player` 就強制切回 Player，這條保險過去從沒被踩到過是因為這場戰鬥以前只有 Player 觸發過。第一次讓猜猜看觸發，「關掉它」的瞬間就正中保險，鏡頭立刻跳到 Player（而且猜猜看自己的攝影機物件被關掉，運鏡邏輯對著一台看不見畫面的鏡頭空轉一整段開場動畫）；動畫結束後只是把它重新 `enabled=true`，不會主動恢復 `Current`，於是永遠停在 Player。**正確修法**：直接把 `CameraPossessionSwitcher` 從 `YuanpeiIntroCinematic.k_CameraControlTypes` 移除，不再讓開場動畫關閉它（它的 `Update()` 沒有任何東西需要在動畫期間停下來，G/C 誤按頂多視角空轉，不影響運鏡本身）；另外保留一組「動畫開始前記住 `Current`、結束後明確呼叫對應 `FocusPlayer/FocusCat/FocusGuessWho()`」的保險機制（`_switcher`/`_switcherWasCurrent`）作為 defensive backstop。
+4. **猜猜看被打死的瞬間鏡頭跳回 Player**（使用者實測回報，跟第 3 點是不同機制）：`CameraPossessionSwitcher.Update()` 本來就有「猜猜看死亡自動切回 Player」的保護（Cat 也共用同一套），這是為了「在外面閒晃意外死掉，鏡頭不能一直卡在屍體上」設計的，但套用在**由 `YuanpeiEncounter` 主導的戰鬥**上就變成：血量歸零瞬間鏡頭立刻被搶走切回 Player（Player 可能還站在完全無關的露營區），看不到猜猜看死亡當下、5 秒復活、傳送回門口的整個過程——跟 Player 自己死亡「鏡頭全程留在自己身上」的體驗不對等。**修法**：`CameraPossessionSwitcher` 新增 `public bool SuppressDeathAutoFallback`，guard 住 Cat/猜猜看那兩段自動回退判斷；`YuanpeiEncounter.StartEncounter()` 開戰時設為 `true`（「這段期間死亡我自己會處理」），`Victory()`／`Defeat()` 兩條路徑都在各自的 `HandControlBackToPlayer()` 之後設回 `false`（贏或輸都要清掉，否則贏一場之後 Cat/猜猜看往後所有非戰鬥情境的死亡自動回退都會被永久卡死）。
+5. **元培場地跟露營區地皮重疊**（使用者自己發現根因）：量出來 `Map_School` x[-31,31] z[-146,-83.5] 跟 `Map_Camp` x[-90.5,-9.5] z[-152.5,-69.5] 在 x[-31,-10] 這條 21.5m 寬帶（等於整個學校南北縱深）完全重疊——`Map_Camp` 開場常駐載入、不會卸載，`Map_School` 走 `SchoolGate` 才 additive 疊上去，兩個本來設計成獨立地區的地圖只有同時載入時才會在這塊看到彼此的東西疊在一起，boss 戰觸發線剛好就在這塊附近。**修法**（使用者選「縮小露營區東側」）：`CampWall_East` 從 x=-10 拉到 x=-36（留 4.5m 淨空），`露營區`/`CampFloor`/`CampWall_South`/`CampWall_NorthRight`/`CampLocalVolume` 跟著收窄或位移，原本卡在移除範圍裡的 `Workshop_Body/RoofCap`／`CampLawnMower`／`CampYellowTree` 往西挪回新範圍內（留 1~3.5m 緩衝），`MainLodge` 也順手往西挪 3m。程式量測確認新邊界跟校牆之間不再重疊。`Map_Camp.unity` 存檔。
+6. **範圍聲明**：Victory（打贏）路徑的死亡震動/碎裂演出＋鏡頭交還沒能實測到（Editor 反覆卡在沒有真正拿到 OS 焦點，Play 模式畫面凍結在第 2 幀）——程式邏輯上跟 Defeat 共用同一個 `HandControlBackToPlayer`＋這次新增的 `SuppressDeathAutoFallback` 保護，理論上同樣正確，但尚未有一次完整實測連過。
+
+### 2026-09-12 續 — 摩托超載可駕駛化（F 上車，隱藏騎士本體，行車紀錄器視角）
+
+使用者：「摩托超載...按f能夠把它讓車輛駕駛，但是要隱藏顯示猜猜看，因為摩托超載本身就是人+車，攝影機視角直接從後座往前拍就行，像行車紀錄器，並且像car一樣可以前進後退 加速等等」。
+
+1. **新增 `Assets/_Project/Game/Vehicles/IntegratedRiderVehicleEntry.cs`**：獨立的單座載具上下車腳本，不擴充既有 `VehicleEntrySystem`（那支腳本的雙座/前座後座/部分身體隱藏是專門配合 buggy「Player/Cat 坐進車體、看得到人」設計的，這台摩托超載的網格本身已經內建一個騎士＋雜物模型，整組邏輯改成「按 F 直接把當下操控的角色（Player/Cat/猜猜看，跟既有慣例一樣用名字判斷）整個隱形＋停用控制腳本，換成載具自己的鏡頭」，硬套進雙座系統風險比另開一支腳本高）。
+   - **踩到一個坑**：`possession`／三台角色專屬攝影機一開始用 `[SerializeField]` 跨場景手動指定（`CameraPossessionSwitcher` 在常駐 `GreyboxTest`，這台車在 `Map_Camp`）——Inspector 裡指定完、存檔、Console 顯示正確，但**重新載入場景後全部變回 null**：Unity 不會把跨場景物件參照序列化進場景檔，只是恰好在同一個 Editor session 裡「看起來」有效。跟 `CameraPossessionSwitcher.guessWhoCamera` 當初踩的是同一個坑（見該檔案自己的 2026-09-11 註解）。改成不標記 `[SerializeField]`，Awake 時用 `FindFirstObjectByType`＋掃描各已載入場景根物件名字（"Main Camera"/"CatCamera"/"GuessWhoCamera"）在執行期解析，同一個做法。
+2. **物理**：`CampMotorcycle` 根物件新增 `Rigidbody`（220kg）+ `CapsuleCollider`（車身）+ 4 顆 `WheelCollider`（前後各一對、間距刻意比視覺車身寬一些以增加側傾穩定性——WheelCollider 本來就是純物理不渲染，跟視覺輪子對不齊肉眼看不出來），直接沿用既有 buggy 的 `VehicleController`（W/A/S/D 前進後退轉向、Shift 加速、Space 手煞車，spec 就是「像car一樣」），調小一整組數值配合機車量級（motorTorque 3500→900、mass 950→220、maximumSteeringAngle 24→22、RWD 而非 AWD⋯）。用 `SkinnedMeshRenderer.BakeMesh` 量出本地包圍盒（X±0.5／Y 0~1.7／Z -0.89~0.90）＋一組定位截圖確認 local +Z 是車頭方向（跟根物件 180° Y 轉向疊加後車頭朝世界 -Z）。
+3. **攝影機**：新增子物件 `CampMotorcycleCamera`（純 `Camera`+`AudioListener`+`UniversalAdditionalCameraData`，無任何跟隨腳本），固定掛在 local (0, 1.55, -0.15)、朝向跟父物件一致的 local +Z——完全剛性跟著車身動，不做任何平滑/彈簧，就是使用者要的「行車紀錄器」效果。
+4. **上下車**：F 鍵解析「目前操控的角色」（`CameraPossessionSwitcher.Current` 對應 Player/Cat/猜猜看），在 `enterRange`(3m) 內且未被佔用時上車——隱藏騎士全身 `Renderer`、停用 `CharacterMovement`/`PlayerCombat`/`CharacterController`、reparent 進車身、切到 `CampMotorcycleCamera`；再按一次 F 下車還原全部狀態＋傳送到車身側邊 `exitLocalOffset`。**踩到一個提醒自己的坑**：unparent 用 `SetParent(null)` 只會留在物件「目前」所在的場景（這台車在 `Map_Camp`），不會自動搬回騎士原本的場景——沒處理的話騎士下車後會被靜靜移進 `Map_Camp`，之後只要這個場景被卸載就會被摧毀，跟猜猜看之前住在 `Map_Camp` 裡被銷毀是同一個坑。用 `SceneManager.MoveGameObjectToScene` 顯式搬回騎士原本的場景解決。
+5. **範圍聲明／待驗證**：程式邏輯＋所有元件掛載、欄位皆已確認正確（編譯無錯誤，重新載入場景後執行期解析的參照能重新找到）；**但物理調校數值（WheelCollider 位置/半徑、懸吊、扭力）全部是估的，還沒有一次真正跑起來的 Play 模式測試**（同樣卡在 Editor 沒拿到 OS 焦點）——需要使用者實際按 F 上車、開看看操控手感、車身有沒有翻覆/陷地，再回饋調整。
+
+### 2026-09-12 續 — 摩托超載修 bug＋鏡頭改跑車視角＋露營區續擺（猜猜看/摩托/柵欄樹/帳篷）＋移除灰盒＋小牛搬運車
+
+一連串使用者實測回饋 + 擺放調整，同一輪處理完：
+
+1. **摩托超載會自己移動 + 猜猜看按 F 駕駛也動不了**：真根因——`IntegratedRiderVehicleEntry` 用程式加上 `VehicleController` 時，Unity 預設 `enabled=true`，而程式只在按 F 上下車時去切換這個開關，**場景一載入的瞬間就沒人把它關掉**，於是它從頭到尾都在讀 WASD（跟角色走路是同一組鍵），車子在沒人上車的情況下就跟著玩家亂按的方向鍵到處漂移；等真的想開車時，車子可能已經自己開去撞到障礙物卡住了。修法：`Awake()` 明確把 `vehicleController.enabled` 強制設 `false`，`Mount()` 才是唯一允許打開它的地方。
+2. **駕駛鏡頭改成跑車遊戲視角**：原本的「行車紀錄器」太貼近騎士頭部，使用者要求改成「車身正後方往前拍」——`CampMotorcycleCamera` local 位置從 (0,1.55,-0.15) 改到 (0,1.5,-2.6)，加 12° 俯角。截圖確認效果：車尾/雜物在畫面下方、前方視野開闊，猜猜看在鏡頭裡看得到。
+3. **柵欄樹貼牆**：水平順時針轉 90°（只加 Y 分量，維持既有 Z-up 修正用的 X=270 不變——Unity 的 Euler 是 ZXY 外部合成順序，Y 分量繞的是真正世界垂直軸，不受 X 修正影響）、放大 2 倍、用當下重新算出的 renderer bounds 校正貼地 Y（不是沿用舊 Y），貼進 `CampWall_NorthLeft` 內側；因為放大後包圍盒暴增到 ~30m 見方，連 X 位置也要重新置中到牆段本身的範圍內，不然會伸出大門缺口。
+4. **多輪擺放**（猜猜看／摩托超載／帳篷 相對黃樹；後續使用者直接在 Play 模式手動擺猜猜看+摩托到最終滿意位置，兩次都由我讀出 Play 模式當下座標、退出 Play 後轉存回正式場景——Play 模式的位移不會自動存檔，必須手動搬過去）。
+5. **移除兩輪灰盒殘留**：「環抱式中庭要塞」那輪做的純 Cube+灰色材質佔位建築，一直沒換成真模型——`MainLodge_Body/RoofCap/PostLeft/PostRight`（27×14.4×18m，比所有其他營地物件都大）＋`Workshop_Body/RoofCap`（除草機旁邊那組）全部刪除，`CampLawnMower`（有正常材質，不是灰盒）保留。
+6. **匯入「小牛搬運車」（Meshy_AI_Garden_Hauler）**：使用者提供 zip，解到 `Assets/_Project/Environment/Meshy/CampGardenHauler/`（FBX 127MB+4 張貼圖，已符合既有 `.gitignore` 排除規則）。踩到的坑／做法：
+   - FBX 匯入後材質是內嵌的灰色 `Material.001`，貼圖 4 張 (`_texture`/`_metallic`/`_normal`/`_roughness`) 匯入時 `sRGB` 全部預設 `true`——法線/金屬/粗糙度三張需要手動改成 `sRGB=false`（法線圖另外設 `textureType=NormalMap`）才是正確的線性資料貼圖。仿照既有 `CampFenceTree.mat` 的做法建了一個 URP/Lit 材質：`_BaseMap`/`_MainTex`=diffuse、`_BumpMap`=normal、`_Metallic`/`_Smoothness` 用固定純量（0.05/0.3，跟既有其他 Meshy 材質一致），沒有把 metallic/roughness 貼圖接上去（URP Lit 沒有對應的獨立粗糙度貼圖欄位，要接上去得先把兩張圖打包成一張 MetallicGlossMap，這次沒做，先用固定值）。
+   - **旋轉判斷這次直接試錯定案**：FBX 匯入後預設 `eulerAngles=(270,0,0)`，一開始用近距離截圖誤判成「側躺」試了 (0,0,0)/(90,0,0)/(180,0,0) 全部更差（不是躺平就是倒立、立起來變太高），最後拉遠鏡頭＋對齊實際 renderer bounds 中心重新截圖才發現原本的 `(270,0,0)` 其實從頭到尾就是對的——**近距離貼著巨大物體拍的截圖很容易誤判方向**，跟量距離用的「oblique screenshot 誤判位置」是同一類陷阱，這次是「太近+沒對齊 bounds 中心」誤判旋轉。
+   - **放大倍率**：以「必須是全部建築物裡最大」+「猜猜看初始位置看得到的龐然大物」為目標，量出原始 mesh 在 FBX 預設 100 倍匯入縮放下的實際世界尺寸只有 ~1.86×1.22×1.86m，反推需要 scale≈2588 才能做到約 48×32×48m（比之前最大的 `MainLodge`—已刪除—或 `CampTent`(21m) 都大上一截）。
+   - **擺放**：目標「離傳送門最遠的一側」+「遮雨棚左邊」——營地寬度只有 54m，物件本身寬 48m，兩者相減幾乎沒有迴旋空間，物件最終會有一大截伸出西側圍牆外（X 到 -133.6，圍牆在 -90，伸出 43.6m）。已經跟使用者要求的「必須超大」互相衝突，這次選擇忠於「超大」，讓它明顯部分探出圍牆外，效果類似地標式的巨大背景物件；如果使用者實際看了覺得伸出圍牆太誇張，需要再討論縮小或另尋位置。
+   - **待驗證**：從猜猜看目前實際站位截圖確認，這個方向剛好被同一輪剛放大的柵欄樹（近距離、幾乎佔滿視野）擋住直線視線，字面上的「猜猜看初始位置視角都看得到」这次没有在單一截圖裡驗證成立——柵欄樹頂 26.3m 矮於搬運車頂 32.3m，理論上抬頭/轉鏡頭應該看得到一部分，但沒有實際証實，需要使用者自己進去看一眼。
+
+### 2026-09-13 — 移除露營區東西大牆＋修小牛搬運車車身碰撞體貼地
+
+1. **拆除 `CampWall_East`／`CampWall_West`**：`Perimeter` 底下原本 5 段圍牆，`North Left/Right`＋`South` 是矮牆（半高 3.9m），`East`／`West` 是明顯獨立的高牆（半高 22.5m，涵蓋 z -152~-72 全段，比矮牆高快 6 倍）——使用者要求拿掉的「兩面大牆」即指這兩段，已刪除並存檔 `Map_Camp.unity`。北／南矮牆與大門保留不動。
+2. **修 `CampGardenHaulerVehicle`（小牛搬運車）車身碰撞體貼地**：除 4 顆 `WheelCollider`（輪胎，接地點 y≈6.25）外，車身還掛了 `CampGardenHauler_Collision`／`_Collision_East` 兩個大型 `BoxCollider`（左右車身，各涵蓋 z -140~-111），底部原本延伸到 y≈1.25——跟輪胎接地點一樣低，等於車身腹部貼地，跟懸吊系統打架（懸吊壓縮時腹部先觸底，容易卡死/晃動異常）。使用者確認要「車身底部抬高，別貼地」：把兩個 BoxCollider 的 `center.y`/`size.y` 往上收，新底部 y≈6.65（略高於輪胎接地點，留 0.4m 淨空），頂部 y 不變，車身淨空懸吊在 4 輪之上。座位平台 `CampGardenHauler_SeatPlatform`（y 10.55~10.95）本來就在淨空範圍內，未變動。**待驗證**：只用世界座標 bounds 計算調整，尚未在真正 Play 模式試駕確認懸吊/腹部貼地問題解決（Editor 缺焦點導致 Play 測試常卡住的既有限制）。
+
+### 2026-09-13 續 — 移除露營區外圍圍牆的藍色磁磚視覺（改純隱形牆）
+
+使用者：「請你把藍色磁磚都移除，只對於營區外圍做圍牆，並且是隱形圍牆」。全場景搜尋材質 `SchoolWall`（RGBA 0.13/0.55/0.5，跟 `學校` 地圖共用的藍綠色磁磚材質，沿用同一個 `Visual` 子物件 + `MeshFilter`/`MeshRenderer` 掛法）命中 6 段牆，全部都在營區外圍：`Perimeter` 底下的 `CampWall_NorthLeft`／`NorthRight`／`South`（矮牆／大門段），以及 `CampSouthExtension_JumpBackdrop`（摩托車跳台背景延伸區）底下的 `CampWall_East_SouthExt`／`West_SouthExt`／`South_Outer`。逐一刪除各段的 `Visual` 子物件（只含 `MeshFilter`+`MeshRenderer`，無其他元件），保留父物件上的 `BoxCollider` 不動——結果是 6 段牆全部變成純碰撞、無視覺的隱形圍牆。Console 無新錯誤，`Map_Camp.unity` 已存檔。
+
+### 2026-09-13 續 2 — 小牛搬運車周圍拓寬平地＋修駕駛鏡頭卡在車身裡面
+
+使用者：「在小牛搬運車周圍製作更大的平地，足以讓小牛搬運車行駛」＋「駕駛小牛時請你根據小牛的車身尺寸來判斷攝影鏡頭位置，與以往視角差異很大」。
+
+1. **拓寬主營地地板 `CentralYard/露營區`**：量出搬運車（車身網格＋4輪＋懸吊）合併世界包圍盒＝48(X)×31.8(Y)×36.1(Z)m，車寬 48m 幾乎跟原本地板寬度 54m 一樣寬（每側只剩 3m 餘裕），根本轉不了彎；而地板深度（Z, 80m）本來就綽綽有餘。只放寬地板 `localScale.x`：54→150（`Cube` 單位方塊 scale 直接對應世界尺寸，Y/Z 不動、位置不動——中心 X=-63 本來就跟車身中心 X≈-62.77 對齊，不用位移，也不牽涉北側大門那條錨定邊）。新地板 X 範圍 -138~12，車身兩側各留 ~51m 淨空，足夠迴轉。**刻意沒有**在新的東西邊界外加隱形牆——上一輪才剛應使用者要求把 `CampWall_East`／`West` 整個刪除（不是只拿掉視覺），這輪維持同一個「東西兩側開放不設牆」的決定，只是把懸崖邊界往外推更遠；南側 `CampSouthExtension_JumpBackdrop`（含它自己的隱形東西牆）不受影響，車輛目前活動範圍（Z -137.5~-101.4）也還沒到南側延伸區。
+2. **修 `CampGardenHaulerCamera` 卡在車身網格裡面**：量出車身相對車輛根物件（pivot）的本地包圍盒＝X -23.77~24.23、Y -16.02~15.78、Z -11.50(車尾)~24.61(車頭，車頭懸伸較長)——換算下來 pivot 本身就位在半空中（世界 Y=17.27，離地面 13.5m，因為網格自身原點没有对齐到轮胎接地点）。原本沿用小型載具（機車／buggy）的鏡頭 local offset `(0.23, -4.52, 1.00)` 完全沒考慮這台车是巨型地標等級（48×32×36m），這個 offset 換算世界座標落在車身網格中心附近——鏡頭整顆埋在模型內部，等於全螢幕貼著模型內壁看不到車。改成依實測車身尺寸重新算：local `(0, 35, -50)`（車尾外 -11.5 再退 38.5m、車頂 15.78 再抬高近 20m）＋俯角 X=32°（讓鏡頭朝向車身中段），世界座標落在 (-63, 52.27, -176)，確認在網格包圍盒之外。**待驗證**：只用包圍盒數學算出的框取角度，還沒有實際 Play 模式開上去看實際取景效果（構圖/俯角是否舒適），需要使用者實際上車試駕後回饋微調。
+
+### 2026-09-13 續 3 — 修 F 互動判定距離＋鏡頭改淺角度後座視角
+
+使用者：「小牛由於體積大，需要讓猜猜看貼近車身任何一地方就可以觸發F互動功能，並且駕駛視角不是側邊，而是由後向前拍攝 就跟一般汽車駕駛位一樣」。
+
+1. **修 F 互動判定只認車輛根物件（pivot）距離**：`IntegratedRiderVehicleEntry.Update()` 原本用 `Vector3.Distance(candidate.position, transform.position) > enterRange`（`enterRange` 這台已調到 12），但這台車的 pivot 飄在半空中（世界 Y=17.27，離地 13.5m——跟上一輪修鏡頭發現的問題同一個根因），玩家站在車輪旁的地面上，離 pivot 的直線距離本來就已經超過 12m，等於整台 48m 寬的車幾乎沒有一處地面位置按得到 F。改成 `IsWithinEnterRange()`：改量測玩家位置到車輛**所有子物件 Collider 最近表面**的距離——車身兩塊 `BoxCollider` 用 `Collider.ClosestPoint`，4 顆 `WheelCollider`（非凸形狀，`ClosestPoint` 不支援）改用「到輪心距離 - 半徑」近似——只要貼近車身任何一面或任一輪胎，都算數。這個修法寫在共用腳本裡，機車（`CapsuleCollider`）之後也會一併吃到同一個更準的判定，不只是小牛專用。已編譯確認無新錯誤。
+2. **鏡頭角度收淺，貼近「一般汽車駕駛位」觀感**：先用 `manage_camera` 定位截圖確認車輛的實際行進方向——`VehicleController.cs:478` 用 `Vector3.Dot(_rigidbody.linearVelocity, transform.forward)` 判斷正在前進或倒退，`transform.forward` 就是車輛根物件的 local +Z，且前輪（`Wheel_FrontLeft/Right`）確實在 local Z=+18、後輪在 Z=-9——確認「往前開」在物理上就是往 local +Z 走，跟上一輪鏡頭擺在 -Z 後方朝 +Z 拍是同一個方向，方向沒錯。真正要調的是「續2」那次角度太陡（35m 高、32° 俯角，接近空拍視角，不像「駕駛位」）：改成 `(0, 20, -65)` local + 俯角 15°，世界座標 (-63, 37.27, -191)，一樣在網格包圍盒外、但角度壓低、拉遠距離換取更平視的取景，比較接近一般跑車尾隨鏡頭而非空拍視角。**注意**：這個裝飾網格本身是不規則造型（原始用途是靜態地標，非對稱車身，座位/貨架分布跟簡單的「前後對稱車頭」不同），鏡頭方向依據的是物理上「車輛實際會往哪邊開」（WheelCollider/VehicleController 的 local +Z），而不是目測網格哪一端「長得像車頭」——如果使用者實際試駕後仍覺得構圖怪（例如貨架擋住視野），需要的可能是調整貨架/座位在網格裡的相對位置，而不是再翻轉鏡頭方向。待實際 Play 模式試駕確認。
+3. **平地大小**：延續上一輪已把 `CentralYard/露營區` 從 54m 拓寬到 150m（X: -138~12），這輪未再變動，維持原先量出的「車身兩側各留 ~51m 淨空」的結論。
+
+### 2026-09-13 續 4 — 真正的根因：小牛網格跟輪組轉向差 90 度＋前後土地擴充
+
+使用者附了一張實機截圖：完整的車身側面輪廓（貨架在左、ATV 前座握把在右、兩個輪子清楚側面可見），並回報「駕駛視角錯誤，移動控制是左右移動，但車子應該要前後移動」——跟續3的推論（鏡頭方向沒錯，是網格造型不對稱）矛盾之處終於用截圖對質出來了。
+
+1. **真正根因**：`Wheel_FrontLeft/Right` 在 local Z=+18、`Wheel_RearLeft/Right` 在 Z=-9（前後輪距 27m），`VehicleController.cs` 也是用 `transform.forward`（local +Z）判斷前進方向——這些都指向「Z 是行進方向」沒錯。但用 `manage_camera` 定位截圖直接看車身（先俯視、再貼著車尾拍）才發現：視覺網格 `CampGardenHauler`（貨架＋座位的真實美術資產）的長軸其實是 local X（車身寬 48m 在 X、才 36m 在 Z），跟輪組認定的 Z 前進方向整整差了 90 度——這是上一輪就该抓到但漏掉的，196x roll 的靜態地標倉促改裝成可駕駛載具時，輪子是套用其他車輛的樣板位置，沒人實際核對過美術網格的車頭朝哪。結果：車子物理上真的往 Z 走，但視覺車頭朝著 X，鏡頭（沿 Z 拍）看到的自然是車身側面；玩家感覺「移動是左右」正是因為看到的是側影在鏡頭前平移。
+2. **修法**：把 `CampGardenHauler`（視覺網格＋其下 3 個 BoxCollider 子物件：`_Collision`／`_Collision_East`／`_SeatPlatform`，全部一起旋轉，因為都是它的子物件）在既有的 Z-up 修正 `(270,0,0)` 之上，**額外疊加 local Y -90°** 旋轉（`Quaternion.Euler(0,-90,0) * 原本的localRotation`），把網格真正的車頭方向轉去對齊輪組的 +Z。旋轉後用 `manage_camera` 重新俯視＋貼車尾截圖確認：座位在前（Z 正）、貨架在後（Z 負），跟輪子前後方向一致了。連帶重算：
+   - `IntegratedRiderVehicleEntry.riderStandLocalOffset`／`exitLocalOffset`：套同一個座標變換（新X=-舊Z，新Z=舊X）從 `(0.23,-6.32,8.15)`／`(0.23,-5.52,8.15)` 改成 `(-8.15,-6.32,0.23)`／`(-8.15,-5.52,0.23)`。
+   - `CampGardenHaulerCamera` 本地座標：從 `(0,20,-65)` 改成 `(-8.55,20,-65)`（X 對齊車身旋轉後的實際中心，不是根物件原點——車身左右不對稱，中心在 X≈-8.55），俯角維持 15°；重新截圖確認鏡頭現在是車尾正後方，不再是側面。
+   - 兩塊車身 `BoxCollider` 旋轉後從「左右對半」變成「前後對半」（`_Collision`＝後半、`_Collision_East`＝前半，名字沒改但物理位置變了，Y 方向的離地淨空——續1修的懸吊淨空——不受 Y 軸旋轉影響，維持不變）。
+3. **前後擴充土地**：車身修正朝向後量出前後各只剩 2.23m（車尾）／29.77m（車頭）到舊圍牆——車尾幾乎貼著南邊 `CampWall_South`（Z=-152，主營區跟摩托車跳台延伸區的分界牆）。處理：**刪除** `CampWall_South`（打通主營區到南側延伸區，比照上上輪拿掉東西大牆的做法）＋**刪除**延伸區自己的 `CampWall_East_SouthExt`／`West_SouthExt`（併入大空地後這兩道牆變成中間的內部障礙物，同樣的理由拿掉）；`露營區` 地板 Z 向拓寬到 -72(北/大門端固定)~-202(南)，合併原本的主營區跟延伸區成一條 130m 長的通道；延伸區最南端的 `CampWall_South_Outer` 寬度同步從 54m 拓成 150m 對齊新寬度（過程中曾誤把它的 `localScale.x` 直接設成 150 而非用比例換算，導致牆瞬間變 8100m 寬，已發現並修正回正確的 scale=2.78）。車尾到新南牆淨空變成 ~52m。
+4. **待驗證**：全部只靠世界座標數學＋定位截圖交叉確認，包括這次的旋轉/座標換算、鏡頭位置、地板範圍，都還沒有實際 Play 模式重新上車試駕過（Editor 焦點問題，這次連線上 Play 都是在對話中途才短暫抓到一次即時狀態就掉線）。強烈建議下一步請使用者實際重新按 F 上車，確認：(a) 前進鍵真的往車頭方向開、不再側滑，(b) 鏡頭是車尾視角，(c) 南北都有足夠迴轉空間，(d) 貼近車身任一處都能按 F。
+
+### 2026-09-13 續 5 — 摩托翻越小牛改成落地即自動駕駛小牛（載具間轉移）
+
+使用者：「摩托翻越調整如下：改成翻越到小牛搬運車的駕駛座，接觸到小牛駕駛座後自動變成小牛駕駛狀態，且可以向CAR一樣的移動控制邏輯」——把既有的 `MotorcycleFlyOverHaulerCutscene`（摩托車飛越小牛的純演出動畫，續1~續4 那五輪一直在調路徑/鏡頭/物理抖動，見上面同檔案內的長串註解）從「落地後恢復騎摩托」改成「落地後直接變成開小牛」。
+
+1. **新增載具間轉移 API**（`IntegratedRiderVehicleEntry.cs`）：`public Transform CurrentRider`（讀目前騎乘者）＋`public void TransferRiderTo(IntegratedRiderVehicleEntry destination)`（來源車：停用自己的 `vehicleController`＋收起自己的鏡頭，然後把 rider 直接交給目的地車）＋`public void MountExternal(Transform rider)`（給目的地車一個繞過 F 鍵／`enterRange` 判定的強制上車入口，因為 rider 是飛越中途轉移過來的，不是自己走過去按 F）。刻意**不是**「先 Dismount() 再 Mount()」——真正的 `Dismount()` 會把角色的第一人稱鏡頭/操控權還給玩家、傳送到 `exitLocalOffset`，這些在載具轉移中途全部要跳過（角色全程都沒有「回到地面」過），改成來源車放手、目的地車的 `Mount()` 直接接管全部隱藏/停用狀態。
+2. **順手修一個潛在的顯示 bug**：`Mount()` 原本只有 `if (hideRider) 才把 renderer 關掉`，從沒有反向「顯示」的邏輯——正常從地面上車不會出問題（角色本來就是顯示狀態），但這次載具轉移會踩到：摩托車 `hideRider=true`（整個騎士連人帶車模型一起藏起來）轉去小牛 `hideRider=false`（小牛的座位是空的，角色要站在上面看得到）——如果不修，角色會永遠維持「被摩托藏起來」的隱形狀態，換到小牛上也看不到人。改成每次 `Mount()` 都明確設定 `r.enabled = !hideRider`（該顯示就顯示、該藏就藏），不再只會單向關閉。
+3. **`MotorcycleFlyOverHaulerCutscene.cs`**：飛行動畫本身（Bezier 弧線／鏡頭運鏡／慢動作，五輪調校成果）完全沒動；只改了尾端——原本 `motorcycleController.enabled = true`（恢復騎車）改成呼叫 `motorcycleEntry.TransferRiderTo(haulerEntry)`（`motorcycleEntry`/`haulerEntry` 用既有的 `motorcycleController`/`haulerRigidbody` 欄位各自 `GetComponent<IntegratedRiderVehicleEntry>()` 現場取得，沒加新的 Inspector 欄位）；沒有 hauler entry 或沒有騎乘者時保留舊行為（回去騎車）當 fallback。摩托車本身落地後恢復非 kinematic（自然落地settle），但**刻意不重新啟用**它的 `vehicleController`——沒人騎的情況下啟用會吃原始 WASD 自己亂動（就是這個 session 稍早修過的「駐車自動漂移」同一類問題）。
+4. **落地座標重算**：`landingWorldPosition` 原本 `(-62.77, 0.5, -150)` 是照小牛「旋轉修正前」的舊車身量的（西邊/東邊碰撞體、南牆位置全部是舊的），這次改成 `(-71, 0.5, -160)`——X 對齊小牛旋轉後的新座位位置、Z 抓在小牛新車身後緣（世界 Z=-149.77）再往南 10m，落在續4剛拓寬出來的南側大空地內（南牆現在遠在 Z=-202，淨空原本的 1.7m 縫隙變成 ~40m 跑道）。腳本預設值跟場景裡序列化的實際值都已同步更新。
+5. **待驗證**：編譯通過、Console 無新錯誤，但這是這個 session 目前為止最複雜的一次邏輯改動（載具轉移＋render 顯示狀態），還完全沒有實機 Play 模式跑過一次完整流程（騎摩托上斜坡→觸發飛越→落地變開小牛→確認鏡頭切換/角色顯示/小牛可操控）。這個必須請使用者實際玩一次才能抓到真正的問題，光憑程式碼推理沒辦法保證所有邊界狀況都對。
+
+### 2026-09-13 續 6 — 小牛車頭再轉 180°＋動力/懸吊配重重算＋離地問題
+
+使用者實測回報三點：(1) 車頭方向還是反的，要再轉 180 度；(2) 完全無法控制移動；(3) 車體目前半身翹起，沒有完全著地。
+
+1. **再轉 180 度**：續4把 `CampGardenHauler`（視覺網格＋3 個子碰撞體）額外轉了 -90 度對齊輪組方向，但使用者實測後車頭朝向還是反的——在此基礎上再疊加 180 度（`Quaternion.Euler(0,180,0) * 現有localRotation`），變成淨旋轉 (270,270,0)→(270,90,0)。這個旋轉會把車身原本的左右不對稱（X 中心從 -8.56 變成 +8.56）整個鏡像過來，連帶重新換算：`IntegratedRiderVehicleEntry` 的 `riderStandLocalOffset`/`exitLocalOffset`（X/Z 各自變號）、`CampGardenHaulerCamera` 的 local X（-8.55→+8.55，Z 不變因為那是輪組前後方向，不受這次視覺翻轉影響）、`MotorcycleFlyOverHaulerCutscene.landingWorldPosition` 的 X（-71→-55，對齊新座位世界座標）。用 `manage_camera` 重新俯視＋車尾截圖確認畫面依然正確置中。
+2. **動力不足的真正算法**：比對 `Buggy` 的 `VehicleController` 數值才發現問題——小牛的 `motorTorque`(80000)／`vehicleMass`(20000) 只有照質量比例（20000/950≈21×）放大 buggy 的 3500，卻完全沒考慮小牛輪胎半徑是 buggy 的 7.58 倍（2.5m vs 0.33m）。WheelCollider 的實際推進力是 `力=扭力/半徑`，半徑越大、同樣扭力換算出來的地面推力越小——沒補這個係數，等於实际加速度只有預期的 1/7.58，難怪「完全無法控制移動」（不是完全不動，是慢到感覺不出來）。修法：`motorTorque`/`reverseTorque`/`brakeTorque`/`handbrakeTorque` 全部再乘上 7.576（80000→606060、50000→378787、100000→757575、150000→1136363）。
+3. **懸吊配重不足＋半身翹起的根因**：(a) 懸吊硬度也只照質量比例放大，沒對齊 buggy 的「每公斤」硬度／阻尼——buggy 是 35000/950≈36.8（硬度）、4500/950≈4.74（阻尼）每公斤，小牛只有 350000/20000=17.5、15000/20000=0.75，等於相對車重「偏軟＋阻尼嚴重不足」，容易懸吊來回震盪、沉一邊翹一邊、定不下來。已改成同比例：`suspensionSpring` 350000→736842、`suspensionDamper` 15000→94736。(b) `centerOfMassOffset` 的 X/Z 一直是 (0,-13,0)——Y 沒問題（把重心拉到接近輪軸高度），但 X/Z=0 是對齊車輛「根物件」原點，不是對齊真正的輪距中心：前輪在 local Z=+18、後輪在 Z=-9，輪距幾何中心其實在 Z=+4.5，重心比輪距中心整整偏後 4.5m，前軸長期負重不足——這正是「半身翹起」最可能的根因（前橋懸吊比後橋鬆得多，靜止時前面自然浮高）。改成 `centerOfMassOffset=(0,-13,4.5)`，重心對齊真正的輪距中心。
+4. **待驗證**：這輪的扭力/懸吊數字全部是照 buggy 的比例反推算出來的公式解，不是實測調出來的手感數字，Editor 缺焦點測試的老問題這次也還是沒能力做完整 Play 驗證。使用者下次實測後很可能還需要再微調（例如扭力算出來的 60 萬感覺太衝/太肉、懸吊還是不夠穩等），這些都需要實際開起來後才能判斷，先把「有考慮到輪徑/配重比例」這個原本完全缺漏的計算補上。
+
+### 2026-09-13 續 7 — 小牛搬運車改停到梯子右邊＋放棄猜懸吊物理改成上車強制貼地
+
+使用者實測續6後回報：(1) 車頭方向這次對了；(2) 但小牛目前停在梯子左邊，希望改到右邊；(3) 後輪還是翹起沒著地，並主動建議「不然你可以改成動畫進行到猜猜看駕駛小牛時，再讓車身下來到平地，確保可以移動控制」。
+
+1. **移到梯子右邊**：用 `manage_camera` 定位截圖＋數值計算雙重確認方向（面南望向梯子時，車身原本世界 X 比梯子（-62.77）更靠東＝畫面左邊，跟使用者說的「在左邊」對得上）。把 `CampGardenHaulerVehicle` 根物件 X 從 -63 移到 -92（往西），量出車身包圍盒東緣跟梯子西緣淨空 ~2.1m，乾淨分開不再互相跨越。連帶重算 `MotorcycleFlyOverHaulerCutscene.landingWorldPosition` 的 X（-55→-83.85，對齊新座位世界座標，Z 不變）。
+2. **放棄純物理調懸吊，改成使用者建議的「上車強制貼地」**：續6的扭力/懸吊/重心公式解顯然還是沒完全解決翹起問題（無法在無焦點 Play 環境下實測驗證，只能一直盲猜），採用使用者自己提出的替代方案——不再依賴懸吊自然沉澱出正確姿態，改成**上車那一刻強制**：`IntegratedRiderVehicleEntry` 新增 `groundAndLevelOnMount` 開關（預設 false，只在小牛實例打開，摩托車不受影響——摩托車跳台本來就需要真實傾斜/騰空，不該被鎖死）。開啟後 `Mount()` 會：(a) 把 pitch/roll 歸零（保留 yaw，不轉向）、(b) 從 4 顆 `WheelCollider` 位置各自往下 raycast 量出正下方地面高度，把整台車垂直平移到「輪胎剛好貼地」的高度、(c) 歸零殘餘線速度/角速度、(d) 用 `RigidbodyConstraints.FreezeRotationX|FreezeRotationZ` 鎖死 pitch/roll 直到下車才解鎖（`Dismount()`／`TransferRiderTo()` 都會還原鎖定前的 constraints）——騎乘期間車身物理上不可能再前傾/側翻，懸吊多不平衡都無所謂，直接从根本解決「無法保證貼地/可控」的問題，不用再猜物理數字。
+3. **待驗證**：程式碼推理上這個做法應該比繼續調懸吊參數可靠很多（強制貼地+鎖旋轉是確定性的，不吃物理settle），但完全沒有實機 Play 驗證過——尤其 raycast 地面高度那段假設 Mount() 當下車輛正上方有可命中的地面 collider（`露營區`／地板應該都涵蓋，但沒有實測過真的會不會打歪或漏接）。麻煩使用者下次實測按 F 上車那瞬間車身姿態，以及開起來後是否真的動得了。
+
+### 2026-09-13 續 8 — 駕駛座貼近梯子＋摩托落點朝向龍頭＋修下車後小牛消失
+
+使用者實測續7後回報三點：(1) 駕駛座請貼近梯子；(2) 摩托翻越的落點請朝向小牛的龍頭（車頭）；(3) 下車後小牛車不見了。
+
+1. **駕駛座貼近梯子**：續7只用車身包圍盒去對齊梯子，沒管座位本身在車身裡的實際位置（座位偏向車身某一側，跟包圍盒中心不同點）。這次改成直接算座位的世界座標，把根物件位置反推成「座位剛好落在梯子頂端 `MotorcycleRampSummitZone`（-62.77,10,-117.85）旁邊 ~3m」——根物件從 (-92,17.27,-126) 移到 (-74.15,17.27,-117.62)，座位新世界座標 (-66,10.75,-117.85)。**取捨要老實講**：因為座位在車身裡偏一側，車身其餘部分（貨架那一大截）現在會跟梯子的 X/Z 範圍有較大重疊（截圖確認貨架那端視覺上蓋過梯子），如果使用者要的是「座位近、但整台車完全不壓到梯子」，這兩個目標在車身這麼大、梯子這麼窄的前提下互相衝突，需要使用者看過再決定要哪邊。
+2. **摩托落點朝向龍頭**：`MotorcycleFlyOverHaulerCutscene` 原本 `bike.SetPositionAndRotation(landingWorldPosition, startRot)`——落地朝向永遠是「起飛時朝哪就朝哪」，跟小牛的車頭方向完全無關。改成新增 `haulerNoseLocalOffset`（小牛根物件本地座標系裡車頭尖端的估計位置，(8.15,0,24)）+ 在飛行結束當下用 `haulerRigidbody.transform.TransformPoint()` 即時算出車頭的世界座標，再用 `Quaternion.LookRotation(車頭方向)` 算出落地朝向——**刻意做成即時運算而非寫死世界旋轉值**，因為小牛這個 session 已經被移動兩次了，寫死角度下次小牛再搬家又要重算；`landingWorldPosition` 本身也跟著這次搬家重新量到小牛新鼻頭附近 (-66, 0.5, -85)。
+3. **修下車後小牛消失**：懷疑根因——續7新增的 `GroundAndLevel()` 用 `Physics.Raycast` 從輪胎位置往下打，**預設會打中 trigger collider**（這一帶剛好密集分佈 `MotorcycleJumpZone`／`MotorcycleRampSummitZone` 這些跳台判定用的大型 trigger box），也可能打中小牛自己車身的 BoxCollider，任何一種都會把「地面高度」讀成一個離真正地板很遠的錯誗值，沒有上限的 `delta` 直接把 20 噸車身瞬間搬到那個錯誤高度——夠遠的話畫面上就是「憑空消失」。修法：raycast 加上 `QueryTriggerInteraction.Ignore`（忽略所有 trigger）、用 `RaycastAll` 挑出「不是自己車身」的最近命中點（`candidate.collider.transform.IsChildOf(transform)` 排除自己）、最後把修正量 `Mathf.Clamp(delta, -5, 5)`——即使真的打到奇怪的東西，最多也只會位移 5m，不可能再瞬移消失。**這是根據程式碼合理推斷寫的防禦性修法，不是實測釘死的根因**——沒有 Play 模式重現過這個消失的當下狀態，如果修完還會消失，需要使用者提供更精確的重現步驟（消失前是否按過其他鍵、消失發生在按 F 下車的瞬間還是之後）才能繼續往下查。
+
+### 2026-09-13 續 9 — 回退「貼近梯子」：小牛完全卡進梯子裡，改回不重疊的位置
+
+使用者：「你的小牛車現在完全卡在梯子上 位置完全不對」——續8為了讓座位貼近梯子把根物件搬到 (-74.15,17.27,-117.62)，量測時只確認了「座位」離梯子夠近，沒有重新檢查整台車的包圍盒（車身 X 半寬 12.53、Z 半長 24，梯子只有 5m 寬）是否還跟梯子分開；事後複查發現車身包圍盒在 Z 軸方向其實跟梯子重疊（AABB 要 X 和 Z 兩軸同時重疊才算真的 3D 相交，續8只顧著把 X 拉近，沒注意到 Z 方向早就疊在一起了），實際等於車身一部分卡進梯子的碰撞體裡——這正是使用者說的「完全卡在梯子上」。
+
+1. **回退到已驗證乾淨的位置**：直接退回續7的根物件座標 (-92, 17.27, -126)——這是這個 session 目前為止唯一同時滿足「面向正確」＋「跟梯子完全不重疊」（X 軸乾淨分開 2.12m，兩軸沒有同時重疊）的已驗證位置。俯視截圖重新確認梯子跟車身各自獨立、沒有互相跨越。
+2. **老實說明取捨**：小牛車身 48m 長、梯子只有 5m 寬，「座位貼近梯子」和「整台車完全不壓到梯子」這兩個目標在這個尺寸差距下無法同時滿足——這次先恢復「不重疊」（比較嚴重的破圖問題），如果使用者還是想要座位更靠近梯子，需要另外討論可接受的相對位置，而不是單純再搬更近。
+3. **連動更新**：`MotorcycleFlyOverHaulerCutscene.landingWorldPosition` 跟著退回對齊車頭位置附近 (-83.85, 0.5, -95)；上一輪新增的「落地朝向車頭」即時運算邏輯不受影響（本來就是動態算的，不需要額外修改）。
+
+### 2026-09-13 續 10 — 拉近車距＋攝影機反向＋摩托落點改成座位本身
+
+使用者三點回饋：(1) 小牛車跟梯子間隔太遠；(2) 駕駛小牛的攝影視角反了，應該是現在畫面的背面；(3) 翻越到空中後應該落向駕駛座（坐墊那個位置），碰到坐墊就直接觸發駕駛小牛、視角切過去。
+
+1. **拉近間隔**：續9為了安全先退回 2.12m 的乾淨間隔，這輪只沿 X 軸微調（AABB 兩軸只要有一軸不重疊就不算真的相交，X 軸本來就是負責隔開的那一軸，Z 軸本來就重疊、跟撞不撞沒關係），把 X 方向淨空從 2.12m 收到 0.5m（根物件 X: -92→-90.38），俯視截圖＋兩軸 overlap 檢查雙重確認還是沒有真的疊到。
+2. **攝影機反向**：`CampGardenHaulerCamera` 原本在車尾 local Z=-65 看向 +Z（車頭方向），使用者要的是相反——鏡射到車頭端 local Z=+65、`localEulerAngles` 從 (15,0,0) 改成 (15,180,0)（yaw 180 度掉頭看回去），定位截圖確認現在拍到的是先前那次的相反面。
+3. **摩托落點改成座位本身**：這是這輪影響最大的一個改動。原本 `landingWorldPosition` 只是地面上一個固定世界座標，跟小牛的座位沒有直接關聯——這個 session 光是因為小牛被移動就得手動重算這個值 4 次，每次都要重新量。這次乾脆改成**即時運算**：新增 `haulerSeatLocalOffset`（座位在小牛根物件本地座標系裡的位置）+ `FlyOver()` 開頭用 `haulerRigidbody.transform.TransformPoint(haulerSeatLocalOffset)` 算出當下座位的世界座標，直接取代整個方法內用到 `landingWorldPosition` 的地方（用同名區域變數遮蔽欄位，不用逐一改 6 處引用）；原本的 `[SerializeField] landingWorldPosition` 降級成「沒接 `haulerRigidbody` 時的備援值」。效果：摩托現在飛越後會直接落在座位正上方一點點（Y=座位面+0.25m），落地那一刻＝碰到坐墊那一刻＝既有的 `TransferRiderTo` 轉移邏輯觸發，鏡頭也跟著既有邏輯切到小牛駕駛視角——不用另外寫「碰撞觸發」，用「飛行終點=座位座標」這個既有機制自然達成使用者要的效果。以後小牛不管再搬去哪，這個落點都會自動跟著座位走，不用再手動重算。
+
+### 2026-09-13 續 11 — 修正：前後控制相反（回退攝影機翻面）
+
+使用者：「現在是小牛車前後控制相反」。根因：續10把鏡頭從車尾翻到車頭端（使用者當時要求「應該是現在的背面」），但 `VehicleController` 判斷前進/倒退的邏輯完全沒變、車輛物理上還是往 local +Z（車頭）方向開——鏡頭翻到車頭端、面朝車尾之後，車輛往前開＝物理上朝 +Z 移動＝在這顆「架在車頭前方看回來」的鏡頭畫面裡是「往鏡頭方向靠近／變大」，一般開車遊戲的直覺是「按前進＝車子往畫面裡面／遠離鏡頭走」，這顆反過來的鏡頭讓「按 W」在畫面上看起來像倒退——這就是使用者說的「前後控制相反」，其實輸入判定從頭到尾沒壞，是續10的鏡頭翻面造成的直覺錯覺。修法：把鏡頭 local 位置/角度整個退回續9之前的車尾視角（local Z: +65→-65、`localEulerAngles`：(15,180,0)→(15,0,0)），恢復「鏡頭在車尾、看向車頭、按前進車子往畫面裡走遠」的標準第三人稱駕駛視角慣例。定位截圖確認畫面跟續9修好時一致。
+
+### 2026-09-13 續 12 — 鏡頭再翻回車頭端（使用者確認過）＋修飛越轉移的兩個實機錯誤
+
+使用者：「接下來是小牛駕駛時的攝影機視角，你現在是從前往後拍，我要你從後往前拍」。跟續11剛好相反，先用 `AskUserQuestion` 明確提醒「現在的座標其實已經是續11修好的『車尾看車頭』位置，翻回去可能會重新踩到前後控制相反」，使用者回覆「我現在測試過了 請以目前方向在反過來」——確認過的決定，照做：`CampGardenHaulerCamera` 再翻回車頭端（local Z: -65→+65、`localEulerAngles`: (15,0,0)→(15,180,0)）。
+
+同一次使用者回報的 Console 訊息裡夾帶兩個實機錯誤（非本次要求，但直接處理掉）：
+
+1. **"Setting linear velocity of a kinematic body is not supported"／"angular velocity..."**：根因是 `MotorcycleFlyOverHaulerCutscene.FlyOver()` 尾端執行順序錯了——`haulerRigidbody.isKinematic = haulerWasKinematic`（把小牛還原成正常動態剛體）寫在 `motorcycleEntry.TransferRiderTo(haulerEntry)` **之後**，但 `TransferRiderTo`→`Mount()`→`GroundAndLevel()`（小牛有開 `groundAndLevelOnMount`）會嘗試把 `linearVelocity`/`angularVelocity` 歸零——這時小牛的剛體其實還是飛行全程都設成的 kinematic，Unity 不允許對 kinematic 剛體設定速度，噴出這兩條警告。修法：把「恢復小牛 kinematic 狀態＋恢復碰撞＋恢復跳台鏡頭」整段搬到 `TransferRiderTo` **之前**執行，讓小牛在 `Mount()` 摸到它之前就已經是正常物理狀態。
+2. **"Cannot set the parent of the GameObject '猜猜看' while activating or deactivating the parent GameObject 'CampGardenHaulerVehicle'"**：檢查過 `Mount()` 內部執行順序（`SetParent` 發生在 `GroundAndLevel()` 之前，不是被它的錯誤打斷）、也搜過 `MotorcycleMountFX`／其他載具腳本有沒有在同時 `SetActive` 小牛根物件本身——目前找不到任何程式碼路徑會主動切換 `CampGardenHaulerVehicle` 這個 GameObject 自己的啟用狀態，懷疑可能跟 Map_Camp 場景串流載入的時序重疊有關，但沒有足夠證據釘死根因，這次**沒有動它**。如果這個警告在後續測試還會出現、或造成猜猜看真的沒被正確掛到小牛上，麻煩提供更精確的時機（是進營地後多久觸發的飛越、飛越前猜猜看在哪個場景/狀態）才能繼續查。
+
+### 2026-09-13 續 13 — 前後移動再度顛倒：這次直接改 W/S 判定，不再動鏡頭
+
+使用者：「目前小牛車攝影機方向正確 但前後移動控制又顛倒了 請只調整w/s移動」——明確要求鏡頭維持續12確認過的方向，只改輸入判定。根因跟續11一樣（鏡頭裝在車頭端往回拍，車輛物理上仍往 local +Z 開，畫面上就是「按前進反而往鏡頭靠近」），但這次不能再犧牲鏡頭方向去換操作直覺，兩者要同時成立就只能改輸入判定本身。
+
+`VehicleController.cs` 新增 `invertThrottleInput`（預設 `false`）：`ReadInput()` 讀完 W/S 疊加出的 `throttle` 後，`_throttleInput = invertThrottleInput ? -throttle : throttle`——只翻轉「哪個鍵對應哪個推力方向」，完全不動轉向、`transform.forward`、或任何車輛判斷「什麼是前面」的邏輯，跟續7~12那些車頭朝向／鏡頭調整都無關，是純粹的輸入層級開關。只在小牛的 `VehicleController` 實例打開（`invertThrottleInput=true`），已確認 buggy／摩托車兩台維持 `false` 不受影響——這是共用腳本，其他車輛的操作邏輯必須保持原樣。效果：小牛现在應該是「按 S 加速前進（畫面裡遠離鏡頭）、按 W 倒退」，鏡頭維持續12使用者確認過的車頭端朝向不變。
+
+### 2026-09-13 續 14 — 上車前先來一段近距離 360 度環繞特寫
+
+使用者：「動畫進行小牛車接替駕駛時先做一個小牛搬運車的近距離外型360度環繞特寫 然後再回復到小牛駕駛視角進行移動操作」。
+
+**放在哪裡**：沒有寫進 `MotorcycleFlyOverHaulerCutscene`，而是直接加進共用的 `IntegratedRiderVehicleEntry.Mount()`——這樣不管是騎摩托飛越轉移過來，還是單純走到小牛旁邊按 F，都會觸發同一段環繞特寫，因為這台車的體型本來就值得每次上車都有這個儀式感，不該只綁定在飛越劇情這一條路徑上。
+
+1. **新增 `orbitRevealOnMount` 開關**（預設 false，只在小牛實例打開）＋專用的 `CampGardenHaulerOrbitRevealCamera` 子物件（純 `Camera`，`AudioListener` 掛了但停用，避免跟場景裡其他監聽器衝突出「2 個 AudioListener」警告）。`Mount()` 流程改成：先跑 `groundAndLevelOnMount`（讓特寫拍到的是車輛已經定妥的最終姿態，不是懸吊還在沉澱的中間狀態）→ 開啟開關時**不**馬上切駕駛鏡頭／啟用 `vehicleController`，改成呼叫新的 `OrbitRevealThenHandControl()` 協程：環繞鏡頭啟用、以 `orbitCenterLocalOffset`（車身視覺中心，量出來是 local (12.09,-0.12,-0.23)，不是根物件原點——這台車的 pivot 離視覺中心很遠，續1就踩過這個坑）為圓心，`orbitDistance`(35)／`orbitHeight`(12) 繞一整圈 360 度、耗時 `orbitDurationSeconds`(4 秒)，全程 `vehicleController` 保持停用、駕駛鏡頭保持關閉；轉完一圈後才切回真正的駕駛鏡頭＋啟用控制。定位截圖確認第一幀（angle=0）的取景乾淨清楚、沒有穿模。
+2. **兩個必要的連動修正**：(a) `LateUpdate()` 原本「騎乘期間每幀強制切回 `vehicleCamera`」的既有邏輯（防止中途誤按 G/C 切走鏡頭）會直接把特寫鏡頭蓋掉，加了 `_orbiting` 旗標讓它在環繞特寫期間跳過這行。(b) F 鍵在特寫期間直接吃掉不處理（`if (_orbiting) return;`），避免特寫放到一半被一次意外的 F 按鍵打斷下車，變成沒放完的半吊子動畫。
+3. **待驗證**：距離/角度/秒數都是照車身包圍盒量出來的合理估計值，還沒有實際 Play 過一次完整流程確認節奏順不順、要不要加淡入淡出或慢動作。麻煩實測後回饋要不要調快/調慢，或者鏡頭運鏡本身要不要加點變化（目前是勻速繞一整圈，沒有像飛越動畫那樣分階段運鏡）。

@@ -42,5 +42,11 @@ _catview/
 Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx
 Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx.meta
 
+# Baked/fixed Unity mesh assets from Meshy imports that turned out even bigger than the source FBX
+# (CampGardenHauler_Mesh_Fixed.asset alone is 308 MB - see Docs/LARGE_ASSETS.md). The .mat/.png
+# siblings in the same folder stay tracked as normal.
+Live2DAction/Assets/_Project/Environment/Meshy/**/*_Mesh_Fixed.asset
+Live2DAction/Assets/_Project/Environment/Meshy/**/*_Mesh_Fixed.asset.meta
+
 # unrelated local tooling repo (has its own .git)
 /tools/

@@ -139,42 +139,20 @@ namespace Live2DAction.World
             HideUI();
         }
 
-        // The human player's "Player" transform whether on foot or driving - mirrors
-        // YuanpeiEncounter.ResolvePlayerFrom (walk up from the PlayerInputProvider to the transform
-        // literally named "Player"; while seated that's a child of the vehicle).
-        private static Transform ResolvePlayerRoot(Collider other)
-        {
-            if (other == null) return null;
-            return WalkToPlayer(other.transform.root);
-        }
+        // 2026-09-12, bug fix (user report: "門口有傳送門...而且無法對話" - the exit gate never
+        // responded to F while 猜猜看 was possessed). This used to only recognize a transform
+        // literally named "Player", so gates silently never acquired 猜猜看 (or Cat) as an
+        // interactable occupant - no error, the prompt UI just never appeared and F did nothing.
+        // Every possessable character root name goes here now.
+        // Delegates to the shared Live2DAction.Input.PossessableCharacter (extracted 2026-09-12
+        // after the identical "hardcoded to a transform literally named 'Player'" bug turned up
+        // independently in YuanpeiEncounter.cs too).
+        private static Transform ResolvePlayerRoot(Collider other) => PossessableCharacter.ResolveFrom(other);
 
-        private static Transform WalkToPlayer(Transform root)
-        {
-            if (root == null) return null;
-            foreach (var pip in root.GetComponentsInChildren<PlayerInputProvider>(true))
-                for (var t = pip.transform; t != null; t = t.parent)
-                    if (t.name == "Player") return t;
-            return null;
-        }
-
-        // Robust fallback - finds the nearest "Player" transform scene-wide. Used when a teleport
-        // dropped the player next to us without a trigger event, and after a force-dismount.
-        private Transform ScanForPlayer()
-        {
-            Transform best = null;
-            float bd = float.MaxValue;
-            Vector3 here = transform.position; here.y = 0f;
-            foreach (var pip in FindObjectsByType<PlayerInputProvider>(FindObjectsSortMode.None))
-            {
-                Transform p = null;
-                for (var t = pip.transform; t != null; t = t.parent) if (t.name == "Player") { p = t; break; }
-                if (p == null) continue;
-                Vector3 q = p.position; q.y = 0f;
-                float d = (q - here).sqrMagnitude;
-                if (d < bd) { bd = d; best = p; }
-            }
-            return best;
-        }
+        // Robust fallback - finds the nearest possessable-character transform scene-wide. Used when
+        // a teleport dropped the occupant next to us without a trigger event, and after a
+        // force-dismount.
+        private Transform ScanForPlayer() => PossessableCharacter.FindNearest(transform.position);
 
         // The player's position in this gate's local space, Y ignored - .z is DEPTH (toward/away
         // from the portal face), .x is LATERAL (across the portal width). 2026-09-06 user: the

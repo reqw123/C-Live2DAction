@@ -18,6 +18,8 @@ GitHub 對**單一檔案有 100 MB 硬上限**（超過直接拒絕 push），�
 | `Live2DAction/Assets/_Project/Environment/Meshy/YuanpeiUniversityBuilding/YuanpeiUniversityBuilding/Meshy_AI_Yuanpei_University_Bu_0830053851_texture_fbx/Meshy_AI_Yuanpei_University_Bu_0830053851_texture.fbx` | 120 MB | 257 萬頂點 / 309 萬三角面 | 白/灰建築群＋藍綠玻璃帷幕＋棕櫚扇形樹，有「元培」類中文招牌 | `Meshy_AI_Yuanpei_University_Bu_0830053851_texture_fbx.zip` |
 | `Live2DAction/Assets/_Project/Environment/Meshy/YuanpeiLogo/Meshy_AI_Yuanpei_University_of_0902171624_texture.fbx` | **29 MB**（其實沒超過 100 MB，只是被 `Meshy_AI_*_texture.fbx` 這條通配規則一起擋掉）| ~29 萬頂點 / ~29 萬三角面 | 元培醫事科技大學圓形校徽 3D 立體版（藍底＋原子符號＋校名校訓） | `元培logo.zip`（2026-09-03，`Meshy_AI_Yuanpei_University_of_0902171624_texture_fbx/`）**⚠️ DoNotShip：真實大學商標** |
 | `Live2DAction/Assets/_Project/Environment/Meshy/CampFloor/Meshy_AI_CampFloor_texture.fbx` | 127 MB | 223.8 萬頂點 | 露營區地基用的木頭平台/棧道，水平拉伸 31.5 倍填滿 60×60 露營區地板 | `營區地板.zip`（2026-09-11，`Meshy_AI_Raised_Wooden_Platfor_0911090315_texture_fbx/`） |
+| `Live2DAction/Assets/_Project/Environment/Meshy/CampGardenHauler/Meshy_AI_Garden_Hauler_0912112927_texture.fbx` | 133 MB | — | 小牛搬運車（露營區裡可駕駛的巨型地標載具，見 CHANGELOG 這一輪的長串調整） | `Meshy_AI_Garden_Hauler_0912112927_texture_fbx.zip`（使用者提供，2026-09-12） |
+| `Live2DAction/Assets/_Project/Environment/Meshy/CampGardenHauler/CampGardenHauler_Mesh_Fixed.asset` | **308 MB** | — | 上面那個 FBX 匯入後某次「修網格」流程烘出來的 Unity `.mesh` 資產——比原始 FBX 還大快一倍，不是減面版，是目前整個專案已知最大的單一資產 | 同一包 zip；理論上重新對 FBX 跑一次匯入時的修網格步驟就能重烘出來，但沒有實際驗證過重現流程 |
 
 - 來源：全部是使用者本人用 **Meshy AI 付費方案**生成。除 `YuanpeiLogo` 外使用者皆持有商用權（見 `ASSET_LICENSES.md`）；**`YuanpeiLogo` 例外——校徽圖樣是元培的真實註冊商標，標 DoNotShip，發布前必須換原創**。
 - 原始 zip 由使用者提供（4 棟校園建築 2026-08-30、校徽 2026-09-03、露營區地板 2026-09-11）；本機留存於使用者的下載資料夾。
@@ -39,9 +41,11 @@ GitHub 對**單一檔案有 100 MB 硬上限**（超過直接拒絕 push），�
 ```
 Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx
 Live2DAction/Assets/_Project/Environment/Meshy/**/Meshy_AI_*_texture.fbx.meta
+Live2DAction/Assets/_Project/Environment/Meshy/**/*_Mesh_Fixed.asset
+Live2DAction/Assets/_Project/Environment/Meshy/**/*_Mesh_Fixed.asset.meta
 ```
 
-新的 Meshy 內嵌貼圖 FBX 匯入時只要沿用 `Meshy_AI_*_texture.fbx` 命名就會自動被擋。
+新的 Meshy 內嵌貼圖 FBX 匯入時只要沿用 `Meshy_AI_*_texture.fbx` 命名就會自動被擋；同樣地，任何「修網格」流程烘出來、沿用 `*_Mesh_Fixed.asset` 命名的 Unity mesh 資產也會自動被擋（2026-09-13 因為 `CampGardenHauler_Mesh_Fixed.asset` 308 MB 才新增這條）。
 
 ## 怎麼補回來 / 正確的長期做法
 

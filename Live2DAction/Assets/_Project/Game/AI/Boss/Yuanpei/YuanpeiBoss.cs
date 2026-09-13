@@ -107,13 +107,16 @@ namespace Live2DAction.AI.Boss.Yuanpei
             if (config != null) config.arenaCenter = combatCenter;
             if (triggeringPlayer != null)
             {
-                // never target a vehicle: walk up to the "Player" GameObject rather than blindly
-                // taking .root (which is the car while the player is seated). 續 124.
+                // never target a vehicle: walk up to the actual possessable character rather than
+                // blindly taking .root (which is the car while the player is seated). 續 124.
+                // 2026-09-12 (user: "讓猜猜看也能觸發元培boss") - used to only recognize "Player"
+                // literally, discarding a correctly-resolved 猜猜看 and falling through to
+                // ResolvePlayer()'s generic fallback instead of actually targeting whoever fought.
                 Transform t = triggeringPlayer;
-                while (t != null && t.name != "Player") t = t.parent;
+                while (t != null && !Live2DAction.Input.PossessableCharacter.IsPossessableRoot(t.name)) t = t.parent;
                 player = t != null ? t : triggeringPlayer.root;
             }
-            if (player == null || player.name != "Player") player = ResolvePlayer();
+            if (player == null || !Live2DAction.Input.PossessableCharacter.IsPossessableRoot(player.name)) player = ResolvePlayer();
 
             if (playIntro)
             {
